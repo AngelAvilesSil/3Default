@@ -14,30 +14,156 @@
 		<!--===================================================================
 		==========================Header Placeholder===========================
 		=====================================================================-->
-		<div id="header" data-include="templates/header.html"></div>
+		<header class="w3-row" id="header" data-include="templates/header.html"></header>
 
-		<!-- Main Content -->
-		<main>
-			<div class="w3-container w3-padding-64">
-				<h2 class="w3-wide">Welcome to Your Dashboard</h2>
-
-				<!-- Project List -->
-				<div class="w3-card-4 w3-margin w3-padding">
-					<h3>Your Projects</h3>
-					<ul class="w3-ul">
-					<li>Project 1</li>
-					<li>Project 2</li>
-					<li>Project 3</li>
-					</ul>
-					<a href="project_setup.html" class="w3-button w3-teal">Create New Project</a>
+		<!--===================================================================
+		=============================Main content==============================
+		=====================================================================-->
+		<section class="w3-row">
+			<!-- The sidebar -->
+			<aside class="w3-col w3-theme-d2 l3" height="auto">
+				<div class="w3-container w3-padding">
+					<p class="w3-large">John Doe</p>
 				</div>
-			</div>
-		</main>
+
+				<!--Top designs-->
+				<div class="w3-container w3-section w3-theme-d3">
+					<h5>Top Designs</h5>
+					<input class="w3-input w3-margin-bottom" type="text" placeholder="Find a design">
+					<ul class="w3-ul">
+						<li class="w3-padding-small"><i class="fa fa-file"></i>John Doe / Project01</li>
+						<li class="w3-padding-small"><i class="fa fa-file"></i>OtherCompany / GooseProj</li>
+						<li class="w3-padding-small"><i class="fa fa-file"></i>OtherCompany / MooseProj</li>
+						<li class="w3-padding-small"><i class="fa fa-file"></i>John Doe / ProjMapple</li>
+						<li class="w3-padding-small"><i class="fa fa-file"></i>John Doe / ProjtBeaver</li>
+						<li class="w3-padding-small"><i class="fa fa-file"></i>John Doe / CNTowerPipe</li>
+						<li class="w3-padding-small"><i class="fa fa-file"></i>John Doe / Project03</li>
+						<!-- Add more if needed -->
+					</ul>
+					<a href="#" class="w3-small">Show more</a>
+				</div>
+
+				<!-- Recent Activities -->
+				<div class="w3-container w3-section w3-theme-d3">
+					<h5>Recent Activities</h5>
+					<ul class="w3-ul">
+						<li class="w3-padding-small"><i class="fa fa-check-circle"></i> Started Project03</li>
+						<li class="w3-padding-small"><i class="fa fa-check-circle"></i> Branched Moose Project</li>
+						<li class="w3-padding-small"><i class="fa fa-check-circle"></i> Team Updates</li>
+						<!-- Add more items as needed -->
+					</ul>
+				</div>
+
+				<!-- Your Teams -->
+				<div class="w3-container w3-section w3-theme-d3">
+					<h5>Your Teams</h5>
+					<input class="w3-input w3-margin-bottom" type="text" placeholder="Find a team">
+					<ul class="w3-ul">
+						<li class="w3-padding-small"><i class="fa fa-users"></i> UserPersonalTeam</li>
+						<li class="w3-padding-small"><i class="fa fa-users"></i> CompanyTeam</li>
+						<li class="w3-padding-small"><i class="fa fa-users"></i> Freelance Team</li>
+						<!-- Add more items as needed -->
+					</ul>
+					<a href="#" class="w3-small">Show more</a>
+				</div>
+			</aside>
+			
+			<article class="w3-col l9">
+				
+				<!-- Project cards -->
+				<div class="w3-container w3-padding-16">
+					<h2 class="w3-border-bottom w3-border-light-grey">Projects</h2>
+				</div>
+
+				<div class="w3-row-padding">
+					
+					<a href="project_details.html" class="w3-button w3-left-align w3-col l3 m4 w3-margin-bottom">
+						<div class="w3-display-container">
+							<img src="/images/placeholder.jpg" alt="House" style="width:100%;padding:0">
+							<div class="w3-container">
+								<p><strong>John Doe /<br>Project01</strong></p>
+								<p>Last modified:<br>1 day ago<br>main</p>
+							</div>
+						</div>
+					</a>
+
+					<a href="project_details.html" class="w3-button w3-left-align w3-col l3 m4 w3-margin-bottom">
+						<div class="w3-display-container">
+							<img src="/images/placeholder.jpg" alt="House" style="width:100%;padding:0">
+							<div class="w3-container">
+								<p><strong>OtherCompany /<br>GooseProj</strong></p>
+								<p>Last modified:<br>1 week ago<br>workbranch</p>
+							</div>
+						</div>
+					</a>
+
+					<a href="project_details.html" class="w3-button w3-left-align w3-col l3 m4 w3-margin-bottom">
+						<div class="w3-display-container">
+							<img src="/images/placeholder.jpg" alt="House" style="width:100%;padding:0">
+							<div class="w3-container">
+								<p><strong>OtherCompany /<br>MooseProj</strong></p>
+								<p>Last modified:<br>10 days ago<br>workbranch</p>
+							</div>
+						</div>
+					</a>
+
+					<a href="project_details.html" class="w3-button w3-left-align w3-col l3 m4 w3-margin-bottom">
+						<div class="w3-display-container">
+							<img src="/images/placeholder.jpg" alt="House" style="width:100%;padding:0">
+							<div class="w3-container">
+								<p><strong>John Doe /<br>Project02</strong></p>
+								<p>Last modified:<br>11 day ago<br>workbranch</p>
+							</div>
+						</div>
+					</a>
+
+					<a href="project_details.html" class="w3-button w3-left-align w3-col l3 m4 w3-margin-bottom">
+						<div class="w3-display-container">
+							<img src="/images/placeholder.jpg" alt="House" style="width:100%;padding:0">
+							<div class="w3-container">
+								<p><strong>John Doe /<br>ProjMapple</strong></p>
+								<p>Last modified:<br>2 weeks ago<br>main</p>
+							</div>
+						</div>
+					</a>
+
+					<a href="project_details.html" class="w3-button w3-left-align w3-col l3 m4 w3-margin-bottom">
+						<div class="w3-display-container">
+							<img src="/images/placeholder.jpg" alt="House" style="width:100%;padding:0">
+							<div class="w3-container">
+								<p><strong>John Doe /<br>ProjBeaver</strong></p>
+								<p>Last modified:<br>20 days ago<br>main</p>
+							</div>
+						</div>
+					</a>
+
+					<a href="project_details.html" class="w3-button w3-left-align w3-col l3 m4 w3-margin-bottom">
+						<div class="w3-display-container">
+							<img src="/images/placeholder.jpg" alt="House" style="width:100%;padding:0">
+							<div class="w3-container">
+								<p><strong>John Doe /<br>CNTowerPipe</strong></p>
+								<p>Last modified:<br>3 weeks ago<br>main</p>
+							</div>
+						</div>
+					</a>
+
+					<a href="project_details.html" class="w3-button w3-left-align w3-col l3 m4 w3-margin-bottom">
+						<div class="w3-display-container">
+							<img src="/images/placeholder.jpg" alt="House" style="width:100%;padding:0">
+							<div class="w3-container">
+								<p><strong>John Doe /<br>Project03</strong></p>
+								<p>Last modified:<br>+ 3 weeks ago<br>main</p>
+							</div>
+						</div>
+					</a>
+
+				</div>
+			</article>
+		</section>
 
 		<!--===================================================================
 		==========================Footer Placeholder===========================
 		=====================================================================-->
-		<div data-include="templates/footer.html"></div>
-
+		<footer class="w3-row" data-include="templates/footer.html"></footer>
 	</body>
 </html>
