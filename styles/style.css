@@ -1,0 +1,73 @@
+/* Light shades for Primary Color (#1DA2D8) */
+.w3-theme-l5 { color: #000 !important; background-color: #E0F4FB !important; }
+.w3-theme-l4 { color: #000 !important; background-color: #B3E2F4 !important; }
+.w3-theme-l3 { color: #000 !important; background-color: #80CFED !important; }
+.w3-theme-l2 { color: #000 !important; background-color: #4DBDE6 !important; }
+.w3-theme-l1 { color: #000 !important; background-color: #1DA2D8 !important; }
+
+/* Darker shades for Primary Color */
+.w3-theme-d1 { color: #fff !important; background-color: #1889B8 !important; }
+.w3-theme-d2 { color: #fff !important; background-color: #14789D !important; }
+.w3-theme-d3 { color: #fff !important; background-color: #105F7E !important; }
+.w3-theme-d4 { color: #fff !important; background-color: #0C4A64 !important; }
+.w3-theme-d5 { color: #fff !important; background-color: #09374B !important; }
+
+/* Light shades for Accent Color (#6A0DAD) */
+.w3-accent-l5 { color: #000 !important; background-color: #EBD1F4 !important; }
+.w3-accent-l4 { color: #000 !important; background-color: #D6A5EA !important; }
+.w3-accent-l3 { color: #000 !important; background-color: #C17BE0 !important; }
+.w3-accent-l2 { color: #fff !important; background-color: #A854D4 !important; }
+.w3-accent-l1 { color: #fff !important; background-color: #6A0DAD !important; }
+
+/* Darker shades for Accent Color */
+.w3-accent-d1 { color: #fff !important; background-color: #5B0994 !important; }
+.w3-accent-d2 { color: #fff !important; background-color: #4D087F !important; }
+.w3-accent-d3 { color: #fff !important; background-color: #3E066A !important; }
+.w3-accent-d4 { color: #fff !important; background-color: #300453 !important; }
+.w3-accent-d5 { color: #fff !important; background-color: #21033D !important; }
+
+/* Light shades for Secondary Color (#4B0082) */
+.w3-secondary-l5 { color: #000 !important; background-color: #E6D2F0 !important; }
+.w3-secondary-l4 { color: #000 !important; background-color: #CFA6E1 !important; }
+.w3-secondary-l3 { color: #000 !important; background-color: #B47BD1 !important; }
+.w3-secondary-l2 { color: #fff !important; background-color: #9930C1 !important; }
+.w3-secondary-l1 { color: #fff !important; background-color: #4B0082 !important; }
+
+/* Darker shades for Secondary Color */
+.w3-secondary-d1 { color: #fff !important; background-color: #430074 !important; }
+.w3-secondary-d2 { color: #fff !important; background-color: #3B0067 !important; }
+.w3-secondary-d3 { color: #fff !important; background-color: #320059 !important; }
+.w3-secondary-d4 { color: #fff !important; background-color: #29004B !important; }
+.w3-secondary-d5 { color: #fff !important; background-color: #21003E !important; }
+
+/* Light and dark variations for Neutral (Gray #808080) */
+.w3-neutral-l5 { color: #000 !important; background-color: #F0F0F0 !important; }
+.w3-neutral-l4 { color: #000 !important; background-color: #DADADA !important; }
+.w3-neutral-l3 { color: #000 !important; background-color: #C5C5C5 !important; }
+.w3-neutral-l2 { color: #000 !important; background-color: #B0B0B0 !important; }
+.w3-neutral-l1 { color: #000 !important; background-color: #9A9A9A !important; }
+.w3-neutral-d1 { color: #fff !important; background-color: #666666 !important; }
+.w3-neutral-d2 { color: #fff !important; background-color: #4D4D4D !important; }
+.w3-neutral-d3 { color: #fff !important; background-color: #333333 !important; }
+.w3-neutral-d4 { color: #fff !important; background-color: #1A1A1A !important; }
+.w3-neutral-d5 { color: #fff !important; background-color: #0D0D0D !important; }
+
+/* Light Background Color (#F5F5F5) */
+.w3-theme-light { color: #000 !important; background-color: #F5F5F5 !important; }
+.w3-theme-dark { color: #fff !important; background-color: #4B0082 !important; }
+.w3-theme-action { color: #fff !important; background-color: #6A0DAD !important; }
+
+/* Text and border colors */
+.w3-text-theme { color: #1DA2D8 !important; }
+.w3-border-theme { border-color: #1DA2D8 !important; }
+
+/* Hover effects */
+.w3-hover-theme:hover { color: #000 !important; background-color: #1889B8 !important; }
+.w3-hover-text-theme:hover { color: #1DA2D8 !important; }
+.w3-hover-border-theme:hover { border-color: #1DA2D8 !important; }
+
+.pre-footer a {
+	text-decoration: none;
+	display: block;
+	margin: 5px 0;
+}

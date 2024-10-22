@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en" >
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>CAD Collaboration - Set Up New Project</title>
+		<link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+		<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+		<script src="common.js"></script>
+	</head>
+
+	<body data-page="project_setup">
+		<!-- Header Placeholder -->
+		<div id="header" data-include="templates/header.html"></div>
+
+		<!-- Main Content -->
+		<main>
+			<div class="w3-container w3-padding-64">
+			<h2 class="w3-wide">Set Up New Project</h2>
+
+			<form action="/create-project" method="POST" class="w3-container w3-card-4 w3-padding">
+				<p>
+				<label for="name">Project Name</label>
+				<input id="name" class="w3-input w3-border" type="text" name="name" required>
+				</p>
+				<p>
+				<label for="description">Project Description</label>
+				<textarea id="description" class="w3-input w3-border" name="description" rows="5" required></textarea>
+				</p>
+				<p>
+				<button class="w3-button w3-teal">Create Project</button>
+				</p>
+			</form>
+			</div>
+		</main>
+
+		<!-- Footer Placeholder -->
+		<div data-include="templates/footer.html"></div>
+	</body>
+</html>
