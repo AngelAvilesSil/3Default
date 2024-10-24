@@ -20,7 +20,9 @@ function loadHeaderContent() {
   const menuFiles = {
     "index": "templates/menus/menu_index.html",
     "dashboard": "templates/menus/menu_dashboard.html",
-	"project_details": "templates/menus/menu_project_details.html"
+	"project_details": "templates/menus/menu_project_details.html",
+	"history": "templates/menus/menu_history.html",
+	"historyupdate": "../templates/menus/menu_project_details.html"
     // Add more cases for different pages as needed
   };
 

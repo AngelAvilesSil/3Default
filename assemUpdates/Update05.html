@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>3DHub - Project01</title>
+		<link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+		<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+		<link rel="stylesheet" href="../styles/style.css">
+		<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+		<script src="../scripts/modelScript.js"></script>
+		<script src="../scripts/common.js"></script>
+	</head>
+	<body data-page="historyupdate">
+		<!--===================================================================
+		==========================Header Placeholder===========================
+		=====================================================================-->
+		<header class="w3-row" id="header" data-include="../templates/header.html"></header>
+
+
+		<!--===================================================================
+		=============================Main content==============================
+		=====================================================================-->
+		<div class="w3-container"><a href="../history.html" style="text-decoration:none"><h3>Back to Project01 history</h3></a></div>
+		<div class="w3-row-padding w3-neutral-l5">
+			<!--The project files listed-->
+			<div class="w3-col l9 w3-neutral-l5">
+				<!-- 3D Preview -->
+				<div class="w3-card w3-neutral-l4 w3-margin-top w3-margin-bottom w3-padding" style="height:600px">
+					<div class="w3-bar">
+						<a href="" class="w3-bar-item w3-button w3-large">
+							<i class="fa fa-binoculars"></i>&emsp;<b>Update 05</b>
+						</a>
+						<a class="w3-bar-item w3-button w3-theme-l4 w3-right">
+							<i class="fa fa-eye"></i> Detailed View
+						</a>
+					</div>
+					<!-- <model-viewer> HTML element -->
+					<model-viewer class="w3-container" src="../models/Update05.glb" 
+					ar ar-modes="webxr scene-viewer quick-look"
+					camera-controls tone-mapping="neutral" poster="../models/posterUp05.png"
+					shadow-intensity="1"> 
+					</model-viewer>
+				</div>
+			</div>
+
+			<!--The sidebar with the project "About"-->
+			<div class="w3-col l3">
+				<div class="w3-card w3-neutral-l4 w3-margin-top w3-margin-bottom w3-padding">
+					<h4><b>About</b></h4>
+					<p>This project is our newest hydraulic jack, reliable, great performance, and blue</p>
+					<ul class="w3-ul">
+						<li><i class="fas fa-book"></i>&emsp;Readme</li>
+						<li><i class="fas fa-tasks"></i>&emsp;Activity</li>
+						<li><i class="fas fa-cog"></i>&emsp;Custom Properties</li>
+					</ul>
+					<p><i class="fas fa-star"></i>&emsp;0 Favorited</p>
+					<p><i class="fas fa-eye"></i>&emsp;1 Watching</p>
+					<p><i class="fas fa-code-branch"></i>&emsp;0 Forks</p>
+				</div>
+			</div>
+		</div>	
+
+		
+
+		<!--===================================================================
+		==========================Footer Placeholder===========================
+		=====================================================================-->
+		<footer class="w3-row" data-include="../templates/footer.html"></footer>
+	</body>
+</html>
