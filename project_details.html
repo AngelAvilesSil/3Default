@@ -7,6 +7,8 @@
 		<link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
 		<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 		<link rel="stylesheet" href="styles/style.css">
+		<script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+		<script src="scripts/modelScript.js"></script>
 		<script src="scripts/common.js"></script>
 	</head>
 	<body data-page="project_details">
@@ -19,67 +21,100 @@
 		<!--===================================================================
 		=============================Main content==============================
 		=====================================================================-->
-		<div class="w3-row w3-neutral-l5">
+		<div class="w3-row-padding w3-neutral-l5">
 			<!--The project files listed-->
-			<div class="w3-col l8">
-				<div class="w3-card w3-neutral-l4 w3-margin w3-padding">
-					
+			<div class="w3-col l9">
+				<div class="w3-card w3-neutral-l4 w3-margin-top w3-padding ">
+					<!--Bar with the projet name and some action buttons-->
 					<div class="w3-bar">
-						<a href="" class="w3-bar-item w3-button w3-xlarge"><i class="fas fa-file"></i> Project01</a>
-						<a class="w3-bar-item w3-button w3-theme-l4 w3-right">Favorite</a>
-						<a class="w3-bar-item w3-button w3-theme-l4 w3-right">Fork</a>
-						<a class="w3-bar-item w3-button w3-theme-l4 w3-right">Share</a>
-						<a class="w3-bar-item w3-button w3-theme-l4 w3-right">Edit Pin</a>
+						<a href="" class="w3-bar-item w3-button w3-large"><i class="fas fa-file"></i>&emsp;<b>Project01</b></a>
+						<a class="w3-bar-item w3-button w3-theme-l4 w3-right">
+							<i class="fa fa-star"></i> Favorite &#9660;
+						</a>
+						<a class="w3-bar-item w3-button w3-theme-l4 w3-right">
+							<i class="fa fa-code-fork"></i> Fork &#9660;
+						</a>
+						<a class="w3-bar-item w3-button w3-theme-l4 w3-right">
+							<i class="fa fa-share"></i> Share &#9660;
+						</a>
+						<a class="w3-bar-item w3-button w3-theme-l4 w3-right">
+							<i class="fa fa-thumbtack"></i> Edit Pin &#9660;
+						</a>
 					</div>
-					
 					
 					<table class="w3-table">
 						<tr class="w3-neutral-l1">
-							<th><i class="fas fa-user"></i> TechnicalUser</th>
-							<th>Uploaded new design</th>
-							<th><i class="fas fa-code-branch"></i>3bd695a - Moments Ago</th>
+							<th><i class="fas fa-user"></i> John Doe&emsp;&emsp;Uploaded new design</th>
+							<th>3bd695a - moments ago</th>
+							<th><i class="fa fa-code-branch"></i>Moments Ago</th>
 						</tr>
 						<tr>
-							<td><i class="fas fa-file-alt"></i> Assem.SLDASM</td>
+							<td><i class="fa fa-file-alt"></i> Assem.SLDASM</td>
 							<td>Uploaded new design</td>
-							<td><i class="fas fa-code-branch"></i> Moments Ago</td>
+							<td><i class="fa fa-code-branch"></i> Moments Ago</td>
 						</tr>
 						<tr>
-							<td><i class="fas fa-file-alt"></i> Part1.SLDPRT</td>
+							<td><i class="fa fa-file-alt"></i> Part1.SLDPRT</td>
 							<td>Uploaded new design</td>
-							<td><i class="fas fa-code-branch"></i> Moments Ago</td>
+							<td><i class="fa fa-code-branch"></i> Moments Ago</td>
 						</tr>
 						<tr>
-							<td><i class="fas fa-file-alt"></i> Part2.SLDPRT</td>
+							<td><i class="fa fa-file-alt"></i> Part2.SLDPRT</td>
 							<td>Uploaded new design</td>
-							<td><i class="fas fa-code-branch"></i> Moments Ago</td>
+							<td><i class="fa fa-code-branch"></i> Moments Ago</td>
 						</tr>
 						<tr>
-							<td><i class="fas fa-file-alt"></i> Part3.SLDPRT</td>
+							<td><i class="fa fa-file-alt"></i> Part3.SLDPRT</td>
 							<td>Uploaded new design</td>
-							<td><i class="fas fa-code-branch"></i> Moments Ago</td>
+							<td><i class="fa fa-code-branch"></i> Moments Ago</td>
 						</tr>
 					</table>
-				</div>
-			</div>
-
-				<div class="w3-row">
-					<!-- 3D Preview -->
-					<div class="w3-col l8">
-						<div class="w3-card w3-neutral-l4 w3-margin w3-padding">
-							<img src="images/placeholder.jpg" alt="3D Preview">
-						</div>
-						
+					<div class="w3-container">
+						<a href="#" class="w3-small">Show more</a>
 					</div>
 				</div>
 
+				<div class="w3-row w3-neutral-l5">
+					<!-- 3D Preview -->
+					<div class="w3-col">
+						<div class="w3-card w3-neutral-l4 w3-margin-top w3-margin-bottom w3-padding" style="height:600px">
+							<div class="w3-bar">
+								<a href="" class="w3-bar-item w3-button w3-large">
+									<i class="fa fa-binoculars"></i>&emsp;<b>3D Render</b>
+								</a>
+								<a class="w3-bar-item w3-button w3-theme-l4 w3-right">
+									<i class="fa fa-eye"></i> Detailed View
+								</a>
+							</div>
+							<!-- <model-viewer> HTML element -->
+							<model-viewer class="w3-container" src="models/Assem.glb" 
+							ar ar-modes="webxr scene-viewer quick-look"
+							camera-controls tone-mapping="neutral" poster="models/poster.png"
+							shadow-intensity="1"> 
+							</model-viewer>
+						</div>
+					</div>
+				</div>
+			</div>
+
+				<!--The sidebar with the project "About"-->
+			<div class="w3-col l3">
+				<div class="w3-card w3-neutral-l4 w3-margin-top w3-margin-bottom w3-padding">
+					<h4><b>About</b></h4>
+					<p>This project is our newest hydraulic jack, reliable, great performance, and blue</p>
+					<ul class="w3-ul">
+						<li><i class="fas fa-book"></i>&emsp;Readme</li>
+						<li><i class="fas fa-tasks"></i>&emsp;Activity</li>
+						<li><i class="fas fa-cog"></i>&emsp;Custom Properties</li>
+					</ul>
+					<p><i class="fas fa-star"></i>&emsp;0 Favorited</p>
+					<p><i class="fas fa-eye"></i>&emsp;1 Watching</p>
+					<p><i class="fas fa-code-branch"></i>&emsp;0 Forks</p>
+				</div>
 			</div>
 		</div>
-		
 
 		
-
-
 
 		<!--===================================================================
 		==========================Footer Placeholder===========================
