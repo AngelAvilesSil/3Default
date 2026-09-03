@@ -1,0 +1,31 @@
+openapi: 3.1.0
+
+info:
+  title: 3Default API
+  version: 0.1.0
+
+paths:
+  /api/health:
+    get:
+      operationId: getHealth
+      summary: Check application health
+      responses:
+        "200":
+          description: Application is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
