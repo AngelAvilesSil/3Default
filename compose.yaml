@@ -12,6 +12,10 @@ services:
     environment:
       GOMODCACHE: /go/pkg/mod
       GOCACHE: /root/.cache/go-build
+      DATABASE_URL: postgres://three_default:three_default_dev@db:5432/three_default?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
     init: true
 
   web:
@@ -26,8 +30,27 @@ services:
       - npm-cache:/root/.npm
     init: true
 
+  db:
+    image: postgres:18.6-bookworm
+    environment:
+      POSTGRES_DB: three_default
+      POSTGRES_USER: three_default
+      POSTGRES_PASSWORD: three_default_dev
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U three_default -d three_default",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   go-mod-cache:
   go-build-cache:
   web-node-modules:
   npm-cache:
+  postgres-data:

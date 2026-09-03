@@ -28,6 +28,24 @@ func (e HealthResponseStatus) Valid() bool {
 	}
 }
 
+// Defines values for ReadyResponseStatus.
+const (
+	Ready       ReadyResponseStatus = "ready"
+	Unavailable ReadyResponseStatus = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the ReadyResponseStatus enum.
+func (e ReadyResponseStatus) Valid() bool {
+	switch e {
+	case Ready:
+		return true
+	case Unavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
 	Status HealthResponseStatus `json:"status"`
@@ -36,11 +54,22 @@ type HealthResponse struct {
 // HealthResponseStatus defines model for HealthResponse.Status.
 type HealthResponseStatus string
 
+// ReadyResponse defines model for ReadyResponse.
+type ReadyResponse struct {
+	Status ReadyResponseStatus `json:"status"`
+}
+
+// ReadyResponseStatus defines model for ReadyResponse.Status.
+type ReadyResponseStatus string
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealth Check application health
 	// (GET /api/health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// GetReady Check application readiness
+	// (GET /api/ready)
+	GetReady(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -57,6 +86,20 @@ func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetReady operation middleware
+func (siw *ServerInterfaceWrapper) GetReady(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetReady(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -187,6 +230,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/health", wrapper.GetHealth)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/ready", wrapper.GetReady)
 
 	return m
 }
@@ -212,11 +256,49 @@ func (response GetHealth200JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	return err
 }
 
+type GetReadyRequestObject struct {
+}
+
+type GetReadyResponseObject interface {
+	VisitGetReadyResponse(w http.ResponseWriter) error
+}
+
+type GetReady200JSONResponse ReadyResponse
+
+func (response GetReady200JSONResponse) VisitGetReadyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetReady503JSONResponse ReadyResponse
+
+func (response GetReady503JSONResponse) VisitGetReadyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// GetHealth Check application health
 	// (GET /api/health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// GetReady Check application readiness
+	// (GET /api/ready)
+	GetReady(ctx context.Context, request GetReadyRequestObject) (GetReadyResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -275,6 +357,30 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetHealthResponseObject); ok {
 		if err := validResponse.VisitGetHealthResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetReady operation middleware
+func (sh *strictHandler) GetReady(w http.ResponseWriter, r *http.Request) {
+	var request GetReadyRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetReady(ctx, request.(GetReadyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetReady")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetReadyResponseObject); ok {
+		if err := validResponse.VisitGetReadyResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
