@@ -1,0 +1,33 @@
+services:
+  api:
+    image: golang:1.27.1-bookworm
+    working_dir: /workspace
+    command: go run ./cmd/3default
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/workspace
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      GOMODCACHE: /go/pkg/mod
+      GOCACHE: /root/.cache/go-build
+    init: true
+
+  web:
+    image: node:24-bookworm
+    working_dir: /workspace/web
+    command: npm run dev -- --host 0.0.0.0
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/workspace
+      - web-node-modules:/workspace/web/node_modules
+      - npm-cache:/root/.npm
+    init: true
+
+volumes:
+  go-mod-cache:
+  go-build-cache:
+  web-node-modules:
+  npm-cache:
