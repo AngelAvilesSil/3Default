@@ -7,7 +7,10 @@ tool (
 	github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 )
 
-require github.com/jackc/pgx/v5 v5.10.0
+require (
+	github.com/google/uuid v1.6.0
+	github.com/jackc/pgx/v5 v5.10.0
+)
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
@@ -19,7 +22,6 @@ require (
 	github.com/getkin/kin-openapi v0.142.0 // indirect
 	github.com/go-openapi/jsonpointer v0.23.1 // indirect
 	github.com/go-openapi/swag/jsonname v0.26.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
