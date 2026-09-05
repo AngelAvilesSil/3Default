@@ -20,6 +20,14 @@ type Project struct {
 	UpdatedAt   time.Time
 }
 
+type Session struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	TokenHash []byte
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
 type User struct {
 	ID          uuid.UUID
 	Email       string
