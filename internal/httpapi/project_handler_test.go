@@ -90,6 +90,7 @@ func TestCreateProjectRequiresAuthentication(t *testing.T) {
 			fakeDatabase{},
 			projectCreator,
 		),
+		nil,
 	)
 
 	request := httptest.NewRequest(
@@ -135,6 +136,7 @@ func TestCreateProjectRejectsSessionResolutionFailure(
 			fakeDatabase{},
 			projectCreator,
 		),
+		nil,
 	)
 
 	request := httptest.NewRequest(
@@ -187,6 +189,7 @@ func TestCreateProjectMapsNameValidationError(t *testing.T) {
 			fakeDatabase{},
 			projectCreator,
 		),
+		nil,
 	)
 
 	request := httptest.NewRequest(
@@ -241,6 +244,7 @@ func TestCreateProjectMapsUnexpectedServiceError(t *testing.T) {
 			fakeDatabase{},
 			projectCreator,
 		),
+		nil,
 	)
 
 	request := httptest.NewRequest(
@@ -269,6 +273,162 @@ func TestCreateProjectMapsUnexpectedServiceError(t *testing.T) {
 		t.Fatalf(
 			"expected generic creation error, got %q",
 			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectRejectsCrossOriginBrowserRequest(
+	t *testing.T,
+) {
+	resolver := &fakeSessionResolver{
+		session: auth.Session{
+			UserID: uuid.New(),
+		},
+	}
+
+	projectCreator := &fakeProjectCreator{}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectCreator,
+		),
+		resolver,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects",
+		strings.NewReader(`{"name":"Robot Gripper"}`),
+	)
+
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: "session-token",
+	})
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusForbidden,
+			response.Code,
+		)
+	}
+
+	if resolver.called {
+		t.Fatal("expected session resolver not to be called")
+	}
+
+	if projectCreator.called {
+		t.Fatal("expected project creator not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "cross-origin request denied" {
+		t.Fatalf(
+			"expected cross-origin error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectResolvesSessionCookie(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+
+	createdAt := time.Date(
+		2026,
+		time.September,
+		6,
+		3,
+		30,
+		0,
+		0,
+		time.UTC,
+	)
+
+	resolver := &fakeSessionResolver{
+		session: auth.Session{
+			UserID: userID,
+		},
+	}
+
+	projectCreator := &fakeProjectCreator{
+		project: dbgen.Project{
+			ID:          projectID,
+			OwnerUserID: userID,
+			Name:        "Robot Gripper",
+			Visibility:  "private",
+			CreatedAt:   createdAt,
+			UpdatedAt:   createdAt,
+		},
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectCreator,
+		),
+		resolver,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects",
+		strings.NewReader(`{"name":"Robot Gripper"}`),
+	)
+
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: "session-token",
+	})
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusCreated,
+			response.Code,
+		)
+	}
+
+	if !resolver.called {
+		t.Fatal("expected session resolver to be called")
+	}
+
+	if resolver.token != "session-token" {
+		t.Fatalf(
+			"expected session token %q, got %q",
+			"session-token",
+			resolver.token,
+		)
+	}
+
+	if !projectCreator.called {
+		t.Fatal("expected project creator to be called")
+	}
+
+	if projectCreator.input.OwnerUserID != userID {
+		t.Fatalf(
+			"expected owner %s, got %s",
+			userID,
+			projectCreator.input.OwnerUserID,
 		)
 	}
 }
@@ -311,6 +471,7 @@ func TestCreateProjectUsesAuthenticatedUserAsOwner(
 			fakeDatabase{},
 			projectCreator,
 		),
+		nil,
 	)
 
 	request := httptest.NewRequest(
@@ -438,6 +599,7 @@ func TestCreateProjectRejectsMalformedJSON(t *testing.T) {
 			fakeDatabase{},
 			projectCreator,
 		),
+		nil,
 	)
 
 	request := httptest.NewRequest(

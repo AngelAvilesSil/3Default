@@ -126,4 +126,25 @@ func SessionContextMiddleware(
 	}
 }
 
+func ProjectSessionContextMiddleware(
+	resolver SessionResolver,
+) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		protected := SessionContextMiddleware(resolver)(next)
+
+		return http.HandlerFunc(func(
+			w http.ResponseWriter,
+			r *http.Request,
+		) {
+			if r.Method == http.MethodPost &&
+				r.URL.Path == "/api/projects" {
+				protected.ServeHTTP(w, r)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 var _ SessionResolver = (*auth.SessionService)(nil)

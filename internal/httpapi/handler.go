@@ -7,7 +7,10 @@ import (
 	api "github.com/AngelAvilesSil/3Default/internal/api"
 )
 
-func NewHandler(server api.StrictServerInterface) http.Handler {
+func NewHandler(
+	server api.StrictServerInterface,
+	sessionResolver SessionResolver,
+) http.Handler {
 	strictHandler := api.NewStrictHandlerWithOptions(
 		server,
 		nil,
@@ -17,17 +20,50 @@ func NewHandler(server api.StrictServerInterface) http.Handler {
 				_ *http.Request,
 				_ error,
 			) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusBadRequest)
-
-				_ = json.NewEncoder(w).Encode(
-					api.ErrorResponse{
-						Error: "invalid request",
-					},
+				writeJSONError(
+					w,
+					http.StatusBadRequest,
+					"invalid request",
 				)
 			},
 		},
 	)
 
-	return api.Handler(strictHandler)
+	handler := api.Handler(strictHandler)
+
+	handler = ProjectSessionContextMiddleware(
+		sessionResolver,
+	)(handler)
+
+	crossOriginProtection := http.NewCrossOriginProtection()
+
+	crossOriginProtection.SetDenyHandler(
+		http.HandlerFunc(func(
+			w http.ResponseWriter,
+			_ *http.Request,
+		) {
+			writeJSONError(
+				w,
+				http.StatusForbidden,
+				"cross-origin request denied",
+			)
+		}),
+	)
+
+	return crossOriginProtection.Handler(handler)
+}
+
+func writeJSONError(
+	w http.ResponseWriter,
+	status int,
+	message string,
+) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	_ = json.NewEncoder(w).Encode(
+		api.ErrorResponse{
+			Error: message,
+		},
+	)
 }

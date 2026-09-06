@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/AngelAvilesSil/3Default/internal/auth"
 	"github.com/AngelAvilesSil/3Default/internal/config"
 	"github.com/AngelAvilesSil/3Default/internal/database"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
@@ -14,7 +15,10 @@ import (
 )
 
 func main() {
-	const address = ":8080"
+	const (
+		address         = ":8080"
+		sessionLifetime = 7 * 24 * time.Hour
+	)
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -32,11 +36,20 @@ func main() {
 	queries := dbgen.New(db)
 	projectService := projects.NewService(queries)
 
+	sessionService, err := auth.NewSessionService(
+		queries,
+		sessionLifetime,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	handler := httpapi.NewHandler(
 		httpapi.NewServer(
 			db,
 			projectService,
 		),
+		sessionService,
 	)
 
 	server := &http.Server{

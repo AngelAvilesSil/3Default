@@ -371,6 +371,20 @@ func (response CreateProject401JSONResponse) VisitCreateProjectResponse(w http.R
 	return err
 }
 
+type CreateProject403JSONResponse ErrorResponse
+
+func (response CreateProject403JSONResponse) VisitCreateProjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateProject500JSONResponse ErrorResponse
 
 func (response CreateProject500JSONResponse) VisitCreateProjectResponse(w http.ResponseWriter) error {
