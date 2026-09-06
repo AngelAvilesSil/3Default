@@ -20,7 +20,7 @@ func (f fakeDatabase) Ping(context.Context) error {
 }
 
 func TestGetHealth(t *testing.T) {
-	handler := NewHandler(NewServer(fakeDatabase{}))
+	handler := NewHandler(NewServer(fakeDatabase{}, nil))
 
 	request := httptest.NewRequest(http.MethodGet, "/api/health", nil)
 	response := httptest.NewRecorder()
@@ -43,7 +43,7 @@ func TestGetHealth(t *testing.T) {
 }
 
 func TestGetReadyWhenDatabaseIsAvailable(t *testing.T) {
-	handler := NewHandler(NewServer(fakeDatabase{}))
+	handler := NewHandler(NewServer(fakeDatabase{}, nil))
 
 	request := httptest.NewRequest(http.MethodGet, "/api/ready", nil)
 	response := httptest.NewRecorder()
@@ -68,7 +68,7 @@ func TestGetReadyWhenDatabaseIsAvailable(t *testing.T) {
 func TestGetReadyWhenDatabaseIsUnavailable(t *testing.T) {
 	handler := NewHandler(NewServer(fakeDatabase{
 		err: errors.New("database unavailable"),
-	}))
+	}, nil))
 
 	request := httptest.NewRequest(http.MethodGet, "/api/ready", nil)
 	response := httptest.NewRecorder()

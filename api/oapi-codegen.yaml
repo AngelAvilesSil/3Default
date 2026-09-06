@@ -7,4 +7,12 @@ generate:
   std-http-server: true
   strict-server: true
 
+output-options:
+  type-mapping:
+    string:
+      formats:
+        uuid:
+          type: uuid.UUID
+          import: uuid
+
 output: internal/api/openapi.gen.go

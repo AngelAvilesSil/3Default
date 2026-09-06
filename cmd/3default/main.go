@@ -8,7 +8,9 @@ import (
 
 	"github.com/AngelAvilesSil/3Default/internal/config"
 	"github.com/AngelAvilesSil/3Default/internal/database"
+	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/httpapi"
+	"github.com/AngelAvilesSil/3Default/internal/projects"
 )
 
 func main() {
@@ -27,7 +29,15 @@ func main() {
 	}
 	defer db.Close()
 
-	handler := httpapi.NewHandler(httpapi.NewServer(db))
+	queries := dbgen.New(db)
+	projectService := projects.NewService(queries)
+
+	handler := httpapi.NewHandler(
+		httpapi.NewServer(
+			db,
+			projectService,
+		),
+	)
 
 	server := &http.Server{
 		Addr:              address,
