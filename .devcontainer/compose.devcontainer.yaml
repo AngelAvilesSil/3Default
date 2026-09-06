@@ -1,0 +1,17 @@
+services:
+  dev:
+    image: golang:1.27.1-bookworm
+    working_dir: /workspace
+    command: /bin/sh -c "while sleep 1000; do :; done"
+    volumes:
+      - .:/workspace
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      GOMODCACHE: /go/pkg/mod
+      GOCACHE: /root/.cache/go-build
+      DATABASE_URL: postgres://three_default:three_default_dev@db:5432/three_default?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+    init: true

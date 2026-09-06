@@ -1,0 +1,23 @@
+{
+  "name": "3Default Go Development",
+
+  "dockerComposeFile": ["../compose.yaml", "compose.devcontainer.yaml"],
+
+  "service": "dev",
+  "runServices": ["dev", "db"],
+
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.Go"],
+      "settings": {
+        "go.toolsManagement.autoUpdate": false,
+        "go.toolsManagement.checkForUpdates": "local"
+      }
+    }
+  },
+
+  "postCreateCommand": "go install golang.org/x/tools/gopls@v0.23.0"
+}
