@@ -14,6 +14,14 @@ export default defineConfig({
             '@': fileURLToPath(new URL('./src', import.meta.url)),
         },
     },
+    server: {
+        proxy: {
+            '/api': {
+                target: 'http://api:8080',
+                changeOrigin: false,
+            },
+        },
+    },
     test: {
         environment: 'jsdom',
     },
