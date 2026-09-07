@@ -12,6 +12,7 @@ import (
 
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -308,6 +309,202 @@ func TestSessionQueries(t *testing.T) {
 		t.Fatalf(
 			"expected user deletion to remove session, got %d sessions",
 			cascadeSessionCount,
+		)
+	}
+}
+
+func TestPasswordCredentialQueries(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for database integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create database pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	queries := dbgen.New(tx)
+
+	user, err := queries.CreateUser(ctx, dbgen.CreateUserParams{
+		Email:       "credentials@example.com",
+		DisplayName: "Credential Test User",
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	const passwordHash = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA"
+
+	credential, err := queries.CreatePasswordCredential(
+		ctx,
+		dbgen.CreatePasswordCredentialParams{
+			UserID:       user.ID,
+			PasswordHash: passwordHash,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create password credential: %v", err)
+	}
+
+	if credential.UserID != user.ID {
+		t.Fatalf(
+			"expected credential user ID %s, got %s",
+			user.ID,
+			credential.UserID,
+		)
+	}
+
+	if credential.PasswordHash != passwordHash {
+		t.Fatalf(
+			"expected password hash %q, got %q",
+			passwordHash,
+			credential.PasswordHash,
+		)
+	}
+
+	if credential.CreatedAt.IsZero() {
+		t.Fatal("expected credential created_at to be set")
+	}
+
+	if credential.UpdatedAt.IsZero() {
+		t.Fatal("expected credential updated_at to be set")
+	}
+
+	foundCredential, err := queries.GetPasswordCredentialByUserID(
+		ctx,
+		user.ID,
+	)
+	if err != nil {
+		t.Fatalf("get password credential by user ID: %v", err)
+	}
+
+	if foundCredential.UserID != credential.UserID {
+		t.Fatalf(
+			"expected credential user ID %s, got %s",
+			credential.UserID,
+			foundCredential.UserID,
+		)
+	}
+
+	if foundCredential.PasswordHash != passwordHash {
+		t.Fatalf(
+			"expected password hash %q, got %q",
+			passwordHash,
+			foundCredential.PasswordHash,
+		)
+	}
+
+	cascadeUser, err := queries.CreateUser(ctx, dbgen.CreateUserParams{
+		Email:       "credential-cascade@example.com",
+		DisplayName: "Credential Cascade User",
+	})
+	if err != nil {
+		t.Fatalf("create cascade user: %v", err)
+	}
+
+	_, err = queries.CreatePasswordCredential(
+		ctx,
+		dbgen.CreatePasswordCredentialParams{
+			UserID:       cascadeUser.ID,
+			PasswordHash: passwordHash,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create cascade password credential: %v", err)
+	}
+
+	if _, err := tx.Exec(
+		ctx,
+		"DELETE FROM users WHERE id = $1",
+		cascadeUser.ID,
+	); err != nil {
+		t.Fatalf("delete cascade user: %v", err)
+	}
+
+	_, err = queries.GetPasswordCredentialByUserID(
+		ctx,
+		cascadeUser.ID,
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected deleted user's credential lookup to return pgx.ErrNoRows, got %v",
+			err,
+		)
+	}
+
+	_, err = queries.CreatePasswordCredential(
+		ctx,
+		dbgen.CreatePasswordCredentialParams{
+			UserID:       user.ID,
+			PasswordHash: passwordHash,
+		},
+	)
+
+	var pgErr *pgconn.PgError
+
+	if !errors.As(err, &pgErr) {
+		t.Fatalf(
+			"expected duplicate credential to return PostgreSQL error, got %v",
+			err,
+		)
+	}
+
+	if pgErr.Code != "23505" {
+		t.Fatalf(
+			"expected unique violation code %q, got %q",
+			"23505",
+			pgErr.Code,
+		)
+	}
+
+	if pgErr.ConstraintName != "password_credentials_pkey" {
+		t.Fatalf(
+			"expected constraint %q, got %q",
+			"password_credentials_pkey",
+			pgErr.ConstraintName,
+		)
+	}
+
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatalf("rollback transaction: %v", err)
+	}
+
+	var credentialCount int
+
+	if err := pool.QueryRow(
+		ctx,
+		`
+			SELECT count(*)
+			FROM password_credentials
+			WHERE user_id = $1
+		`,
+		user.ID,
+	).Scan(&credentialCount); err != nil {
+		t.Fatalf("count credentials after rollback: %v", err)
+	}
+
+	if credentialCount != 0 {
+		t.Fatalf(
+			"expected rollback to remove credential, got %d credentials",
+			credentialCount,
 		)
 	}
 }

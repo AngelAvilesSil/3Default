@@ -11,12 +11,14 @@ import (
 )
 
 type Querier interface {
+	CreatePasswordCredential(ctx context.Context, arg CreatePasswordCredentialParams) (PasswordCredential, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteExpiredSessions(ctx context.Context) (int64, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveSessionByTokenHashRow, error)
+	GetPasswordCredentialByUserID(ctx context.Context, userID uuid.UUID) (PasswordCredential, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 }
