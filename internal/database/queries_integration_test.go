@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AngelAvilesSil/3Default/internal/database"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -505,6 +506,145 @@ func TestPasswordCredentialQueries(t *testing.T) {
 		t.Fatalf(
 			"expected rollback to remove credential, got %d credentials",
 			credentialCount,
+		)
+	}
+}
+
+func TestRegistrationStoreCreatesUserAndCredentialAtomically(
+	t *testing.T,
+) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for database integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create database pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	store := database.NewRegistrationStore(pool)
+
+	const passwordHash = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdA$aGFzaA"
+
+	user, err := store.CreateUserWithPassword(
+		ctx,
+		dbgen.CreateUserParams{
+			Email:       "atomic-registration@example.com",
+			DisplayName: "Atomic Registration User",
+		},
+		passwordHash,
+	)
+	if err != nil {
+		t.Fatalf("create user with password: %v", err)
+	}
+
+	defer func() {
+		_, err := pool.Exec(
+			context.Background(),
+			"DELETE FROM users WHERE id = $1",
+			user.ID,
+		)
+		if err != nil {
+			t.Errorf("delete registration test user: %v", err)
+		}
+	}()
+
+	queries := dbgen.New(pool)
+
+	foundUser, err := queries.GetUserByEmail(
+		ctx,
+		"atomic-registration@example.com",
+	)
+	if err != nil {
+		t.Fatalf("get registered user: %v", err)
+	}
+
+	if foundUser.ID != user.ID {
+		t.Fatalf(
+			"expected user ID %s, got %s",
+			user.ID,
+			foundUser.ID,
+		)
+	}
+
+	credential, err := queries.GetPasswordCredentialByUserID(
+		ctx,
+		user.ID,
+	)
+	if err != nil {
+		t.Fatalf("get registered password credential: %v", err)
+	}
+
+	if credential.PasswordHash != passwordHash {
+		t.Fatalf(
+			"expected password hash %q, got %q",
+			passwordHash,
+			credential.PasswordHash,
+		)
+	}
+}
+
+func TestRegistrationStoreRollsBackUserWhenCredentialFails(
+	t *testing.T,
+) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for database integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create database pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	store := database.NewRegistrationStore(pool)
+
+	const email = "rollback-registration@example.com"
+
+	_, err = store.CreateUserWithPassword(
+		ctx,
+		dbgen.CreateUserParams{
+			Email:       email,
+			DisplayName: "Rollback Registration User",
+		},
+		"",
+	)
+	if err == nil {
+		t.Fatal(
+			"expected blank password hash to fail registration",
+		)
+	}
+
+	queries := dbgen.New(pool)
+
+	_, err = queries.GetUserByEmail(ctx, email)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected failed registration to leave no user, got %v",
+			err,
 		)
 	}
 }
