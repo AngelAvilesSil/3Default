@@ -1,6 +1,10 @@
 {
   "js/ts.tsdk.path": "./web/node_modules/typescript/lib",
 
+  "gopls": {
+    "buildFlags": ["-tags=integration"]
+  },
+
   "editor.detectIndentation": false,
   "editor.guides.indentation": true,
   "editor.guides.highlightActiveIndentation": true,
