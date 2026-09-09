@@ -22,7 +22,7 @@ type RegistrationStore interface {
 	) (dbgen.User, error)
 }
 
-type NewPasswordPolicy interface {
+type PasswordValidator interface {
 	NormalizeAndValidate(
 		ctx context.Context,
 		password string,
@@ -32,7 +32,7 @@ type NewPasswordPolicy interface {
 
 type RegistrationService struct {
 	registrations RegistrationStore
-	passwords     NewPasswordPolicy
+	passwords     PasswordValidator
 	hashPassword  func(string) (string, error)
 }
 
@@ -44,7 +44,7 @@ type RegisterInput struct {
 
 func NewRegistrationService(
 	registrations RegistrationStore,
-	passwords NewPasswordPolicy,
+	passwords PasswordValidator,
 ) *RegistrationService {
 	return &RegistrationService{
 		registrations: registrations,
