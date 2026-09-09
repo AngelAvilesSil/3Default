@@ -29,7 +29,7 @@ func (s registrationStoreStub) CreateUserWithPassword(
 	)
 }
 
-type newPasswordPolicyStub struct {
+type passwordValidatorStub struct {
 	normalizeAndValidate func(
 		ctx context.Context,
 		password string,
@@ -37,7 +37,7 @@ type newPasswordPolicyStub struct {
 	) (string, error)
 }
 
-func (p newPasswordPolicyStub) NormalizeAndValidate(
+func (p passwordValidatorStub) NormalizeAndValidate(
 	ctx context.Context,
 	password string,
 	email string,
@@ -90,7 +90,7 @@ func TestRegistrationServiceRegister(t *testing.T) {
 		},
 	}
 
-	policy := newPasswordPolicyStub{
+	policy := passwordValidatorStub{
 		normalizeAndValidate: func(
 			_ context.Context,
 			password string,
@@ -168,7 +168,7 @@ func TestRegistrationServiceRequiresEmail(t *testing.T) {
 				return dbgen.User{}, nil
 			},
 		},
-		newPasswordPolicyStub{
+		passwordValidatorStub{
 			normalizeAndValidate: func(
 				context.Context,
 				string,
@@ -208,7 +208,7 @@ func TestRegistrationServiceRequiresDisplayName(t *testing.T) {
 				return dbgen.User{}, nil
 			},
 		},
-		newPasswordPolicyStub{
+		passwordValidatorStub{
 			normalizeAndValidate: func(
 				context.Context,
 				string,
@@ -250,7 +250,7 @@ func TestRegistrationServiceReturnsPasswordPolicyError(t *testing.T) {
 				return dbgen.User{}, nil
 			},
 		},
-		newPasswordPolicyStub{
+		passwordValidatorStub{
 			normalizeAndValidate: func(
 				context.Context,
 				string,
@@ -291,7 +291,7 @@ func TestRegistrationServiceReturnsPasswordHashError(t *testing.T) {
 				return dbgen.User{}, nil
 			},
 		},
-		newPasswordPolicyStub{
+		passwordValidatorStub{
 			normalizeAndValidate: func(
 				context.Context,
 				string,
@@ -337,7 +337,7 @@ func TestRegistrationServiceReturnsStoreError(t *testing.T) {
 				return dbgen.User{}, storeErr
 			},
 		},
-		newPasswordPolicyStub{
+		passwordValidatorStub{
 			normalizeAndValidate: func(
 				context.Context,
 				string,
