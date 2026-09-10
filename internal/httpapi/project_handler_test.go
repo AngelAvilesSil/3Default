@@ -89,6 +89,7 @@ func TestCreateProjectRequiresAuthentication(t *testing.T) {
 		NewServer(
 			fakeDatabase{},
 			projectCreator,
+			nil,
 		),
 		nil,
 	)
@@ -135,6 +136,7 @@ func TestCreateProjectRejectsSessionResolutionFailure(
 		NewServer(
 			fakeDatabase{},
 			projectCreator,
+			nil,
 		),
 		nil,
 	)
@@ -188,6 +190,7 @@ func TestCreateProjectMapsNameValidationError(t *testing.T) {
 		NewServer(
 			fakeDatabase{},
 			projectCreator,
+			nil,
 		),
 		nil,
 	)
@@ -243,6 +246,7 @@ func TestCreateProjectMapsUnexpectedServiceError(t *testing.T) {
 		NewServer(
 			fakeDatabase{},
 			projectCreator,
+			nil,
 		),
 		nil,
 	)
@@ -292,6 +296,7 @@ func TestCreateProjectRejectsCrossOriginBrowserRequest(
 		NewServer(
 			fakeDatabase{},
 			projectCreator,
+			nil,
 		),
 		resolver,
 	)
@@ -378,6 +383,7 @@ func TestCreateProjectResolvesSessionCookie(
 		NewServer(
 			fakeDatabase{},
 			projectCreator,
+			nil,
 		),
 		resolver,
 	)
@@ -470,6 +476,7 @@ func TestCreateProjectUsesAuthenticatedUserAsOwner(
 		NewServer(
 			fakeDatabase{},
 			projectCreator,
+			nil,
 		),
 		nil,
 	)
@@ -598,6 +605,7 @@ func TestCreateProjectRejectsMalformedJSON(t *testing.T) {
 		NewServer(
 			fakeDatabase{},
 			projectCreator,
+			nil,
 		),
 		nil,
 	)

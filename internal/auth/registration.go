@@ -10,8 +10,15 @@ import (
 )
 
 var (
-	ErrEmailRequired       = errors.New("email is required")
-	ErrDisplayNameRequired = errors.New("display name is required")
+	ErrEmailRequired = errors.New(
+		"email is required",
+	)
+	ErrDisplayNameRequired = errors.New(
+		"display name is required",
+	)
+	ErrEmailAlreadyRegistered = errors.New(
+		"email is already registered",
+	)
 )
 
 type RegistrationStore interface {
