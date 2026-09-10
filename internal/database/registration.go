@@ -2,9 +2,12 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/AngelAvilesSil/3Default/internal/auth"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -44,10 +47,8 @@ func (s *RegistrationStore) CreateUserWithPassword(
 		userParams,
 	)
 	if err != nil {
-		return dbgen.User{}, fmt.Errorf(
-			"create registration user: %w",
-			err,
-		)
+		return dbgen.User{},
+			mapCreateRegistrationUserError(err)
 	}
 
 	_, err = queries.CreatePasswordCredential(
@@ -73,3 +74,23 @@ func (s *RegistrationStore) CreateUserWithPassword(
 
 	return user, nil
 }
+
+func mapCreateRegistrationUserError(
+	err error,
+) error {
+	var pgErr *pgconn.PgError
+
+	if errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName ==
+			"users_email_case_insensitive_unique" {
+		return auth.ErrEmailAlreadyRegistered
+	}
+
+	return fmt.Errorf(
+		"create registration user: %w",
+		err,
+	)
+}
+
+var _ auth.RegistrationStore = (*RegistrationStore)(nil)

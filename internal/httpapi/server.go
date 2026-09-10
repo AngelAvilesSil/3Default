@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	api "github.com/AngelAvilesSil/3Default/internal/api"
+	"github.com/AngelAvilesSil/3Default/internal/auth"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/projects"
 )
@@ -22,18 +23,28 @@ type ProjectCreator interface {
 	) (dbgen.Project, error)
 }
 
+type UserRegistrar interface {
+	Register(
+		ctx context.Context,
+		input auth.RegisterInput,
+	) (dbgen.User, error)
+}
+
 type Server struct {
-	database DatabasePinger
-	projects ProjectCreator
+	database      DatabasePinger
+	projects      ProjectCreator
+	registrations UserRegistrar
 }
 
 func NewServer(
 	database DatabasePinger,
 	projects ProjectCreator,
+	registrations UserRegistrar,
 ) *Server {
 	return &Server{
-		database: database,
-		projects: projects,
+		database:      database,
+		projects:      projects,
+		registrations: registrations,
 	}
 }
 
@@ -56,6 +67,77 @@ func (s *Server) GetReady(
 	}
 
 	return api.GetReady200JSONResponse{Status: api.Ready}, nil
+}
+
+func (s *Server) RegisterUser(
+	ctx context.Context,
+	request api.RegisterUserRequestObject,
+) (api.RegisterUserResponseObject, error) {
+	if request.Body == nil {
+		return api.RegisterUser400JSONResponse{
+			Error: "request body is required",
+		}, nil
+	}
+
+	user, err := s.registrations.Register(
+		ctx,
+		auth.RegisterInput{
+			Email:       request.Body.Email,
+			DisplayName: request.Body.DisplayName,
+			Password:    request.Body.Password,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, auth.ErrEmailRequired):
+			return api.RegisterUser400JSONResponse{
+				Error: "email is required",
+			}, nil
+
+		case errors.Is(err, auth.ErrDisplayNameRequired):
+			return api.RegisterUser400JSONResponse{
+				Error: "display name is required",
+			}, nil
+
+		case errors.Is(err, auth.ErrPasswordInvalidUTF8):
+			return api.RegisterUser400JSONResponse{
+				Error: "password contains invalid UTF-8",
+			}, nil
+
+		case errors.Is(err, auth.ErrPasswordTooShort):
+			return api.RegisterUser400JSONResponse{
+				Error: "password must contain at least 15 characters",
+			}, nil
+
+		case errors.Is(err, auth.ErrPasswordTooLong):
+			return api.RegisterUser400JSONResponse{
+				Error: "password must contain at most 128 characters",
+			}, nil
+
+		case errors.Is(err, auth.ErrPasswordBlocked):
+			return api.RegisterUser400JSONResponse{
+				Error: "password is too common, expected, or compromised",
+			}, nil
+
+		case errors.Is(err, auth.ErrEmailAlreadyRegistered):
+			return api.RegisterUser409JSONResponse{
+				Error: "email is already registered",
+			}, nil
+
+		default:
+			return api.RegisterUser500JSONResponse{
+				Error: "unable to register user",
+			}, nil
+		}
+	}
+
+	return api.RegisterUser201JSONResponse{
+		Id:          uuid.UUID(user.ID),
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		CreatedAt:   user.CreatedAt,
+		UpdatedAt:   user.UpdatedAt,
+	}, nil
 }
 
 func (s *Server) CreateProject(
@@ -112,4 +194,5 @@ func (s *Server) CreateProject(
 }
 
 var _ ProjectCreator = (*projects.Service)(nil)
+var _ UserRegistrar = (*auth.RegistrationService)(nil)
 var _ api.StrictServerInterface = (*Server)(nil)

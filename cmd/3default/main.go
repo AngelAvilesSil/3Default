@@ -36,6 +36,22 @@ func main() {
 	queries := dbgen.New(db)
 	projectService := projects.NewService(queries)
 
+	registrationStore := database.NewRegistrationStore(db)
+
+	passwordBlocklist := auth.NewLocalPasswordBlocklist(
+		"3default",
+		"3default.com",
+	)
+
+	passwordPolicy := auth.NewPasswordPolicy(
+		passwordBlocklist,
+	)
+
+	registrationService := auth.NewRegistrationService(
+		registrationStore,
+		passwordPolicy,
+	)
+
 	sessionService, err := auth.NewSessionService(
 		queries,
 		sessionLifetime,
@@ -48,6 +64,7 @@ func main() {
 		httpapi.NewServer(
 			db,
 			projectService,
+			registrationService,
 		),
 		sessionService,
 	)
