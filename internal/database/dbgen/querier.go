@@ -18,6 +18,7 @@ type Querier interface {
 	DeleteExpiredSessions(ctx context.Context) (int64, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveSessionByTokenHashRow, error)
+	GetLoginCredentialByEmail(ctx context.Context, email string) (GetLoginCredentialByEmailRow, error)
 	GetPasswordCredentialByUserID(ctx context.Context, userID uuid.UUID) (PasswordCredential, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
