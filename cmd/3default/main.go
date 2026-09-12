@@ -60,11 +60,20 @@ func main() {
 		log.Fatal(err)
 	}
 
+	loginService, err := auth.NewLoginService(
+		queries,
+		sessionService,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	handler := httpapi.NewHandler(
 		httpapi.NewServer(
 			db,
 			projectService,
 			registrationService,
+			loginService,
 		),
 		sessionService,
 	)

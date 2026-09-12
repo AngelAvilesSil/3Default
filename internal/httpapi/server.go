@@ -30,21 +30,31 @@ type UserRegistrar interface {
 	) (dbgen.User, error)
 }
 
+type UserAuthenticator interface {
+	Login(
+		ctx context.Context,
+		input auth.LoginInput,
+	) (auth.LoginResult, error)
+}
+
 type Server struct {
-	database      DatabasePinger
-	projects      ProjectCreator
-	registrations UserRegistrar
+	database       DatabasePinger
+	projects       ProjectCreator
+	registrations  UserRegistrar
+	authentication UserAuthenticator
 }
 
 func NewServer(
 	database DatabasePinger,
 	projects ProjectCreator,
 	registrations UserRegistrar,
+	authentication UserAuthenticator,
 ) *Server {
 	return &Server{
-		database:      database,
-		projects:      projects,
-		registrations: registrations,
+		database:       database,
+		projects:       projects,
+		registrations:  registrations,
+		authentication: authentication,
 	}
 }
 
@@ -67,6 +77,54 @@ func (s *Server) GetReady(
 	}
 
 	return api.GetReady200JSONResponse{Status: api.Ready}, nil
+}
+
+func (s *Server) LoginUser(
+	ctx context.Context,
+	request api.LoginUserRequestObject,
+) (api.LoginUserResponseObject, error) {
+	if request.Body == nil {
+		return api.LoginUser400JSONResponse{
+			Error: "request body is required",
+		}, nil
+	}
+
+	result, err := s.authentication.Login(
+		ctx,
+		auth.LoginInput{
+			Email:    request.Body.Email,
+			Password: request.Body.Password,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			return api.LoginUser401JSONResponse{
+				Error: "invalid email or password",
+			}, nil
+		}
+
+		return api.LoginUser500JSONResponse{
+			Error: "unable to log in",
+		}, nil
+	}
+
+	sessionCookie := NewSessionCookie(
+		result.Session.Token,
+		result.Session.Session.ExpiresAt,
+	).String()
+
+	return api.LoginUser200JSONResponse{
+		Body: api.UserResponse{
+			Id:          uuid.UUID(result.User.ID),
+			Email:       result.User.Email,
+			DisplayName: result.User.DisplayName,
+			CreatedAt:   result.User.CreatedAt,
+			UpdatedAt:   result.User.UpdatedAt,
+		},
+		Headers: api.LoginUser200ResponseHeaders{
+			SetCookie: &sessionCookie,
+		},
+	}, nil
 }
 
 func (s *Server) RegisterUser(
@@ -195,4 +253,5 @@ func (s *Server) CreateProject(
 
 var _ ProjectCreator = (*projects.Service)(nil)
 var _ UserRegistrar = (*auth.RegistrationService)(nil)
+var _ UserAuthenticator = (*auth.LoginService)(nil)
 var _ api.StrictServerInterface = (*Server)(nil)
