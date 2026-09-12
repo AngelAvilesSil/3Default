@@ -65,6 +65,7 @@ func TestRegisterUserCreatesUser(t *testing.T) {
 			fakeDatabase{},
 			nil,
 			registrar,
+			nil,
 		),
 		nil,
 	)
@@ -178,6 +179,7 @@ func TestRegisterUserRequiresBody(t *testing.T) {
 		fakeDatabase{},
 		nil,
 		&fakeUserRegistrar{},
+		nil,
 	)
 
 	response, err := server.RegisterUser(
@@ -258,6 +260,7 @@ func TestRegisterUserMapsValidationErrors(
 				fakeDatabase{},
 				nil,
 				registrar,
+				nil,
 			)
 
 			response, err := server.RegisterUser(
@@ -305,6 +308,7 @@ func TestRegisterUserMapsEmailConflict(t *testing.T) {
 		fakeDatabase{},
 		nil,
 		registrar,
+		nil,
 	)
 
 	response, err := server.RegisterUser(
@@ -350,6 +354,7 @@ func TestRegisterUserMapsUnexpectedError(t *testing.T) {
 		fakeDatabase{},
 		nil,
 		registrar,
+		nil,
 	)
 
 	response, err := server.RegisterUser(
@@ -396,6 +401,7 @@ func TestRegisterUserRejectsCrossOriginBrowserRequest(
 			fakeDatabase{},
 			nil,
 			registrar,
+			nil,
 		),
 		nil,
 	)
