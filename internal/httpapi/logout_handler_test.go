@@ -39,6 +39,7 @@ func TestLogoutUserRevokesSessionAndExpiresCookie(
 			nil,
 			nil,
 			revoker,
+			nil,
 		),
 		nil,
 	)
@@ -162,6 +163,7 @@ func TestLogoutUserWithoutCookieIsIdempotent(
 			nil,
 			nil,
 			revoker,
+			nil,
 		),
 		nil,
 	)
@@ -210,6 +212,7 @@ func TestLogoutUserTreatsInvalidTokenAsLoggedOut(
 			nil,
 			nil,
 			revoker,
+			nil,
 		),
 		nil,
 	)
@@ -264,6 +267,7 @@ func TestLogoutUserMapsRevocationFailure(
 			nil,
 			nil,
 			revoker,
+			nil,
 		),
 		nil,
 	)
@@ -323,6 +327,7 @@ func TestLogoutUserRejectsCrossOriginBrowserRequest(
 			nil,
 			nil,
 			revoker,
+			nil,
 		),
 		nil,
 	)

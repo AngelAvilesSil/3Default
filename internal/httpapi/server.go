@@ -10,6 +10,7 @@ import (
 	"github.com/AngelAvilesSil/3Default/internal/auth"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/projects"
+	googleuuid "github.com/google/uuid"
 )
 
 type DatabasePinger interface {
@@ -44,12 +45,20 @@ type SessionRevoker interface {
 	) error
 }
 
+type CurrentUserReader interface {
+	GetUserByID(
+		ctx context.Context,
+		id googleuuid.UUID,
+	) (dbgen.User, error)
+}
+
 type Server struct {
 	database           DatabasePinger
 	projects           ProjectCreator
 	registrations      UserRegistrar
 	authentication     UserAuthenticator
 	sessionRevocations SessionRevoker
+	currentUsers       CurrentUserReader
 }
 
 func NewServer(
@@ -58,6 +67,7 @@ func NewServer(
 	registrations UserRegistrar,
 	authentication UserAuthenticator,
 	sessionRevocations SessionRevoker,
+	currentUsers CurrentUserReader,
 ) *Server {
 	return &Server{
 		database:           database,
@@ -65,6 +75,7 @@ func NewServer(
 		registrations:      registrations,
 		authentication:     authentication,
 		sessionRevocations: sessionRevocations,
+		currentUsers:       currentUsers,
 	}
 }
 
@@ -168,6 +179,42 @@ func (s *Server) LogoutUser(
 	}
 
 	return success, nil
+}
+
+func (s *Server) GetCurrentUser(
+	ctx context.Context,
+	_ api.GetCurrentUserRequestObject,
+) (api.GetCurrentUserResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.GetCurrentUser500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.GetCurrentUser401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	user, err := s.currentUsers.GetUserByID(
+		ctx,
+		session.UserID,
+	)
+	if err != nil {
+		return api.GetCurrentUser500JSONResponse{
+			Error: "unable to get current user",
+		}, nil
+	}
+
+	return api.GetCurrentUser200JSONResponse{
+		Id:          uuid.UUID(user.ID),
+		Email:       user.Email,
+		DisplayName: user.DisplayName,
+		CreatedAt:   user.CreatedAt,
+		UpdatedAt:   user.UpdatedAt,
+	}, nil
 }
 
 func (s *Server) RegisterUser(
@@ -298,4 +345,5 @@ var _ ProjectCreator = (*projects.Service)(nil)
 var _ UserRegistrar = (*auth.RegistrationService)(nil)
 var _ UserAuthenticator = (*auth.LoginService)(nil)
 var _ SessionRevoker = (*auth.SessionService)(nil)
+var _ CurrentUserReader = (*dbgen.Queries)(nil)
 var _ api.StrictServerInterface = (*Server)(nil)

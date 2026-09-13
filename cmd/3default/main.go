@@ -75,6 +75,7 @@ func main() {
 			registrationService,
 			loginService,
 			sessionService,
+			queries,
 		),
 		sessionService,
 	)

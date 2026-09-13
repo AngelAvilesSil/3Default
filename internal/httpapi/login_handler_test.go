@@ -79,6 +79,7 @@ func TestLoginUserCreatesSessionCookie(t *testing.T) {
 			nil,
 			authenticator,
 			nil,
+			nil,
 		),
 		nil,
 	)
@@ -242,6 +243,7 @@ func TestLoginUserRequiresBody(t *testing.T) {
 		nil,
 		&fakeUserAuthenticator{},
 		nil,
+		nil,
 	)
 
 	response, err := server.LoginUser(
@@ -282,6 +284,7 @@ func TestLoginUserMapsInvalidCredentials(t *testing.T) {
 		nil,
 		nil,
 		authenticator,
+		nil,
 		nil,
 	)
 
@@ -329,6 +332,7 @@ func TestLoginUserMapsUnexpectedError(t *testing.T) {
 		nil,
 		authenticator,
 		nil,
+		nil,
 	)
 
 	response, err := server.LoginUser(
@@ -375,6 +379,7 @@ func TestLoginUserRejectsCrossOriginBrowserRequest(
 			nil,
 			nil,
 			authenticator,
+			nil,
 			nil,
 		),
 		nil,
@@ -437,6 +442,7 @@ func TestLoginUserInvalidCredentialsDoNotSetCookie(
 			nil,
 			nil,
 			authenticator,
+			nil,
 			nil,
 		),
 		nil,

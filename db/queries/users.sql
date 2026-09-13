@@ -23,3 +23,13 @@ SELECT
     updated_at
 FROM users
 WHERE lower(email) = lower(sqlc.arg(email));
+
+-- name: GetUserByID :one
+SELECT
+    id,
+    email,
+    display_name,
+    created_at,
+    updated_at
+FROM users
+WHERE id = sqlc.arg(id);

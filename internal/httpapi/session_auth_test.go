@@ -546,3 +546,92 @@ func TestLogoutSessionTokenMiddlewareOnlyAppliesToLogout(
 		})
 	}
 }
+
+func TestAuthenticatedSessionContextMiddlewareOnlyResolvesProtectedRoutes(
+	t *testing.T,
+) {
+	testCases := []struct {
+		name        string
+		method      string
+		path        string
+		wantResolve bool
+	}{
+		{
+			name:        "create project",
+			method:      http.MethodPost,
+			path:        "/api/projects",
+			wantResolve: true,
+		},
+		{
+			name:        "current user",
+			method:      http.MethodGet,
+			path:        "/api/auth/me",
+			wantResolve: true,
+		},
+		{
+			name:        "get projects",
+			method:      http.MethodGet,
+			path:        "/api/projects",
+			wantResolve: false,
+		},
+		{
+			name:        "post current user",
+			method:      http.MethodPost,
+			path:        "/api/auth/me",
+			wantResolve: false,
+		},
+		{
+			name:        "health",
+			method:      http.MethodGet,
+			path:        "/api/health",
+			wantResolve: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			resolver := &fakeSessionResolver{}
+
+			next := http.HandlerFunc(func(
+				w http.ResponseWriter,
+				_ *http.Request,
+			) {
+				w.WriteHeader(http.StatusNoContent)
+			})
+
+			handler := AuthenticatedSessionContextMiddleware(
+				resolver,
+			)(next)
+
+			request := httptest.NewRequest(
+				testCase.method,
+				testCase.path,
+				nil,
+			)
+			request.AddCookie(&http.Cookie{
+				Name:  sessionCookieName,
+				Value: "session-token",
+			})
+
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if resolver.called != testCase.wantResolve {
+				t.Fatalf(
+					"resolver called = %t, want %t",
+					resolver.called,
+					testCase.wantResolve,
+				)
+			}
+
+			if response.Code != http.StatusNoContent {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusNoContent,
+					response.Code,
+				)
+			}
+		})
+	}
+}
