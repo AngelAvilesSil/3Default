@@ -386,3 +386,163 @@ func TestSessionContextMiddlewarePreservesUnexpectedResolutionError(
 
 	handler.ServeHTTP(response, request)
 }
+
+func TestSessionTokenContextMiddlewareAllowsRequestWithoutCookie(
+	t *testing.T,
+) {
+	next := http.HandlerFunc(func(
+		w http.ResponseWriter,
+		r *http.Request,
+	) {
+		if _, ok := SessionTokenFromContext(r.Context()); ok {
+			t.Fatal("expected no session token")
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	handler := SessionTokenContextMiddleware(next)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/auth/logout",
+		nil,
+	)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusNoContent,
+			response.Code,
+		)
+	}
+}
+
+func TestSessionTokenContextMiddlewareAddsCookieToken(
+	t *testing.T,
+) {
+	next := http.HandlerFunc(func(
+		w http.ResponseWriter,
+		r *http.Request,
+	) {
+		token, ok := SessionTokenFromContext(r.Context())
+		if !ok {
+			t.Fatal("expected session token")
+		}
+
+		if token != "session-token" {
+			t.Fatalf(
+				"expected token %q, got %q",
+				"session-token",
+				token,
+			)
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	handler := SessionTokenContextMiddleware(next)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/auth/logout",
+		nil,
+	)
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: "session-token",
+	})
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusNoContent,
+			response.Code,
+		)
+	}
+}
+
+func TestLogoutSessionTokenMiddlewareOnlyAppliesToLogout(
+	t *testing.T,
+) {
+	testCases := []struct {
+		name      string
+		method    string
+		path      string
+		wantToken bool
+	}{
+		{
+			name:      "logout post",
+			method:    http.MethodPost,
+			path:      "/api/auth/logout",
+			wantToken: true,
+		},
+		{
+			name:      "logout get",
+			method:    http.MethodGet,
+			path:      "/api/auth/logout",
+			wantToken: false,
+		},
+		{
+			name:      "project post",
+			method:    http.MethodPost,
+			path:      "/api/projects",
+			wantToken: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			next := http.HandlerFunc(func(
+				w http.ResponseWriter,
+				r *http.Request,
+			) {
+				_, ok := SessionTokenFromContext(
+					r.Context(),
+				)
+
+				if ok != testCase.wantToken {
+					t.Fatalf(
+						"session token present = %t, want %t",
+						ok,
+						testCase.wantToken,
+					)
+				}
+
+				w.WriteHeader(http.StatusNoContent)
+			})
+
+			handler := LogoutSessionTokenMiddleware(next)
+
+			request := httptest.NewRequest(
+				testCase.method,
+				testCase.path,
+				nil,
+			)
+			request.AddCookie(&http.Cookie{
+				Name:  sessionCookieName,
+				Value: "session-token",
+			})
+
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusNoContent {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusNoContent,
+					response.Code,
+				)
+			}
+		})
+	}
+}

@@ -37,11 +37,19 @@ type UserAuthenticator interface {
 	) (auth.LoginResult, error)
 }
 
+type SessionRevoker interface {
+	Revoke(
+		ctx context.Context,
+		token string,
+	) error
+}
+
 type Server struct {
-	database       DatabasePinger
-	projects       ProjectCreator
-	registrations  UserRegistrar
-	authentication UserAuthenticator
+	database           DatabasePinger
+	projects           ProjectCreator
+	registrations      UserRegistrar
+	authentication     UserAuthenticator
+	sessionRevocations SessionRevoker
 }
 
 func NewServer(
@@ -49,12 +57,14 @@ func NewServer(
 	projects ProjectCreator,
 	registrations UserRegistrar,
 	authentication UserAuthenticator,
+	sessionRevocations SessionRevoker,
 ) *Server {
 	return &Server{
-		database:       database,
-		projects:       projects,
-		registrations:  registrations,
-		authentication: authentication,
+		database:           database,
+		projects:           projects,
+		registrations:      registrations,
+		authentication:     authentication,
+		sessionRevocations: sessionRevocations,
 	}
 }
 
@@ -125,6 +135,39 @@ func (s *Server) LoginUser(
 			SetCookie: &sessionCookie,
 		},
 	}, nil
+}
+
+func (s *Server) LogoutUser(
+	ctx context.Context,
+	_ api.LogoutUserRequestObject,
+) (api.LogoutUserResponseObject, error) {
+	expiredSessionCookie := NewExpiredSessionCookie().String()
+
+	success := api.LogoutUser204Response{
+		Headers: api.LogoutUser204ResponseHeaders{
+			SetCookie: &expiredSessionCookie,
+		},
+	}
+
+	token, ok := SessionTokenFromContext(ctx)
+	if !ok {
+		return success, nil
+	}
+
+	if err := s.sessionRevocations.Revoke(
+		ctx,
+		token,
+	); err != nil {
+		if errors.Is(err, auth.ErrInvalidSessionToken) {
+			return success, nil
+		}
+
+		return api.LogoutUser500JSONResponse{
+			Error: "unable to log out",
+		}, nil
+	}
+
+	return success, nil
 }
 
 func (s *Server) RegisterUser(
@@ -254,4 +297,5 @@ func (s *Server) CreateProject(
 var _ ProjectCreator = (*projects.Service)(nil)
 var _ UserRegistrar = (*auth.RegistrationService)(nil)
 var _ UserAuthenticator = (*auth.LoginService)(nil)
+var _ SessionRevoker = (*auth.SessionService)(nil)
 var _ api.StrictServerInterface = (*Server)(nil)

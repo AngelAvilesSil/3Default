@@ -74,6 +74,7 @@ func main() {
 			projectService,
 			registrationService,
 			loginService,
+			sessionService,
 		),
 		sessionService,
 	)
