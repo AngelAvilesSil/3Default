@@ -33,7 +33,7 @@ func NewHandler(
 
 	handler = LogoutSessionTokenMiddleware(handler)
 
-	handler = ProjectSessionContextMiddleware(
+	handler = AuthenticatedSessionContextMiddleware(
 		sessionResolver,
 	)(handler)
 

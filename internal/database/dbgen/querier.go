@@ -21,6 +21,7 @@ type Querier interface {
 	GetLoginCredentialByEmail(ctx context.Context, email string) (GetLoginCredentialByEmailRow, error)
 	GetPasswordCredentialByUserID(ctx context.Context, userID uuid.UUID) (PasswordCredential, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 }
 

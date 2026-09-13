@@ -184,7 +184,7 @@ func SessionContextMiddleware(
 	}
 }
 
-func ProjectSessionContextMiddleware(
+func AuthenticatedSessionContextMiddleware(
 	resolver SessionResolver,
 ) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -196,6 +196,12 @@ func ProjectSessionContextMiddleware(
 		) {
 			if r.Method == http.MethodPost &&
 				r.URL.Path == "/api/projects" {
+				protected.ServeHTTP(w, r)
+				return
+			}
+
+			if r.Method == http.MethodGet &&
+				r.URL.Path == "/api/auth/me" {
 				protected.ServeHTTP(w, r)
 				return
 			}
