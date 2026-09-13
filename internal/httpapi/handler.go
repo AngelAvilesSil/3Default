@@ -31,6 +31,8 @@ func NewHandler(
 
 	handler := api.Handler(strictHandler)
 
+	handler = LogoutSessionTokenMiddleware(handler)
+
 	handler = ProjectSessionContextMiddleware(
 		sessionResolver,
 	)(handler)

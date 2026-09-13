@@ -20,6 +20,8 @@ type SessionResolver interface {
 
 type sessionContextKey struct{}
 
+type sessionTokenContextKey struct{}
+
 type sessionContextState struct {
 	session    auth.Session
 	hasSession bool
@@ -72,6 +74,62 @@ func SessionResolutionError(ctx context.Context) error {
 	}
 
 	return state.err
+}
+
+func SessionTokenFromContext(
+	ctx context.Context,
+) (string, bool) {
+	token, ok := ctx.Value(sessionTokenContextKey{}).(string)
+	if !ok {
+		return "", false
+	}
+
+	return token, true
+}
+
+func SessionTokenContextMiddleware(
+	next http.Handler,
+) http.Handler {
+	return http.HandlerFunc(func(
+		w http.ResponseWriter,
+		r *http.Request,
+	) {
+		cookie, err := r.Cookie(sessionCookieName)
+		if err != nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		ctx := context.WithValue(
+			r.Context(),
+			sessionTokenContextKey{},
+			cookie.Value,
+		)
+
+		next.ServeHTTP(
+			w,
+			r.WithContext(ctx),
+		)
+	})
+}
+
+func LogoutSessionTokenMiddleware(
+	next http.Handler,
+) http.Handler {
+	protected := SessionTokenContextMiddleware(next)
+
+	return http.HandlerFunc(func(
+		w http.ResponseWriter,
+		r *http.Request,
+	) {
+		if r.Method == http.MethodPost &&
+			r.URL.Path == "/api/auth/logout" {
+			protected.ServeHTTP(w, r)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func SessionContextMiddleware(
