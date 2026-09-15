@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: backend foundation and authentication**
+**Current phase: backend foundation and authentication hardening**
 
 Implemented foundations include:
 
@@ -22,15 +22,17 @@ Implemented foundations include:
 * OpenAPI-first HTTP contracts
 * health and readiness endpoints
 * project persistence and authenticated project creation
+* atomic user registration and password-credential creation
+* password creation policy and local weak-password screening
+* Argon2id password hashing
 * PostgreSQL-backed server-side sessions
 * secure opaque session tokens and SHA-256 token hashing
-* secure host-only session cookies and same-origin protection
-* Argon2id password hashing
-* password credential persistence
-* atomic user + credential creation
+* secure host-only session cookies
+* login, logout, and authenticated-user HTTP flows
+* unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The next active milestone is completing user registration and login.
+The core authentication flow is implemented. Remaining work in this milestone focuses on authentication hardening and final milestone review.
 
 ---
 
@@ -173,28 +175,51 @@ Generated OpenAPI and sqlc Go files are committed as part of the reproducible pr
 
 Authentication uses PostgreSQL-backed server-side sessions.
 
-The browser receives a cryptographically random opaque token. Only a SHA-256 hash of that token is stored in PostgreSQL.
+Registration creates the user and password credential atomically and deliberately does **not** create a session. Login is a separate operation that verifies credentials and creates the authenticated session.
 
 ```text
-Browser
-   │ opaque session token
-   ▼
-Secure HttpOnly cookie
-   │
-   ▼
-SHA-256
-   │
-   ▼
-PostgreSQL session lookup
+POST /api/auth/register
+        │
+        └── create user + password credential
+            without creating a session
+
+POST /api/auth/login
+        │
+        ├── verify credentials
+        └── create PostgreSQL session
+                │
+                └── __Host-3default_session cookie
+
+GET /api/auth/me
+        │
+        ├── resolve active session
+        └── return authenticated user
+
+POST /api/auth/logout
+        │
+        ├── revoke matching server-side session
+        └── expire browser cookie
 ```
 
-Current security includes server-side session persistence, expiration and revocation, `HttpOnly`, `Secure`, `SameSite=Lax`, `__Host-` cookie naming, and same-origin request protection.
+Each session starts with 32 cryptographically random bytes. The opaque token is sent to the browser, while only its SHA-256 hash is stored in PostgreSQL. Sessions currently expire after seven days.
 
-Passwords are hashed with Argon2id and stored separately from user identity records.
+The browser cookie is named `__Host-3default_session` and uses `HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`, and no `Domain` attribute, keeping it host-only.
 
-User creation and password-credential creation are performed atomically so failed registration cannot leave a partially created account.
+Passwords are normalized to Unicode NFC before creation-policy validation. New passwords must contain 15–128 Unicode code points and must not match the local password blocklist.
 
-Registration and login HTTP flows are still under development.
+Passwords are hashed with Argon2id using:
+
+* 19 MiB of memory
+* 2 iterations
+* parallelism of 1
+* a 16-byte random salt
+* a 32-byte derived key
+
+Login uses the same invalid-credentials response for an unknown account and an incorrect password. Missing-account verification still performs password-hashing work using a dummy hash to reduce account-enumeration timing differences.
+
+Logout is idempotent from the client's perspective: a missing, invalid, expired, or already-revoked session is treated as already logged out, while successful logout expires the browser cookie.
+
+Unsafe cross-origin browser requests are rejected by the HTTP layer. The detailed request and response contract remains defined in `api/openapi.yaml`.
 
 ---
 
@@ -207,7 +232,7 @@ For authenticated project creation, ownership is derived from the server-side se
 ```text
 POST /api/projects
         │
-        ├── validate same-origin request
+        ├── validate cross-origin request safety
         ├── resolve session
         ├── identify authenticated user
         └── create project owned by that user
@@ -220,6 +245,12 @@ Currently implemented endpoints:
 ```text
 GET  /api/health
 GET  /api/ready
+
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/me
+
 POST /api/projects
 ```
 
@@ -405,14 +436,17 @@ The goal is to keep both the codebase and Git history understandable as the proj
 
 * [x] server-side session infrastructure
 * [x] secure session-token handling and cookies
-* [x] same-origin request protection
+* [x] unsafe cross-origin browser request protection
 * [x] Argon2id password hashing
 * [x] password credential persistence
+* [x] password creation policy and local blocklist
 * [x] atomic registration persistence
-* [ ] registration application service
-* [ ] registration HTTP endpoint
-* [ ] login and logout flows
-* [ ] authenticated-user endpoint
+* [x] registration application service
+* [x] registration HTTP endpoint
+* [x] login flow
+* [x] logout flow
+* [x] authenticated-user endpoint
+* [ ] failed-login rate limiting
 
 ### Projects
 
