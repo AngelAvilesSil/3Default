@@ -15,8 +15,13 @@ import (
 
 const dummyLoginPassword = "3default-dummy-login-password"
 
-var ErrInvalidCredentials = errors.New(
-	"invalid email or password",
+var (
+	ErrInvalidCredentials = errors.New(
+		"invalid email or password",
+	)
+	ErrLoginRateLimited = errors.New(
+		"too many login attempts",
+	)
 )
 
 type LoginCredentialStore interface {
@@ -36,6 +41,7 @@ type LoginSessionCreator interface {
 type LoginService struct {
 	credentials       LoginCredentialStore
 	sessions          LoginSessionCreator
+	attempts          LoginAttemptLimiter
 	dummyPasswordHash string
 	verifyPassword    func(string, string) (bool, error)
 }
@@ -53,6 +59,7 @@ type LoginResult struct {
 func NewLoginService(
 	credentials LoginCredentialStore,
 	sessions LoginSessionCreator,
+	attempts LoginAttemptLimiter,
 ) (*LoginService, error) {
 	dummyPasswordHash, err := HashPassword(
 		dummyLoginPassword,
@@ -67,6 +74,7 @@ func NewLoginService(
 	return &LoginService{
 		credentials:       credentials,
 		sessions:          sessions,
+		attempts:          attempts,
 		dummyPasswordHash: dummyPasswordHash,
 		verifyPassword:    VerifyPassword,
 	}, nil
@@ -79,6 +87,10 @@ func (s *LoginService) Login(
 	email := strings.ToLower(
 		strings.TrimSpace(input.Email),
 	)
+
+	if !s.attempts.Allow(email) {
+		return LoginResult{}, ErrLoginRateLimited
+	}
 
 	password := input.Password
 	if utf8.ValidString(password) {
@@ -124,6 +136,8 @@ func (s *LoginService) Login(
 	if !matches {
 		return LoginResult{}, ErrInvalidCredentials
 	}
+
+	s.attempts.Succeeded(email)
 
 	session, err := s.sessions.Create(
 		ctx,

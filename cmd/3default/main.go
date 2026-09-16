@@ -16,8 +16,11 @@ import (
 
 func main() {
 	const (
-		address         = ":8080"
-		sessionLifetime = 7 * 24 * time.Hour
+		address                    = ":8080"
+		sessionLifetime            = 7 * 24 * time.Hour
+		loginAttemptCapacity       = 5
+		loginAttemptRefillInterval = time.Minute
+		loginAttemptMaxEntries     = 10_000
 	)
 
 	cfg, err := config.Load()
@@ -60,9 +63,21 @@ func main() {
 		log.Fatal(err)
 	}
 
+	loginAttemptLimiter, err := auth.NewInMemoryLoginAttemptLimiter(
+		auth.LoginAttemptLimiterConfig{
+			Capacity:       loginAttemptCapacity,
+			RefillInterval: loginAttemptRefillInterval,
+			MaxEntries:     loginAttemptMaxEntries,
+		},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	loginService, err := auth.NewLoginService(
 		queries,
 		sessionService,
+		loginAttemptLimiter,
 	)
 	if err != nil {
 		log.Fatal(err)
