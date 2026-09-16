@@ -217,6 +217,8 @@ Passwords are hashed with Argon2id using:
 
 Login uses the same invalid-credentials response for an unknown account and an incorrect password. Missing-account verification still performs password-hashing work using a dummy hash to reduce account-enumeration timing differences.
 
+Login attempts are throttled by an in-memory limiter keyed by normalized email. Each identifier can make 5 immediate attempts and recovers 1 attempt per minute. The limiter tracks at most 10,000 identifiers per application process, evicting the least-recently-used entry when full. Because the limiter is intentionally in-memory, its state resets when the application process restarts.
+
 Logout is idempotent from the client's perspective: a missing, invalid, expired, or already-revoked session is treated as already logged out, while successful logout expires the browser cookie.
 
 Unsafe cross-origin browser requests are rejected by the HTTP layer. The detailed request and response contract remains defined in `api/openapi.yaml`.
@@ -446,7 +448,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] login flow
 * [x] logout flow
 * [x] authenticated-user endpoint
-* [ ] failed-login rate limiting
+* [x] login-attempt rate limiting
 
 ### Projects
 
