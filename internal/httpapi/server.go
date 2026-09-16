@@ -124,6 +124,12 @@ func (s *Server) LoginUser(
 			}, nil
 		}
 
+		if errors.Is(err, auth.ErrLoginRateLimited) {
+			return api.LoginUser429JSONResponse{
+				Error: "too many login attempts",
+			}, nil
+		}
+
 		return api.LoginUser500JSONResponse{
 			Error: "unable to log in",
 		}, nil

@@ -321,6 +321,55 @@ func TestLoginUserMapsInvalidCredentials(t *testing.T) {
 	}
 }
 
+func TestLoginUserMapsRateLimitedAttempt(
+	t *testing.T,
+) {
+	authenticator := &fakeUserAuthenticator{
+		err: auth.ErrLoginRateLimited,
+	}
+
+	server := NewServer(
+		fakeDatabase{},
+		nil,
+		nil,
+		authenticator,
+		nil,
+		nil,
+	)
+
+	response, err := server.LoginUser(
+		context.Background(),
+		api.LoginUserRequestObject{
+			Body: &api.LoginUserJSONRequestBody{
+				Email:    "person@example.com",
+				Password: "password",
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"LoginUser() error = %v",
+			err,
+		)
+	}
+
+	body, ok := response.(api.LoginUser429JSONResponse)
+	if !ok {
+		t.Fatalf(
+			"response type = %T, want LoginUser429JSONResponse",
+			response,
+		)
+	}
+
+	if body.Error != "too many login attempts" {
+		t.Fatalf(
+			"error = %q, want %q",
+			body.Error,
+			"too many login attempts",
+		)
+	}
+}
+
 func TestLoginUserMapsUnexpectedError(t *testing.T) {
 	authenticator := &fakeUserAuthenticator{
 		err: errors.New("session store unavailable"),
@@ -424,6 +473,70 @@ func TestLoginUserRejectsCrossOriginBrowserRequest(
 	if body.Error != "cross-origin request denied" {
 		t.Fatalf(
 			"expected cross-origin error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestLoginUserRateLimitedAttemptReturns429WithoutCookie(
+	t *testing.T,
+) {
+	authenticator := &fakeUserAuthenticator{
+		err: auth.ErrLoginRateLimited,
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			nil,
+			nil,
+			authenticator,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/auth/login",
+		strings.NewReader(
+			`{"email":"person@example.com","password":"password"}`,
+		),
+	)
+	request.Header.Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusTooManyRequests {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusTooManyRequests,
+			response.Code,
+		)
+	}
+
+	if !authenticator.called {
+		t.Fatal("expected authenticator to be called")
+	}
+
+	if values := response.Header().Values("Set-Cookie"); len(values) != 0 {
+		t.Fatalf(
+			"expected no Set-Cookie header, got %v",
+			values,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "too many login attempts" {
+		t.Fatalf(
+			"expected rate-limit error, got %q",
 			body.Error,
 		)
 	}

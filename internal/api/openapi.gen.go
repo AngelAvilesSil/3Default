@@ -474,6 +474,20 @@ func (response LoginUser403JSONResponse) VisitLoginUserResponse(w http.ResponseW
 	return err
 }
 
+type LoginUser429JSONResponse ErrorResponse
+
+func (response LoginUser429JSONResponse) VisitLoginUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type LoginUser500JSONResponse ErrorResponse
 
 func (response LoginUser500JSONResponse) VisitLoginUserResponse(w http.ResponseWriter) error {
