@@ -53,6 +53,40 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 	return i, err
 }
 
+const getProjectByIDAndOwner = `-- name: GetProjectByIDAndOwner :one
+SELECT
+    id,
+    owner_user_id,
+    name,
+    description,
+    visibility,
+    created_at,
+    updated_at
+FROM projects
+WHERE id = $1
+  AND owner_user_id = $2
+`
+
+type GetProjectByIDAndOwnerParams struct {
+	ProjectID   uuid.UUID
+	OwnerUserID uuid.UUID
+}
+
+func (q *Queries) GetProjectByIDAndOwner(ctx context.Context, arg GetProjectByIDAndOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectByIDAndOwner, arg.ProjectID, arg.OwnerUserID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerUserID,
+		&i.Name,
+		&i.Description,
+		&i.Visibility,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listProjectsByOwner = `-- name: ListProjectsByOwner :many
 SELECT
     id,
