@@ -15,15 +15,19 @@ var (
 	ErrNameRequired  = errors.New("project name is required")
 )
 
-type ProjectCreator interface {
+type ProjectStore interface {
 	CreateProject(
 		ctx context.Context,
 		arg dbgen.CreateProjectParams,
 	) (dbgen.Project, error)
+	ListProjectsByOwner(
+		ctx context.Context,
+		ownerUserID uuid.UUID,
+	) ([]dbgen.Project, error)
 }
 
 type Service struct {
-	projects ProjectCreator
+	projects ProjectStore
 }
 
 type CreateInput struct {
@@ -32,7 +36,7 @@ type CreateInput struct {
 	Description *string
 }
 
-func NewService(projects ProjectCreator) *Service {
+func NewService(projects ProjectStore) *Service {
 	return &Service{
 		projects: projects,
 	}
@@ -65,6 +69,32 @@ func (s *Service) Create(
 	return project, nil
 }
 
+func (s *Service) List(
+	ctx context.Context,
+	ownerUserID uuid.UUID,
+) ([]dbgen.Project, error) {
+	if ownerUserID == uuid.Nil {
+		return nil, ErrOwnerRequired
+	}
+
+	projects, err := s.projects.ListProjectsByOwner(
+		ctx,
+		ownerUserID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list projects: %w",
+			err,
+		)
+	}
+
+	if projects == nil {
+		return []dbgen.Project{}, nil
+	}
+
+	return projects, nil
+}
+
 func normalizeOptionalText(value *string) *string {
 	if value == nil {
 		return nil
@@ -78,4 +108,4 @@ func normalizeOptionalText(value *string) *string {
 	return &normalized
 }
 
-var _ ProjectCreator = (*dbgen.Queries)(nil)
+var _ ProjectStore = (*dbgen.Queries)(nil)
