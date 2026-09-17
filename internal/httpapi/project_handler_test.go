@@ -18,10 +18,14 @@ import (
 )
 
 type fakeProjectCreator struct {
-	called  bool
-	input   projects.CreateInput
-	project dbgen.Project
-	err     error
+	called      bool
+	input       projects.CreateInput
+	project     dbgen.Project
+	err         error
+	listCalled  bool
+	ownerUserID uuid.UUID
+	projectList []dbgen.Project
+	listErr     error
 }
 
 func (f *fakeProjectCreator) Create(
@@ -32,6 +36,16 @@ func (f *fakeProjectCreator) Create(
 	f.input = input
 
 	return f.project, f.err
+}
+
+func (f *fakeProjectCreator) List(
+	_ context.Context,
+	ownerUserID uuid.UUID,
+) ([]dbgen.Project, error) {
+	f.listCalled = true
+	f.ownerUserID = ownerUserID
+
+	return f.projectList, f.listErr
 }
 
 func requestWithSession(
@@ -80,6 +94,489 @@ func decodeErrorResponse(
 	}
 
 	return body
+}
+
+func TestListProjectsRequiresAuthentication(t *testing.T) {
+	projectService := &fakeProjectCreator{}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects",
+		nil,
+	)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusUnauthorized,
+			response.Code,
+		)
+	}
+
+	if projectService.listCalled {
+		t.Fatal("expected project service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "authentication required" {
+		t.Fatalf(
+			"expected authentication error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestListProjectsRejectsSessionResolutionFailure(
+	t *testing.T,
+) {
+	projectService := &fakeProjectCreator{}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects",
+		nil,
+	)
+
+	request = requestWithSessionResolutionError(
+		request,
+		errors.New("database unavailable"),
+	)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	if projectService.listCalled {
+		t.Fatal("expected project service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "unable to authenticate request" {
+		t.Fatalf(
+			"expected authentication failure error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestListProjectsMapsUnexpectedServiceError(t *testing.T) {
+	userID := uuid.New()
+
+	projectService := &fakeProjectCreator{
+		listErr: errors.New("database unavailable"),
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects",
+		nil,
+	)
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	if !projectService.listCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if projectService.ownerUserID != userID {
+		t.Fatalf(
+			"expected owner %s, got %s",
+			userID,
+			projectService.ownerUserID,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "unable to list projects" {
+		t.Fatalf(
+			"expected generic listing error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestListProjectsReturnsEmptyList(t *testing.T) {
+	userID := uuid.New()
+
+	projectService := &fakeProjectCreator{}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects",
+		nil,
+	)
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !projectService.listCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if projectService.ownerUserID != userID {
+		t.Fatalf(
+			"expected owner %s, got %s",
+			userID,
+			projectService.ownerUserID,
+		)
+	}
+
+	if body := strings.TrimSpace(response.Body.String()); body != "[]" {
+		t.Fatalf(
+			"expected empty JSON array, got %q",
+			body,
+		)
+	}
+}
+
+func TestListProjectsResolvesSessionCookie(t *testing.T) {
+	userID := uuid.New()
+
+	resolver := &fakeSessionResolver{
+		session: auth.Session{
+			UserID: userID,
+		},
+	}
+
+	projectService := &fakeProjectCreator{}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		resolver,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects",
+		nil,
+	)
+
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: "session-token",
+	})
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !resolver.called {
+		t.Fatal("expected session resolver to be called")
+	}
+
+	if resolver.token != "session-token" {
+		t.Fatalf(
+			"expected session token %q, got %q",
+			"session-token",
+			resolver.token,
+		)
+	}
+
+	if !projectService.listCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if projectService.ownerUserID != userID {
+		t.Fatalf(
+			"expected owner %s, got %s",
+			userID,
+			projectService.ownerUserID,
+		)
+	}
+}
+
+func TestListProjectsReturnsProjectsForAuthenticatedUser(
+	t *testing.T,
+) {
+	userID := uuid.New()
+
+	firstProjectID := uuid.New()
+	secondProjectID := uuid.New()
+
+	description := "Mechanical gripper assembly"
+
+	firstCreatedAt := time.Date(
+		2026,
+		time.September,
+		10,
+		14,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+	firstUpdatedAt := firstCreatedAt.Add(time.Minute)
+
+	secondCreatedAt := firstCreatedAt.Add(-time.Hour)
+	secondUpdatedAt := secondCreatedAt.Add(2 * time.Minute)
+
+	projectService := &fakeProjectCreator{
+		projectList: []dbgen.Project{
+			{
+				ID:          firstProjectID,
+				OwnerUserID: userID,
+				Name:        "Robot Gripper",
+				Description: &description,
+				Visibility:  "private",
+				CreatedAt:   firstCreatedAt,
+				UpdatedAt:   firstUpdatedAt,
+			},
+			{
+				ID:          secondProjectID,
+				OwnerUserID: userID,
+				Name:        "Conveyor",
+				Visibility:  "private",
+				CreatedAt:   secondCreatedAt,
+				UpdatedAt:   secondUpdatedAt,
+			},
+		},
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects",
+		nil,
+	)
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !projectService.listCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if projectService.ownerUserID != userID {
+		t.Fatalf(
+			"expected owner %s, got %s",
+			userID,
+			projectService.ownerUserID,
+		)
+	}
+
+	var body []api.ProjectResponse
+
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode project list: %v", err)
+	}
+
+	if len(body) != 2 {
+		t.Fatalf(
+			"expected 2 projects, got %d",
+			len(body),
+		)
+	}
+
+	if uuid.UUID(body[0].Id) != firstProjectID {
+		t.Fatalf(
+			"expected first project ID %s, got %s",
+			firstProjectID,
+			body[0].Id,
+		)
+	}
+
+	if body[0].Name != "Robot Gripper" {
+		t.Fatalf(
+			"expected first project name %q, got %q",
+			"Robot Gripper",
+			body[0].Name,
+		)
+	}
+
+	if body[0].Description == nil {
+		t.Fatal("expected first project description")
+	}
+
+	if *body[0].Description != description {
+		t.Fatalf(
+			"expected first project description %q, got %q",
+			description,
+			*body[0].Description,
+		)
+	}
+
+	if body[0].Visibility != "private" {
+		t.Fatalf(
+			"expected first project visibility %q, got %q",
+			"private",
+			body[0].Visibility,
+		)
+	}
+
+	if !body[0].CreatedAt.Equal(firstCreatedAt) {
+		t.Fatalf(
+			"expected first created time %s, got %s",
+			firstCreatedAt,
+			body[0].CreatedAt,
+		)
+	}
+
+	if !body[0].UpdatedAt.Equal(firstUpdatedAt) {
+		t.Fatalf(
+			"expected first updated time %s, got %s",
+			firstUpdatedAt,
+			body[0].UpdatedAt,
+		)
+	}
+
+	if uuid.UUID(body[1].Id) != secondProjectID {
+		t.Fatalf(
+			"expected second project ID %s, got %s",
+			secondProjectID,
+			body[1].Id,
+		)
+	}
+
+	if body[1].Name != "Conveyor" {
+		t.Fatalf(
+			"expected second project name %q, got %q",
+			"Conveyor",
+			body[1].Name,
+		)
+	}
+
+	if body[1].Description != nil {
+		t.Fatalf(
+			"expected nil second project description, got %q",
+			*body[1].Description,
+		)
+	}
+
+	if !body[1].CreatedAt.Equal(secondCreatedAt) {
+		t.Fatalf(
+			"expected second created time %s, got %s",
+			secondCreatedAt,
+			body[1].CreatedAt,
+		)
+	}
+
+	if !body[1].UpdatedAt.Equal(secondUpdatedAt) {
+		t.Fatalf(
+			"expected second updated time %s, got %s",
+			secondUpdatedAt,
+			body[1].UpdatedAt,
+		)
+	}
 }
 
 func TestCreateProjectRequiresAuthentication(t *testing.T) {

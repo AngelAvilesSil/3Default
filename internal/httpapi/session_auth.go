@@ -201,7 +201,8 @@ func AuthenticatedSessionContextMiddleware(
 			}
 
 			if r.Method == http.MethodGet &&
-				r.URL.Path == "/api/auth/me" {
+				(r.URL.Path == "/api/auth/me" ||
+					r.URL.Path == "/api/projects") {
 				protected.ServeHTTP(w, r)
 				return
 			}

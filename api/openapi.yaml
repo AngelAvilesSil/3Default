@@ -180,6 +180,31 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
 
   /api/projects:
+    get:
+      operationId: listProjects
+      summary: List projects owned by the current user
+      responses:
+        "200":
+          description: Projects listed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
     post:
       operationId: createProject
       summary: Create a project
