@@ -572,7 +572,7 @@ func TestAuthenticatedSessionContextMiddlewareOnlyResolvesProtectedRoutes(
 			name:        "get projects",
 			method:      http.MethodGet,
 			path:        "/api/projects",
-			wantResolve: false,
+			wantResolve: true,
 		},
 		{
 			name:        "post current user",

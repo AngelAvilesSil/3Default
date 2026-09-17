@@ -17,11 +17,15 @@ type DatabasePinger interface {
 	Ping(context.Context) error
 }
 
-type ProjectCreator interface {
+type ProjectService interface {
 	Create(
 		ctx context.Context,
 		input projects.CreateInput,
 	) (dbgen.Project, error)
+	List(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+	) ([]dbgen.Project, error)
 }
 
 type UserRegistrar interface {
@@ -54,7 +58,7 @@ type CurrentUserReader interface {
 
 type Server struct {
 	database           DatabasePinger
-	projects           ProjectCreator
+	projects           ProjectService
 	registrations      UserRegistrar
 	authentication     UserAuthenticator
 	sessionRevocations SessionRevoker
@@ -63,7 +67,7 @@ type Server struct {
 
 func NewServer(
 	database DatabasePinger,
-	projects ProjectCreator,
+	projects ProjectService,
 	registrations UserRegistrar,
 	authentication UserAuthenticator,
 	sessionRevocations SessionRevoker,
@@ -294,6 +298,58 @@ func (s *Server) RegisterUser(
 	}, nil
 }
 
+func (s *Server) ListProjects(
+	ctx context.Context,
+	_ api.ListProjectsRequestObject,
+) (api.ListProjectsResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.ListProjects500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.ListProjects401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	projectRows, err := s.projects.List(
+		ctx,
+		session.UserID,
+	)
+	if err != nil {
+		return api.ListProjects500JSONResponse{
+			Error: "unable to list projects",
+		}, nil
+	}
+
+	response := make(
+		api.ListProjects200JSONResponse,
+		0,
+		len(projectRows),
+	)
+
+	for _, project := range projectRows {
+		response = append(
+			response,
+			api.ProjectResponse{
+				Id:          uuid.UUID(project.ID),
+				Name:        project.Name,
+				Description: project.Description,
+				Visibility: api.ProjectResponseVisibility(
+					project.Visibility,
+				),
+				CreatedAt: project.CreatedAt,
+				UpdatedAt: project.UpdatedAt,
+			},
+		)
+	}
+
+	return response, nil
+}
+
 func (s *Server) CreateProject(
 	ctx context.Context,
 	request api.CreateProjectRequestObject,
@@ -347,7 +403,7 @@ func (s *Server) CreateProject(
 	}, nil
 }
 
-var _ ProjectCreator = (*projects.Service)(nil)
+var _ ProjectService = (*projects.Service)(nil)
 var _ UserRegistrar = (*auth.RegistrationService)(nil)
 var _ UserAuthenticator = (*auth.LoginService)(nil)
 var _ SessionRevoker = (*auth.SessionService)(nil)
