@@ -10,10 +10,14 @@ import (
 )
 
 type fakeProjectCreator struct {
-	called  bool
-	params  dbgen.CreateProjectParams
-	project dbgen.Project
-	err     error
+	called      bool
+	params      dbgen.CreateProjectParams
+	project     dbgen.Project
+	err         error
+	listCalled  bool
+	ownerUserID uuid.UUID
+	projects    []dbgen.Project
+	listErr     error
 }
 
 func (f *fakeProjectCreator) CreateProject(
@@ -24,6 +28,16 @@ func (f *fakeProjectCreator) CreateProject(
 	f.params = arg
 
 	return f.project, f.err
+}
+
+func (f *fakeProjectCreator) ListProjectsByOwner(
+	_ context.Context,
+	ownerUserID uuid.UUID,
+) ([]dbgen.Project, error) {
+	f.listCalled = true
+	f.ownerUserID = ownerUserID
+
+	return f.projects, f.listErr
 }
 
 func TestCreateNormalizesInputAndCreatesProject(t *testing.T) {
@@ -171,6 +185,141 @@ func TestCreateWrapsDatabaseError(t *testing.T) {
 		OwnerUserID: uuid.New(),
 		Name:        "My Project",
 	})
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"expected wrapped database error, got %v",
+			err,
+		)
+	}
+}
+
+func TestListReturnsProjectsForOwner(t *testing.T) {
+	ownerID := uuid.New()
+	firstProjectID := uuid.New()
+	secondProjectID := uuid.New()
+
+	store := &fakeProjectCreator{
+		projects: []dbgen.Project{
+			{
+				ID:          firstProjectID,
+				OwnerUserID: ownerID,
+				Name:        "First Project",
+			},
+			{
+				ID:          secondProjectID,
+				OwnerUserID: ownerID,
+				Name:        "Second Project",
+			},
+		},
+	}
+
+	service := NewService(store)
+
+	projects, err := service.List(
+		context.Background(),
+		ownerID,
+	)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+
+	if !store.listCalled {
+		t.Fatal("expected ListProjectsByOwner to be called")
+	}
+
+	if store.ownerUserID != ownerID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			ownerID,
+			store.ownerUserID,
+		)
+	}
+
+	if len(projects) != 2 {
+		t.Fatalf(
+			"expected 2 projects, got %d",
+			len(projects),
+		)
+	}
+
+	if projects[0].ID != firstProjectID {
+		t.Fatalf(
+			"expected first project ID %s, got %s",
+			firstProjectID,
+			projects[0].ID,
+		)
+	}
+
+	if projects[1].ID != secondProjectID {
+		t.Fatalf(
+			"expected second project ID %s, got %s",
+			secondProjectID,
+			projects[1].ID,
+		)
+	}
+}
+
+func TestListReturnsEmptySliceWhenStoreReturnsNil(t *testing.T) {
+	store := &fakeProjectCreator{}
+
+	service := NewService(store)
+
+	projects, err := service.List(
+		context.Background(),
+		uuid.New(),
+	)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+
+	if projects == nil {
+		t.Fatal("expected non-nil empty project slice")
+	}
+
+	if len(projects) != 0 {
+		t.Fatalf(
+			"expected no projects, got %d",
+			len(projects),
+		)
+	}
+}
+
+func TestListRejectsMissingOwner(t *testing.T) {
+	store := &fakeProjectCreator{}
+
+	service := NewService(store)
+
+	_, err := service.List(
+		context.Background(),
+		uuid.Nil,
+	)
+	if !errors.Is(err, ErrOwnerRequired) {
+		t.Fatalf(
+			"expected ErrOwnerRequired, got %v",
+			err,
+		)
+	}
+
+	if store.listCalled {
+		t.Fatal(
+			"expected ListProjectsByOwner not to be called",
+		)
+	}
+}
+
+func TestListWrapsDatabaseError(t *testing.T) {
+	databaseErr := errors.New("database unavailable")
+
+	store := &fakeProjectCreator{
+		listErr: databaseErr,
+	}
+
+	service := NewService(store)
+
+	_, err := service.List(
+		context.Background(),
+		uuid.New(),
+	)
 	if !errors.Is(err, databaseErr) {
 		t.Fatalf(
 			"expected wrapped database error, got %v",
