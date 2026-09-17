@@ -12,6 +12,7 @@ import (
 
 	"github.com/AngelAvilesSil/3Default/internal/database"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -115,6 +116,60 @@ func TestGeneratedQueries(t *testing.T) {
 			"expected project ID %s, got %s",
 			project.ID,
 			projects[0].ID,
+		)
+	}
+	foundProject, err := queries.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   project.ID,
+			OwnerUserID: user.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("get project by ID and owner: %v", err)
+	}
+
+	if foundProject.ID != project.ID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			project.ID,
+			foundProject.ID,
+		)
+	}
+
+	otherUser, err := queries.CreateUser(ctx, dbgen.CreateUserParams{
+		Email:       "other-project-owner@example.com",
+		DisplayName: "Other Project Owner",
+	})
+	if err != nil {
+		t.Fatalf("create other project owner: %v", err)
+	}
+
+	_, err = queries.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   project.ID,
+			OwnerUserID: otherUser.ID,
+		},
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected another owner's project lookup to return pgx.ErrNoRows, got %v",
+			err,
+		)
+	}
+
+	_, err = queries.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   uuid.New(),
+			OwnerUserID: user.ID,
+		},
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected missing project lookup to return pgx.ErrNoRows, got %v",
+			err,
 		)
 	}
 }
