@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: backend foundation and authentication hardening**
+**Current phase: backend foundation and authenticated project APIs**
 
 Implemented foundations include:
 
@@ -21,7 +21,7 @@ Implemented foundations include:
 * PostgreSQL persistence with Tern migrations and sqlc
 * OpenAPI-first HTTP contracts
 * health and readiness endpoints
-* project persistence and authenticated project creation
+* project persistence and authenticated project creation, listing, and detail reads
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
 * Argon2id password hashing
@@ -32,7 +32,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The core authentication flow is implemented. Remaining work in this milestone focuses on authentication hardening and final milestone review.
+The authentication milestone is complete. Current backend work is expanding authenticated project capabilities.
 
 ---
 
@@ -229,7 +229,7 @@ Unsafe cross-origin browser requests are rejected by the HTTP layer. The detaile
 
 Projects are private by default and currently include an ID, owner user ID, name, optional description, visibility, and timestamps.
 
-For authenticated project creation, ownership is derived from the server-side session rather than accepted from the request body.
+For authenticated project operations, ownership is derived from the server-side session rather than accepted from the request.
 
 ```text
 POST /api/projects
@@ -238,7 +238,20 @@ POST /api/projects
         ├── resolve session
         ├── identify authenticated user
         └── create project owned by that user
+
+GET /api/projects
+        │
+        ├── resolve session
+        └── list projects owned by the authenticated user
+
+GET /api/projects/{projectId}
+        │
+        ├── resolve session
+        └── read the project only when it belongs to
+            the authenticated user
 ```
+
+Project detail reads are owner-scoped at the persistence boundary. A project that does not exist and a project owned by another user both return `404`, so the endpoint does not reveal whether another user's project exists. Public-project reads are not implemented yet, even though projects already carry a visibility field.
 
 The API contract is defined in `api/openapi.yaml` and is treated as the source of truth for HTTP request and response structures.
 
@@ -253,6 +266,8 @@ POST /api/auth/login
 POST /api/auth/logout
 GET  /api/auth/me
 
+GET  /api/projects
+GET  /api/projects/{projectId}
 POST /api/projects
 ```
 
@@ -455,7 +470,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] project persistence
 * [x] project application service
 * [x] authenticated project creation
-* [ ] project listing and details
+* [x] project listing and details
 * [ ] metadata updates
 
 ### Versioning, Storage, and CAD
