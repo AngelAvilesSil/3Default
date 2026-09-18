@@ -26,6 +26,11 @@ type ProjectService interface {
 		ctx context.Context,
 		ownerUserID googleuuid.UUID,
 	) ([]dbgen.Project, error)
+	Get(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+	) (dbgen.Project, error)
 }
 
 type UserRegistrar interface {
@@ -348,6 +353,56 @@ func (s *Server) ListProjects(
 	}
 
 	return response, nil
+}
+
+func (s *Server) GetProject(
+	ctx context.Context,
+	request api.GetProjectRequestObject,
+) (api.GetProjectResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.GetProject500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.GetProject401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	project, err := s.projects.Get(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+	)
+	if err != nil {
+		if errors.Is(err, projects.ErrProjectIDRequired) {
+			return api.GetProject400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+		}
+
+		if errors.Is(err, projects.ErrProjectNotFound) {
+			return api.GetProject404JSONResponse{
+				Error: "project not found",
+			}, nil
+		}
+
+		return api.GetProject500JSONResponse{
+			Error: "unable to get project",
+		}, nil
+	}
+
+	return api.GetProject200JSONResponse{
+		Id:          uuid.UUID(project.ID),
+		Name:        project.Name,
+		Description: project.Description,
+		Visibility:  api.ProjectResponseVisibility(project.Visibility),
+		CreatedAt:   project.CreatedAt,
+		UpdatedAt:   project.UpdatedAt,
+	}, nil
 }
 
 func (s *Server) CreateProject(
