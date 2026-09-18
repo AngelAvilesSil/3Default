@@ -8,11 +8,14 @@ import (
 
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 var (
-	ErrOwnerRequired = errors.New("project owner is required")
-	ErrNameRequired  = errors.New("project name is required")
+	ErrOwnerRequired     = errors.New("project owner is required")
+	ErrProjectIDRequired = errors.New("project ID is required")
+	ErrProjectNotFound   = errors.New("project not found")
+	ErrNameRequired      = errors.New("project name is required")
 )
 
 type ProjectStore interface {
@@ -24,6 +27,10 @@ type ProjectStore interface {
 		ctx context.Context,
 		ownerUserID uuid.UUID,
 	) ([]dbgen.Project, error)
+	GetProjectByIDAndOwner(
+		ctx context.Context,
+		arg dbgen.GetProjectByIDAndOwnerParams,
+	) (dbgen.Project, error)
 }
 
 type Service struct {
@@ -64,6 +71,39 @@ func (s *Service) Create(
 	})
 	if err != nil {
 		return dbgen.Project{}, fmt.Errorf("create project: %w", err)
+	}
+
+	return project, nil
+}
+
+func (s *Service) Get(
+	ctx context.Context,
+	ownerUserID uuid.UUID,
+	projectID uuid.UUID,
+) (dbgen.Project, error) {
+	if ownerUserID == uuid.Nil {
+		return dbgen.Project{}, ErrOwnerRequired
+	}
+
+	if projectID == uuid.Nil {
+		return dbgen.Project{}, ErrProjectIDRequired
+	}
+
+	project, err := s.projects.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   projectID,
+			OwnerUserID: ownerUserID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.Project{}, ErrProjectNotFound
+	}
+	if err != nil {
+		return dbgen.Project{}, fmt.Errorf(
+			"get project: %w",
+			err,
+		)
 	}
 
 	return project, nil

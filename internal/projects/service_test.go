@@ -7,6 +7,7 @@ import (
 
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type fakeProjectCreator struct {
@@ -18,6 +19,10 @@ type fakeProjectCreator struct {
 	ownerUserID uuid.UUID
 	projects    []dbgen.Project
 	listErr     error
+	getCalled   bool
+	getParams   dbgen.GetProjectByIDAndOwnerParams
+	getProject  dbgen.Project
+	getErr      error
 }
 
 func (f *fakeProjectCreator) CreateProject(
@@ -38,6 +43,16 @@ func (f *fakeProjectCreator) ListProjectsByOwner(
 	f.ownerUserID = ownerUserID
 
 	return f.projects, f.listErr
+}
+
+func (f *fakeProjectCreator) GetProjectByIDAndOwner(
+	_ context.Context,
+	arg dbgen.GetProjectByIDAndOwnerParams,
+) (dbgen.Project, error) {
+	f.getCalled = true
+	f.getParams = arg
+
+	return f.getProject, f.getErr
 }
 
 func TestCreateNormalizesInputAndCreatesProject(t *testing.T) {
@@ -185,6 +200,145 @@ func TestCreateWrapsDatabaseError(t *testing.T) {
 		OwnerUserID: uuid.New(),
 		Name:        "My Project",
 	})
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"expected wrapped database error, got %v",
+			err,
+		)
+	}
+}
+
+func TestGetReturnsProjectForOwner(t *testing.T) {
+	ownerID := uuid.New()
+	projectID := uuid.New()
+
+	store := &fakeProjectCreator{
+		getProject: dbgen.Project{
+			ID:          projectID,
+			OwnerUserID: ownerID,
+			Name:        "Robot Gripper",
+			Visibility:  "private",
+		},
+	}
+
+	service := NewService(store)
+
+	project, err := service.Get(
+		context.Background(),
+		ownerID,
+		projectID,
+	)
+	if err != nil {
+		t.Fatalf("get project: %v", err)
+	}
+
+	if !store.getCalled {
+		t.Fatal("expected GetProjectByIDAndOwner to be called")
+	}
+
+	if store.getParams.OwnerUserID != ownerID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			ownerID,
+			store.getParams.OwnerUserID,
+		)
+	}
+
+	if store.getParams.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			store.getParams.ProjectID,
+		)
+	}
+
+	if project.ID != projectID {
+		t.Fatalf(
+			"expected returned project ID %s, got %s",
+			projectID,
+			project.ID,
+		)
+	}
+}
+
+func TestGetRejectsMissingOwner(t *testing.T) {
+	store := &fakeProjectCreator{}
+
+	service := NewService(store)
+
+	_, err := service.Get(
+		context.Background(),
+		uuid.Nil,
+		uuid.New(),
+	)
+	if !errors.Is(err, ErrOwnerRequired) {
+		t.Fatalf(
+			"expected ErrOwnerRequired, got %v",
+			err,
+		)
+	}
+
+	if store.getCalled {
+		t.Fatal("expected GetProjectByIDAndOwner not to be called")
+	}
+}
+
+func TestGetRejectsMissingProjectID(t *testing.T) {
+	store := &fakeProjectCreator{}
+
+	service := NewService(store)
+
+	_, err := service.Get(
+		context.Background(),
+		uuid.New(),
+		uuid.Nil,
+	)
+	if !errors.Is(err, ErrProjectIDRequired) {
+		t.Fatalf(
+			"expected ErrProjectIDRequired, got %v",
+			err,
+		)
+	}
+
+	if store.getCalled {
+		t.Fatal("expected GetProjectByIDAndOwner not to be called")
+	}
+}
+
+func TestGetMapsMissingProjectToNotFound(t *testing.T) {
+	store := &fakeProjectCreator{
+		getErr: pgx.ErrNoRows,
+	}
+
+	service := NewService(store)
+
+	_, err := service.Get(
+		context.Background(),
+		uuid.New(),
+		uuid.New(),
+	)
+	if !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf(
+			"expected ErrProjectNotFound, got %v",
+			err,
+		)
+	}
+}
+
+func TestGetWrapsDatabaseError(t *testing.T) {
+	databaseErr := errors.New("database unavailable")
+
+	store := &fakeProjectCreator{
+		getErr: databaseErr,
+	}
+
+	service := NewService(store)
+
+	_, err := service.Get(
+		context.Background(),
+		uuid.New(),
+		uuid.New(),
+	)
 	if !errors.Is(err, databaseErr) {
 		t.Fatalf(
 			"expected wrapped database error, got %v",
