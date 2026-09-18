@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/AngelAvilesSil/3Default/internal/auth"
@@ -184,6 +185,18 @@ func SessionContextMiddleware(
 	}
 }
 
+func isProjectDetailPath(path string) bool {
+	projectID, ok := strings.CutPrefix(
+		path,
+		"/api/projects/",
+	)
+	if !ok || projectID == "" {
+		return false
+	}
+
+	return !strings.Contains(projectID, "/")
+}
+
 func AuthenticatedSessionContextMiddleware(
 	resolver SessionResolver,
 ) func(http.Handler) http.Handler {
@@ -202,7 +215,8 @@ func AuthenticatedSessionContextMiddleware(
 
 			if r.Method == http.MethodGet &&
 				(r.URL.Path == "/api/auth/me" ||
-					r.URL.Path == "/api/projects") {
+					r.URL.Path == "/api/projects" ||
+					isProjectDetailPath(r.URL.Path)) {
 				protected.ServeHTTP(w, r)
 				return
 			}
