@@ -11,18 +11,22 @@ import (
 )
 
 type fakeProjectCreator struct {
-	called      bool
-	params      dbgen.CreateProjectParams
-	project     dbgen.Project
-	err         error
-	listCalled  bool
-	ownerUserID uuid.UUID
-	projects    []dbgen.Project
-	listErr     error
-	getCalled   bool
-	getParams   dbgen.GetProjectByIDAndOwnerParams
-	getProject  dbgen.Project
-	getErr      error
+	called        bool
+	params        dbgen.CreateProjectParams
+	project       dbgen.Project
+	err           error
+	listCalled    bool
+	ownerUserID   uuid.UUID
+	projects      []dbgen.Project
+	listErr       error
+	getCalled     bool
+	getParams     dbgen.GetProjectByIDAndOwnerParams
+	getProject    dbgen.Project
+	getErr        error
+	updateCalled  bool
+	updateParams  dbgen.UpdateProjectMetadataByIDAndOwnerParams
+	updateProject dbgen.Project
+	updateErr     error
 }
 
 func (f *fakeProjectCreator) CreateProject(
@@ -53,6 +57,16 @@ func (f *fakeProjectCreator) GetProjectByIDAndOwner(
 	f.getParams = arg
 
 	return f.getProject, f.getErr
+}
+
+func (f *fakeProjectCreator) UpdateProjectMetadataByIDAndOwner(
+	_ context.Context,
+	arg dbgen.UpdateProjectMetadataByIDAndOwnerParams,
+) (dbgen.Project, error) {
+	f.updateCalled = true
+	f.updateParams = arg
+
+	return f.updateProject, f.updateErr
 }
 
 func TestCreateNormalizesInputAndCreatesProject(t *testing.T) {
@@ -484,4 +498,323 @@ func TestListWrapsDatabaseError(t *testing.T) {
 
 func stringPointer(value string) *string {
 	return &value
+}
+
+func TestUpdateNormalizesInputAndUpdatesProject(t *testing.T) {
+	ownerID := uuid.New()
+	projectID := uuid.New()
+	name := "  Robot Arm  "
+	description := "  Main CAD assembly  "
+
+	store := &fakeProjectCreator{
+		updateProject: dbgen.Project{
+			ID:          projectID,
+			OwnerUserID: ownerID,
+			Name:        "Robot Arm",
+			Description: stringPointer("Main CAD assembly"),
+			Visibility:  "private",
+		},
+	}
+
+	service := NewService(store)
+
+	project, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID:    ownerID,
+		ProjectID:      projectID,
+		NameSet:        true,
+		Name:           &name,
+		DescriptionSet: true,
+		Description:    &description,
+	})
+	if err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+
+	if !store.updateCalled {
+		t.Fatal("expected UpdateProjectMetadataByIDAndOwner to be called")
+	}
+
+	if store.updateParams.OwnerUserID != ownerID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			ownerID,
+			store.updateParams.OwnerUserID,
+		)
+	}
+
+	if store.updateParams.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			store.updateParams.ProjectID,
+		)
+	}
+
+	if !store.updateParams.NameSet {
+		t.Fatal("expected NameSet to be true")
+	}
+
+	if store.updateParams.Name != "Robot Arm" {
+		t.Fatalf(
+			"expected normalized name %q, got %q",
+			"Robot Arm",
+			store.updateParams.Name,
+		)
+	}
+
+	if !store.updateParams.DescriptionSet {
+		t.Fatal("expected DescriptionSet to be true")
+	}
+
+	if store.updateParams.Description == nil {
+		t.Fatal("expected description, got nil")
+	}
+
+	if *store.updateParams.Description != "Main CAD assembly" {
+		t.Fatalf(
+			"expected normalized description %q, got %q",
+			"Main CAD assembly",
+			*store.updateParams.Description,
+		)
+	}
+
+	if project.ID != projectID {
+		t.Fatalf(
+			"expected returned project ID %s, got %s",
+			projectID,
+			project.ID,
+		)
+	}
+}
+
+func TestUpdateClearsDescription(t *testing.T) {
+	ignoredName := "ignored name"
+
+	store := &fakeProjectCreator{}
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID:    uuid.New(),
+		ProjectID:      uuid.New(),
+		NameSet:        false,
+		Name:           &ignoredName,
+		DescriptionSet: true,
+		Description:    nil,
+	})
+	if err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+
+	if !store.updateCalled {
+		t.Fatal("expected UpdateProjectMetadataByIDAndOwner to be called")
+	}
+
+	if store.updateParams.NameSet {
+		t.Fatal("expected NameSet to be false")
+	}
+
+	if store.updateParams.Name != "" {
+		t.Fatalf(
+			"expected omitted name value to be empty, got %q",
+			store.updateParams.Name,
+		)
+	}
+
+	if !store.updateParams.DescriptionSet {
+		t.Fatal("expected DescriptionSet to be true")
+	}
+
+	if store.updateParams.Description != nil {
+		t.Fatalf(
+			"expected nil description, got %q",
+			*store.updateParams.Description,
+		)
+	}
+}
+
+func TestUpdateConvertsBlankDescriptionToNil(t *testing.T) {
+	description := "   "
+
+	store := &fakeProjectCreator{}
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID:    uuid.New(),
+		ProjectID:      uuid.New(),
+		DescriptionSet: true,
+		Description:    &description,
+	})
+	if err != nil {
+		t.Fatalf("update project: %v", err)
+	}
+
+	if store.updateParams.Description != nil {
+		t.Fatalf(
+			"expected nil description, got %q",
+			*store.updateParams.Description,
+		)
+	}
+}
+
+func TestUpdateRejectsMissingOwner(t *testing.T) {
+	name := "Robot Arm"
+	store := &fakeProjectCreator{}
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		ProjectID: uuid.New(),
+		NameSet:   true,
+		Name:      &name,
+	})
+	if !errors.Is(err, ErrOwnerRequired) {
+		t.Fatalf(
+			"expected ErrOwnerRequired, got %v",
+			err,
+		)
+	}
+
+	if store.updateCalled {
+		t.Fatal("expected update store not to be called")
+	}
+}
+
+func TestUpdateRejectsMissingProjectID(t *testing.T) {
+	name := "Robot Arm"
+	store := &fakeProjectCreator{}
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID: uuid.New(),
+		NameSet:     true,
+		Name:        &name,
+	})
+	if !errors.Is(err, ErrProjectIDRequired) {
+		t.Fatalf(
+			"expected ErrProjectIDRequired, got %v",
+			err,
+		)
+	}
+
+	if store.updateCalled {
+		t.Fatal("expected update store not to be called")
+	}
+}
+
+func TestUpdateRejectsNoMetadataChanges(t *testing.T) {
+	store := &fakeProjectCreator{}
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID: uuid.New(),
+		ProjectID:   uuid.New(),
+	})
+	if !errors.Is(err, ErrNoMetadataChanges) {
+		t.Fatalf(
+			"expected ErrNoMetadataChanges, got %v",
+			err,
+		)
+	}
+
+	if store.updateCalled {
+		t.Fatal("expected update store not to be called")
+	}
+}
+
+func TestUpdateRejectsNullName(t *testing.T) {
+	store := &fakeProjectCreator{}
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID: uuid.New(),
+		ProjectID:   uuid.New(),
+		NameSet:     true,
+		Name:        nil,
+	})
+	if !errors.Is(err, ErrNameRequired) {
+		t.Fatalf(
+			"expected ErrNameRequired, got %v",
+			err,
+		)
+	}
+
+	if store.updateCalled {
+		t.Fatal("expected update store not to be called")
+	}
+}
+
+func TestUpdateRejectsBlankName(t *testing.T) {
+	name := "   "
+	store := &fakeProjectCreator{}
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID: uuid.New(),
+		ProjectID:   uuid.New(),
+		NameSet:     true,
+		Name:        &name,
+	})
+	if !errors.Is(err, ErrNameRequired) {
+		t.Fatalf(
+			"expected ErrNameRequired, got %v",
+			err,
+		)
+	}
+
+	if store.updateCalled {
+		t.Fatal("expected update store not to be called")
+	}
+}
+
+func TestUpdateMapsMissingProjectToNotFound(t *testing.T) {
+	name := "Robot Arm"
+
+	store := &fakeProjectCreator{
+		updateErr: pgx.ErrNoRows,
+	}
+
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID: uuid.New(),
+		ProjectID:   uuid.New(),
+		NameSet:     true,
+		Name:        &name,
+	})
+	if !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf(
+			"expected ErrProjectNotFound, got %v",
+			err,
+		)
+	}
+}
+
+func TestUpdateWrapsDatabaseError(t *testing.T) {
+	databaseErr := errors.New("database unavailable")
+	name := "Robot Arm"
+
+	store := &fakeProjectCreator{
+		updateErr: databaseErr,
+	}
+
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID: uuid.New(),
+		ProjectID:   uuid.New(),
+		NameSet:     true,
+		Name:        &name,
+	})
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"expected wrapped database error, got %v",
+			err,
+		)
+	}
+
+	if err.Error() != "update project: database unavailable" {
+		t.Fatalf(
+			"expected wrapped update error, got %q",
+			err.Error(),
+		)
+	}
 }
