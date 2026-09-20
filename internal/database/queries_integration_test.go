@@ -137,12 +137,215 @@ func TestGeneratedQueries(t *testing.T) {
 		)
 	}
 
+	staleUpdatedAt := project.UpdatedAt.Add(-time.Hour)
+
+	setStaleProjectUpdatedAt := func() {
+		result, err := tx.Exec(
+			ctx,
+			"UPDATE projects SET updated_at = $1 WHERE id = $2",
+			staleUpdatedAt,
+			project.ID,
+		)
+		if err != nil {
+			t.Fatalf("set stale project updated_at: %v", err)
+		}
+
+		if result.RowsAffected() != 1 {
+			t.Fatalf(
+				"expected 1 project row when setting stale updated_at, got %d",
+				result.RowsAffected(),
+			)
+		}
+	}
+
+	updatedDescription := "Updated project description"
+	setStaleProjectUpdatedAt()
+
+	descriptionUpdatedProject, err := queries.UpdateProjectMetadataByIDAndOwner(
+		ctx,
+		dbgen.UpdateProjectMetadataByIDAndOwnerParams{
+			NameSet:        false,
+			Name:           "ignored name",
+			DescriptionSet: true,
+			Description:    &updatedDescription,
+			ProjectID:      project.ID,
+			OwnerUserID:    user.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("update project description: %v", err)
+	}
+
+	if descriptionUpdatedProject.Name != project.Name {
+		t.Fatalf(
+			"expected unchanged name %q, got %q",
+			project.Name,
+			descriptionUpdatedProject.Name,
+		)
+	}
+
+	if descriptionUpdatedProject.Description == nil ||
+		*descriptionUpdatedProject.Description != updatedDescription {
+		t.Fatalf(
+			"expected description %q, got %v",
+			updatedDescription,
+			descriptionUpdatedProject.Description,
+		)
+	}
+
+	if !descriptionUpdatedProject.UpdatedAt.After(staleUpdatedAt) {
+		t.Fatalf(
+			"expected updated_at after stale value %s, got %s",
+			staleUpdatedAt,
+			descriptionUpdatedProject.UpdatedAt,
+		)
+	}
+
+	ignoredDescription := "ignored description"
+	updatedName := "Renamed Integration Test Project"
+	setStaleProjectUpdatedAt()
+
+	nameUpdatedProject, err := queries.UpdateProjectMetadataByIDAndOwner(
+		ctx,
+		dbgen.UpdateProjectMetadataByIDAndOwnerParams{
+			NameSet:        true,
+			Name:           updatedName,
+			DescriptionSet: false,
+			Description:    &ignoredDescription,
+			ProjectID:      project.ID,
+			OwnerUserID:    user.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("update project name: %v", err)
+	}
+
+	if nameUpdatedProject.Name != updatedName {
+		t.Fatalf(
+			"expected name %q, got %q",
+			updatedName,
+			nameUpdatedProject.Name,
+		)
+	}
+
+	if nameUpdatedProject.Description == nil ||
+		*nameUpdatedProject.Description != updatedDescription {
+		t.Fatalf(
+			"expected preserved description %q, got %v",
+			updatedDescription,
+			nameUpdatedProject.Description,
+		)
+	}
+
+	if !nameUpdatedProject.UpdatedAt.After(staleUpdatedAt) {
+		t.Fatalf(
+			"expected updated_at after stale value %s, got %s",
+			staleUpdatedAt,
+			nameUpdatedProject.UpdatedAt,
+		)
+	}
+
+	setStaleProjectUpdatedAt()
+
+	clearedDescriptionProject, err := queries.UpdateProjectMetadataByIDAndOwner(
+		ctx,
+		dbgen.UpdateProjectMetadataByIDAndOwnerParams{
+			NameSet:        false,
+			Name:           "ignored name",
+			DescriptionSet: true,
+			Description:    nil,
+			ProjectID:      project.ID,
+			OwnerUserID:    user.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("clear project description: %v", err)
+	}
+
+	if clearedDescriptionProject.Name != updatedName {
+		t.Fatalf(
+			"expected preserved name %q, got %q",
+			updatedName,
+			clearedDescriptionProject.Name,
+		)
+	}
+
+	if clearedDescriptionProject.Description != nil {
+		t.Fatalf(
+			"expected nil description, got %q",
+			*clearedDescriptionProject.Description,
+		)
+	}
+
+	if !clearedDescriptionProject.UpdatedAt.After(staleUpdatedAt) {
+		t.Fatalf(
+			"expected updated_at after stale value %s, got %s",
+			staleUpdatedAt,
+			clearedDescriptionProject.UpdatedAt,
+		)
+	}
+
 	otherUser, err := queries.CreateUser(ctx, dbgen.CreateUserParams{
 		Email:       "other-project-owner@example.com",
 		DisplayName: "Other Project Owner",
 	})
 	if err != nil {
 		t.Fatalf("create other project owner: %v", err)
+	}
+
+	_, err = queries.UpdateProjectMetadataByIDAndOwner(
+		ctx,
+		dbgen.UpdateProjectMetadataByIDAndOwnerParams{
+			NameSet:        true,
+			Name:           "Unauthorized Rename",
+			DescriptionSet: false,
+			Description:    nil,
+			ProjectID:      project.ID,
+			OwnerUserID:    otherUser.ID,
+		},
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected another owner's project update to return pgx.ErrNoRows, got %v",
+			err,
+		)
+	}
+
+	projectAfterUnauthorizedUpdate, err := queries.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   project.ID,
+			OwnerUserID: user.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("get project after unauthorized update: %v", err)
+	}
+
+	if projectAfterUnauthorizedUpdate.Name != updatedName {
+		t.Fatalf(
+			"expected unauthorized update to preserve name %q, got %q",
+			updatedName,
+			projectAfterUnauthorizedUpdate.Name,
+		)
+	}
+
+	_, err = queries.UpdateProjectMetadataByIDAndOwner(
+		ctx,
+		dbgen.UpdateProjectMetadataByIDAndOwnerParams{
+			NameSet:        true,
+			Name:           "Missing Project",
+			DescriptionSet: false,
+			Description:    nil,
+			ProjectID:      uuid.New(),
+			OwnerUserID:    user.ID,
+		},
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected missing project update to return pgx.ErrNoRows, got %v",
+			err,
+		)
 	}
 
 	_, err = queries.GetProjectByIDAndOwner(

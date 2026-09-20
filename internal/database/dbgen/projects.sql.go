@@ -128,3 +128,59 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID
 	}
 	return items, nil
 }
+
+const updateProjectMetadataByIDAndOwner = `-- name: UpdateProjectMetadataByIDAndOwner :one
+UPDATE projects
+SET
+    name = CASE
+        WHEN $1::boolean THEN $2::text
+        ELSE name
+    END,
+    description = CASE
+        WHEN $3::boolean
+            THEN $4::text
+        ELSE description
+    END,
+    updated_at = now()
+WHERE id = $5
+  AND owner_user_id = $6
+RETURNING
+    id,
+    owner_user_id,
+    name,
+    description,
+    visibility,
+    created_at,
+    updated_at
+`
+
+type UpdateProjectMetadataByIDAndOwnerParams struct {
+	NameSet        bool
+	Name           string
+	DescriptionSet bool
+	Description    *string
+	ProjectID      uuid.UUID
+	OwnerUserID    uuid.UUID
+}
+
+func (q *Queries) UpdateProjectMetadataByIDAndOwner(ctx context.Context, arg UpdateProjectMetadataByIDAndOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, updateProjectMetadataByIDAndOwner,
+		arg.NameSet,
+		arg.Name,
+		arg.DescriptionSet,
+		arg.Description,
+		arg.ProjectID,
+		arg.OwnerUserID,
+	)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerUserID,
+		&i.Name,
+		&i.Description,
+		&i.Visibility,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
