@@ -207,8 +207,10 @@ func AuthenticatedSessionContextMiddleware(
 			w http.ResponseWriter,
 			r *http.Request,
 		) {
-			if r.Method == http.MethodPost &&
-				r.URL.Path == "/api/projects" {
+			if (r.Method == http.MethodPost &&
+				r.URL.Path == "/api/projects") ||
+				(r.Method == http.MethodPatch &&
+					isProjectDetailPath(r.URL.Path)) {
 				protected.ServeHTTP(w, r)
 				return
 			}

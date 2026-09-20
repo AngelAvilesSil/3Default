@@ -581,6 +581,30 @@ func TestAuthenticatedSessionContextMiddlewareOnlyResolvesProtectedRoutes(
 			wantResolve: true,
 		},
 		{
+			name:        "update project",
+			method:      http.MethodPatch,
+			path:        "/api/projects/11111111-1111-1111-1111-111111111111",
+			wantResolve: true,
+		},
+		{
+			name:        "patch project collection",
+			method:      http.MethodPatch,
+			path:        "/api/projects",
+			wantResolve: false,
+		},
+		{
+			name:        "patch empty project detail",
+			method:      http.MethodPatch,
+			path:        "/api/projects/",
+			wantResolve: false,
+		},
+		{
+			name:        "patch nested project path",
+			method:      http.MethodPatch,
+			path:        "/api/projects/11111111-1111-1111-1111-111111111111/files",
+			wantResolve: false,
+		},
+		{
 			name:        "empty project detail",
 			method:      http.MethodGet,
 			path:        "/api/projects/",
