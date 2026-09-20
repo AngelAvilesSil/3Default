@@ -31,6 +31,10 @@ type fakeProjectCreator struct {
 	getProjectID   uuid.UUID
 	detailProject  dbgen.Project
 	getErr         error
+	updateCalled   bool
+	updateInput    projects.UpdateInput
+	updateProject  dbgen.Project
+	updateErr      error
 }
 
 func (f *fakeProjectCreator) Create(
@@ -63,6 +67,16 @@ func (f *fakeProjectCreator) Get(
 	f.getProjectID = projectID
 
 	return f.detailProject, f.getErr
+}
+
+func (f *fakeProjectCreator) Update(
+	_ context.Context,
+	input projects.UpdateInput,
+) (dbgen.Project, error) {
+	f.updateCalled = true
+	f.updateInput = input
+
+	return f.updateProject, f.updateErr
 }
 
 func requestWithSession(
@@ -1736,6 +1750,790 @@ func TestCreateProjectRejectsMalformedJSON(t *testing.T) {
 		t.Fatalf(
 			"expected invalid request error, got %q",
 			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectRequiresAuthentication(t *testing.T) {
+	projectService := &fakeProjectCreator{}
+	projectID := uuid.New()
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+projectID.String(),
+		strings.NewReader(`{"name":"Robot Arm"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusUnauthorized,
+			response.Code,
+		)
+	}
+
+	if projectService.updateCalled {
+		t.Fatal("expected project service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "authentication required" {
+		t.Fatalf(
+			"expected authentication error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectRejectsSessionResolutionFailure(t *testing.T) {
+	projectService := &fakeProjectCreator{}
+	projectID := uuid.New()
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+projectID.String(),
+		strings.NewReader(`{"name":"Robot Arm"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSessionResolutionError(
+		request,
+		errors.New("database unavailable"),
+	)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	if projectService.updateCalled {
+		t.Fatal("expected project service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "unable to authenticate request" {
+		t.Fatalf(
+			"expected authentication failure error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectRejectsMalformedProjectID(t *testing.T) {
+	projectService := &fakeProjectCreator{}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/not-a-uuid",
+		strings.NewReader(`{"name":"Robot Arm"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if projectService.updateCalled {
+		t.Fatal("expected project service not to be called")
+	}
+}
+
+func TestUpdateProjectMapsMissingProjectID(t *testing.T) {
+	userID := uuid.New()
+
+	projectService := &fakeProjectCreator{
+		updateErr: projects.ErrProjectIDRequired,
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/00000000-0000-0000-0000-000000000000",
+		strings.NewReader(`{"name":"Robot Arm"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if !projectService.updateCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if projectService.updateInput.OwnerUserID != userID {
+		t.Fatalf(
+			"expected owner %s, got %s",
+			userID,
+			projectService.updateInput.OwnerUserID,
+		)
+	}
+
+	if projectService.updateInput.ProjectID != uuid.Nil {
+		t.Fatalf(
+			"expected nil project ID, got %s",
+			projectService.updateInput.ProjectID,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "project ID is required" {
+		t.Fatalf(
+			"expected project ID error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectRejectsEmptyMetadataUpdate(t *testing.T) {
+	projectService := &fakeProjectCreator{
+		updateErr: projects.ErrNoMetadataChanges,
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+uuid.New().String(),
+		strings.NewReader(`{}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if !projectService.updateCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if projectService.updateInput.NameSet {
+		t.Fatal("expected NameSet to be false")
+	}
+
+	if projectService.updateInput.DescriptionSet {
+		t.Fatal("expected DescriptionSet to be false")
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "project metadata changes are required" {
+		t.Fatalf(
+			"expected metadata changes error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectPreservesExplicitNullName(t *testing.T) {
+	projectService := &fakeProjectCreator{
+		updateErr: projects.ErrNameRequired,
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+uuid.New().String(),
+		strings.NewReader(`{"name":null}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if !projectService.updateCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if !projectService.updateInput.NameSet {
+		t.Fatal("expected NameSet to be true")
+	}
+
+	if projectService.updateInput.Name != nil {
+		t.Fatalf(
+			"expected nil name, got %q",
+			*projectService.updateInput.Name,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "project name is required" {
+		t.Fatalf(
+			"expected project name error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectPreservesExplicitNullDescription(t *testing.T) {
+	projectService := &fakeProjectCreator{
+		updateProject: dbgen.Project{
+			ID:         uuid.New(),
+			Name:       "Robot Arm",
+			Visibility: "private",
+		},
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+uuid.New().String(),
+		strings.NewReader(`{"description":null}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !projectService.updateCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if projectService.updateInput.NameSet {
+		t.Fatal("expected NameSet to be false")
+	}
+
+	if !projectService.updateInput.DescriptionSet {
+		t.Fatal("expected DescriptionSet to be true")
+	}
+
+	if projectService.updateInput.Description != nil {
+		t.Fatalf(
+			"expected nil description, got %q",
+			*projectService.updateInput.Description,
+		)
+	}
+}
+
+func TestUpdateProjectMapsNotFound(t *testing.T) {
+	projectService := &fakeProjectCreator{
+		updateErr: projects.ErrProjectNotFound,
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+uuid.New().String(),
+		strings.NewReader(`{"name":"Robot Arm"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusNotFound,
+			response.Code,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "project not found" {
+		t.Fatalf(
+			"expected project not found error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectMapsUnexpectedServiceError(t *testing.T) {
+	projectService := &fakeProjectCreator{
+		updateErr: errors.New("database unavailable"),
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+uuid.New().String(),
+		strings.NewReader(`{"name":"Robot Arm"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "unable to update project" {
+		t.Fatalf(
+			"expected generic update error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectRejectsCrossOriginBrowserRequest(t *testing.T) {
+	resolver := &fakeSessionResolver{
+		session: auth.Session{
+			UserID: uuid.New(),
+		},
+	}
+
+	projectService := &fakeProjectCreator{}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		resolver,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+uuid.New().String(),
+		strings.NewReader(`{"name":"Robot Arm"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: "session-token",
+	})
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusForbidden,
+			response.Code,
+		)
+	}
+
+	if resolver.called {
+		t.Fatal("expected session resolver not to be called")
+	}
+
+	if projectService.updateCalled {
+		t.Fatal("expected project service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+
+	if body.Error != "cross-origin request denied" {
+		t.Fatalf(
+			"expected cross-origin error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectResolvesSessionCookie(t *testing.T) {
+	userID := uuid.New()
+	projectID := uuid.New()
+
+	resolver := &fakeSessionResolver{
+		session: auth.Session{
+			UserID: userID,
+		},
+	}
+
+	projectService := &fakeProjectCreator{
+		updateProject: dbgen.Project{
+			ID:          projectID,
+			OwnerUserID: userID,
+			Name:        "Robot Arm",
+			Visibility:  "private",
+		},
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		resolver,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+projectID.String(),
+		strings.NewReader(`{"name":"Robot Arm"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{
+		Name:  sessionCookieName,
+		Value: "session-token",
+	})
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !resolver.called {
+		t.Fatal("expected session resolver to be called")
+	}
+
+	if resolver.token != "session-token" {
+		t.Fatalf(
+			"expected session token %q, got %q",
+			"session-token",
+			resolver.token,
+		)
+	}
+
+	if !projectService.updateCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if projectService.updateInput.OwnerUserID != userID {
+		t.Fatalf(
+			"expected owner %s, got %s",
+			userID,
+			projectService.updateInput.OwnerUserID,
+		)
+	}
+
+	if projectService.updateInput.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			projectService.updateInput.ProjectID,
+		)
+	}
+}
+
+func TestUpdateProjectReturnsUpdatedProject(t *testing.T) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	description := "Updated CAD assembly"
+
+	createdAt := time.Date(
+		2026,
+		time.September,
+		20,
+		16,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+	updatedAt := createdAt.Add(5 * time.Minute)
+
+	projectService := &fakeProjectCreator{
+		updateProject: dbgen.Project{
+			ID:          projectID,
+			OwnerUserID: userID,
+			Name:        "Robot Arm",
+			Description: &description,
+			Visibility:  "private",
+			CreatedAt:   createdAt,
+			UpdatedAt:   updatedAt,
+		},
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+projectID.String(),
+		strings.NewReader(
+			`{"name":"  Robot Arm  ","description":"  Updated CAD assembly  "}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !projectService.updateCalled {
+		t.Fatal("expected project service to be called")
+	}
+
+	if !projectService.updateInput.NameSet {
+		t.Fatal("expected NameSet to be true")
+	}
+
+	if projectService.updateInput.Name == nil ||
+		*projectService.updateInput.Name != "  Robot Arm  " {
+		t.Fatalf(
+			"expected raw name %q, got %v",
+			"  Robot Arm  ",
+			projectService.updateInput.Name,
+		)
+	}
+
+	if !projectService.updateInput.DescriptionSet {
+		t.Fatal("expected DescriptionSet to be true")
+	}
+
+	if projectService.updateInput.Description == nil ||
+		*projectService.updateInput.Description != "  Updated CAD assembly  " {
+		t.Fatalf(
+			"expected raw description %q, got %v",
+			"  Updated CAD assembly  ",
+			projectService.updateInput.Description,
+		)
+	}
+
+	var body api.ProjectResponse
+
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode project response: %v", err)
+	}
+
+	if uuid.UUID(body.Id) != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			body.Id,
+		)
+	}
+
+	if body.Name != "Robot Arm" {
+		t.Fatalf(
+			"expected project name %q, got %q",
+			"Robot Arm",
+			body.Name,
+		)
+	}
+
+	if body.Description == nil || *body.Description != description {
+		t.Fatalf(
+			"expected description %q, got %v",
+			description,
+			body.Description,
+		)
+	}
+
+	if body.Visibility != "private" {
+		t.Fatalf(
+			"expected visibility %q, got %q",
+			"private",
+			body.Visibility,
+		)
+	}
+
+	if !body.CreatedAt.Equal(createdAt) {
+		t.Fatalf(
+			"expected created time %s, got %s",
+			createdAt,
+			body.CreatedAt,
+		)
+	}
+
+	if !body.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf(
+			"expected updated time %s, got %s",
+			updatedAt,
+			body.UpdatedAt,
 		)
 	}
 }

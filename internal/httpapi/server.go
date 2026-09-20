@@ -31,6 +31,10 @@ type ProjectService interface {
 		ownerUserID googleuuid.UUID,
 		projectID googleuuid.UUID,
 	) (dbgen.Project, error)
+	Update(
+		ctx context.Context,
+		input projects.UpdateInput,
+	) (dbgen.Project, error)
 }
 
 type UserRegistrar interface {
@@ -396,6 +400,95 @@ func (s *Server) GetProject(
 	}
 
 	return api.GetProject200JSONResponse{
+		Id:          uuid.UUID(project.ID),
+		Name:        project.Name,
+		Description: project.Description,
+		Visibility:  api.ProjectResponseVisibility(project.Visibility),
+		CreatedAt:   project.CreatedAt,
+		UpdatedAt:   project.UpdatedAt,
+	}, nil
+}
+
+func (s *Server) UpdateProject(
+	ctx context.Context,
+	request api.UpdateProjectRequestObject,
+) (api.UpdateProjectResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.UpdateProject500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.UpdateProject401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if request.Body == nil {
+		return api.UpdateProject400JSONResponse{
+			Error: "request body is required",
+		}, nil
+	}
+
+	nameSet := request.Body.Name.IsSpecified()
+
+	var name *string
+	if nameSet && !request.Body.Name.IsNull() {
+		value := request.Body.Name.MustGet()
+		name = &value
+	}
+
+	descriptionSet := request.Body.Description.IsSpecified()
+
+	var description *string
+	if descriptionSet && !request.Body.Description.IsNull() {
+		value := request.Body.Description.MustGet()
+		description = &value
+	}
+
+	project, err := s.projects.Update(
+		ctx,
+		projects.UpdateInput{
+			OwnerUserID:    session.UserID,
+			ProjectID:      googleuuid.UUID(request.ProjectId),
+			NameSet:        nameSet,
+			Name:           name,
+			DescriptionSet: descriptionSet,
+			Description:    description,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, projects.ErrProjectIDRequired):
+			return api.UpdateProject400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, projects.ErrNoMetadataChanges):
+			return api.UpdateProject400JSONResponse{
+				Error: "project metadata changes are required",
+			}, nil
+
+		case errors.Is(err, projects.ErrNameRequired):
+			return api.UpdateProject400JSONResponse{
+				Error: "project name is required",
+			}, nil
+
+		case errors.Is(err, projects.ErrProjectNotFound):
+			return api.UpdateProject404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		default:
+			return api.UpdateProject500JSONResponse{
+				Error: "unable to update project",
+			}, nil
+		}
+	}
+
+	return api.UpdateProject200JSONResponse{
 		Id:          uuid.UUID(project.ID),
 		Name:        project.Name,
 		Description: project.Description,
