@@ -21,7 +21,7 @@ Implemented foundations include:
 * PostgreSQL persistence with Tern migrations and sqlc
 * OpenAPI-first HTTP contracts
 * health and readiness endpoints
-* project persistence and authenticated project creation, listing, and detail reads
+* project persistence and authenticated project creation, listing, detail reads, and metadata updates
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
 * Argon2id password hashing
@@ -32,7 +32,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication milestone is complete. Current backend work is expanding authenticated project capabilities.
+The authentication milestone is complete. Basic authenticated project operations are now implemented through metadata updates. Current backend work is moving into project versioning foundations.
 
 ---
 
@@ -249,9 +249,18 @@ GET /api/projects/{projectId}
         ├── resolve session
         └── read the project only when it belongs to
             the authenticated user
+
+PATCH /api/projects/{projectId}
+        │
+        ├── validate cross-origin request safety
+        ├── resolve session
+        └── update metadata only when the project belongs to
+            the authenticated user
 ```
 
-Project detail reads are owner-scoped at the persistence boundary. A project that does not exist and a project owned by another user both return `404`, so the endpoint does not reveal whether another user's project exists. Public-project reads are not implemented yet, even though projects already carry a visibility field.
+Project detail reads and metadata updates are owner-scoped at the persistence boundary. A project that does not exist and a project owned by another user both return `404`, so these endpoints do not reveal whether another user's project exists. Public-project reads are not implemented yet, even though projects already carry a visibility field.
+
+Project metadata updates currently support `name` and `description`. Omitted fields remain unchanged. A null or blank `name` is invalid, while a null or blank `description` clears the description. An empty update is invalid, and a successful update refreshes the project's `updated_at` timestamp. Project visibility is not editable yet.
 
 The API contract is defined in `api/openapi.yaml` and is treated as the source of truth for HTTP request and response structures.
 
@@ -266,9 +275,10 @@ POST /api/auth/login
 POST /api/auth/logout
 GET  /api/auth/me
 
-GET  /api/projects
-GET  /api/projects/{projectId}
-POST /api/projects
+GET   /api/projects
+GET   /api/projects/{projectId}
+POST  /api/projects
+PATCH /api/projects/{projectId}
 ```
 
 ---
@@ -471,7 +481,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] project application service
 * [x] authenticated project creation
 * [x] project listing and details
-* [ ] metadata updates
+* [x] metadata updates
 
 ### Versioning, Storage, and CAD
 
