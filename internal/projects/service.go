@@ -220,5 +220,3 @@ func normalizeOptionalText(value *string) *string {
 
 	return &normalized
 }
-
-var _ ProjectStore = (*dbgen.Queries)(nil)

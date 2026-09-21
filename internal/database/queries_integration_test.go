@@ -377,6 +377,569 @@ func TestGeneratedQueries(t *testing.T) {
 	}
 }
 
+func TestProjectStoreCreatesProjectWithMainBranch(
+	t *testing.T,
+) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for database integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create database pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	queries := dbgen.New(pool)
+
+	user, err := queries.CreateUser(ctx, dbgen.CreateUserParams{
+		Email:       "atomic-project@example.com",
+		DisplayName: "Atomic Project User",
+	})
+	if err != nil {
+		t.Fatalf("create project owner: %v", err)
+	}
+
+	var projectID uuid.UUID
+
+	defer func() {
+		if projectID != uuid.Nil {
+			_, err := pool.Exec(
+				context.Background(),
+				"DELETE FROM projects WHERE id = $1",
+				projectID,
+			)
+			if err != nil {
+				t.Errorf("delete project store test project: %v", err)
+			}
+		}
+
+		_, err := pool.Exec(
+			context.Background(),
+			"DELETE FROM users WHERE id = $1",
+			user.ID,
+		)
+		if err != nil {
+			t.Errorf("delete project store test user: %v", err)
+		}
+	}()
+
+	store := database.NewProjectStore(pool)
+
+	project, err := store.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: user.ID,
+			Name:        "Atomic Project",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create project with default branch: %v", err)
+	}
+
+	projectID = project.ID
+
+	var branchCount int
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT count(*)
+		 FROM project_branches
+		 WHERE project_id = $1`,
+		project.ID,
+	).Scan(&branchCount); err != nil {
+		t.Fatalf("count project branches: %v", err)
+	}
+
+	if branchCount != 1 {
+		t.Fatalf(
+			"expected 1 default branch, got %d",
+			branchCount,
+		)
+	}
+
+	var branchName string
+	var headRevisionID *uuid.UUID
+
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT name, head_revision_id
+		 FROM project_branches
+		 WHERE project_id = $1`,
+		project.ID,
+	).Scan(
+		&branchName,
+		&headRevisionID,
+	); err != nil {
+		t.Fatalf("get default project branch: %v", err)
+	}
+
+	if branchName != "main" {
+		t.Fatalf(
+			"expected default branch name %q, got %q",
+			"main",
+			branchName,
+		)
+	}
+
+	if headRevisionID != nil {
+		t.Fatalf(
+			"expected default branch head to be nil, got %s",
+			*headRevisionID,
+		)
+	}
+}
+
+func TestProjectVersioningSchemaConstraints(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for database integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create database pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	queries := dbgen.New(tx)
+
+	firstUser, err := queries.CreateUser(
+		ctx,
+		dbgen.CreateUserParams{
+			Email:       "versioning-one@example.com",
+			DisplayName: "Versioning User One",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create first versioning user: %v", err)
+	}
+
+	secondUser, err := queries.CreateUser(
+		ctx,
+		dbgen.CreateUserParams{
+			Email:       "versioning-two@example.com",
+			DisplayName: "Versioning User Two",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create second versioning user: %v", err)
+	}
+
+	firstProject, err := queries.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: firstUser.ID,
+			Name:        "Versioning Project One",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create first versioning project: %v", err)
+	}
+
+	secondProject, err := queries.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: secondUser.ID,
+			Name:        "Versioning Project Two",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create second versioning project: %v", err)
+	}
+
+	insertRevision := func(
+		id uuid.UUID,
+		projectID uuid.UUID,
+		authorUserID uuid.UUID,
+		message string,
+		parentRevisionID *uuid.UUID,
+		mergeParentRevisionID *uuid.UUID,
+	) error {
+		_, err := tx.Exec(
+			ctx,
+			`INSERT INTO project_revisions (
+				id,
+				project_id,
+				author_user_id,
+				message,
+				parent_revision_id,
+				merge_parent_revision_id
+			)
+			VALUES ($1, $2, $3, $4, $5, $6)`,
+			id,
+			projectID,
+			authorUserID,
+			message,
+			parentRevisionID,
+			mergeParentRevisionID,
+		)
+		return err
+	}
+
+	firstRootID := uuid.New()
+	if err := insertRevision(
+		firstRootID,
+		firstProject.ID,
+		firstUser.ID,
+		"Initial revision",
+		nil,
+		nil,
+	); err != nil {
+		t.Fatalf("create first root revision: %v", err)
+	}
+
+	firstNormalID := uuid.New()
+	if err := insertRevision(
+		firstNormalID,
+		firstProject.ID,
+		firstUser.ID,
+		"Normal revision",
+		&firstRootID,
+		nil,
+	); err != nil {
+		t.Fatalf("create normal revision: %v", err)
+	}
+
+	firstSideID := uuid.New()
+	if err := insertRevision(
+		firstSideID,
+		firstProject.ID,
+		firstUser.ID,
+		"Side revision",
+		&firstRootID,
+		nil,
+	); err != nil {
+		t.Fatalf("create side revision: %v", err)
+	}
+
+	firstMergeID := uuid.New()
+	if err := insertRevision(
+		firstMergeID,
+		firstProject.ID,
+		firstUser.ID,
+		"Merge revision",
+		&firstNormalID,
+		&firstSideID,
+	); err != nil {
+		t.Fatalf("create valid merge revision: %v", err)
+	}
+
+	secondRootID := uuid.New()
+	if err := insertRevision(
+		secondRootID,
+		secondProject.ID,
+		secondUser.ID,
+		"Second project root",
+		nil,
+		nil,
+	); err != nil {
+		t.Fatalf("create second root revision: %v", err)
+	}
+
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO project_branches (
+			project_id,
+			name,
+			head_revision_id
+		)
+		VALUES ($1, 'main', $2)`,
+		firstProject.ID,
+		firstMergeID,
+	); err != nil {
+		t.Fatalf("create first valid main branch: %v", err)
+	}
+
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO project_branches (
+			project_id,
+			name,
+			head_revision_id
+		)
+		VALUES ($1, 'main', $2)`,
+		secondProject.ID,
+		secondRootID,
+	); err != nil {
+		t.Fatalf(
+			"expected same branch name in different project to succeed: %v",
+			err,
+		)
+	}
+
+	assertConstraintViolation := func(
+		t *testing.T,
+		expectedCode string,
+		expectedConstraint string,
+		run func(pgx.Tx) error,
+	) {
+		t.Helper()
+
+		savepoint, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin constraint-test savepoint: %v", err)
+		}
+
+		err = run(savepoint)
+
+		if rollbackErr := savepoint.Rollback(ctx); rollbackErr != nil {
+			t.Fatalf(
+				"rollback constraint-test savepoint: %v",
+				rollbackErr,
+			)
+		}
+
+		if err == nil {
+			t.Fatalf(
+				"expected PostgreSQL constraint %q to fail",
+				expectedConstraint,
+			)
+		}
+
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) {
+			t.Fatalf(
+				"expected PostgreSQL error for constraint %q, got %v",
+				expectedConstraint,
+				err,
+			)
+		}
+
+		if pgErr.Code != expectedCode {
+			t.Fatalf(
+				"expected PostgreSQL code %q, got %q",
+				expectedCode,
+				pgErr.Code,
+			)
+		}
+
+		if pgErr.ConstraintName != expectedConstraint {
+			t.Fatalf(
+				"expected constraint %q, got %q",
+				expectedConstraint,
+				pgErr.ConstraintName,
+			)
+		}
+	}
+
+	t.Run("rejects cross-project primary parent", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23503",
+			"project_revisions_parent_same_project",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_revisions (
+						id,
+						project_id,
+						author_user_id,
+						message,
+						parent_revision_id
+					)
+					VALUES ($1, $2, $3, $4, $5)`,
+					uuid.New(),
+					firstProject.ID,
+					firstUser.ID,
+					"Invalid cross-project parent",
+					secondRootID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects cross-project merge parent", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23503",
+			"project_revisions_merge_parent_same_project",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_revisions (
+						id,
+						project_id,
+						author_user_id,
+						message,
+						parent_revision_id,
+						merge_parent_revision_id
+					)
+					VALUES ($1, $2, $3, $4, $5, $6)`,
+					uuid.New(),
+					firstProject.ID,
+					firstUser.ID,
+					"Invalid cross-project merge parent",
+					firstNormalID,
+					secondRootID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("requires primary parent for merge parent", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"project_revisions_merge_parent_requires_parent",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_revisions (
+						id,
+						project_id,
+						author_user_id,
+						message,
+						merge_parent_revision_id
+					)
+					VALUES ($1, $2, $3, $4, $5)`,
+					uuid.New(),
+					firstProject.ID,
+					firstUser.ID,
+					"Invalid second-parent-only revision",
+					firstSideID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects identical parents", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"project_revisions_parents_distinct",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_revisions (
+						id,
+						project_id,
+						author_user_id,
+						message,
+						parent_revision_id,
+						merge_parent_revision_id
+					)
+					VALUES ($1, $2, $3, $4, $5, $6)`,
+					uuid.New(),
+					firstProject.ID,
+					firstUser.ID,
+					"Invalid duplicate parents",
+					firstRootID,
+					firstRootID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects self parent", func(t *testing.T) {
+		revisionID := uuid.New()
+
+		assertConstraintViolation(
+			t,
+			"23514",
+			"project_revisions_parent_not_self",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_revisions (
+						id,
+						project_id,
+						author_user_id,
+						message,
+						parent_revision_id
+					)
+					VALUES ($1, $2, $3, $4, $5)`,
+					revisionID,
+					firstProject.ID,
+					firstUser.ID,
+					"Invalid self parent",
+					revisionID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects cross-project branch head", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23503",
+			"project_branches_head_same_project",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_branches (
+						project_id,
+						name,
+						head_revision_id
+					)
+					VALUES ($1, $2, $3)`,
+					secondProject.ID,
+					"invalid-cross-project-head",
+					firstRootID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects duplicate branch name within project", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23505",
+			"project_branches_project_name_unique",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_branches (
+						project_id,
+						name
+					)
+					VALUES ($1, 'main')`,
+					firstProject.ID,
+				)
+				return err
+			},
+		)
+	})
+}
+
 func TestSessionQueries(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type PasswordCredential struct {
@@ -25,6 +26,25 @@ type Project struct {
 	Visibility  string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type ProjectBranch struct {
+	ID             uuid.UUID
+	ProjectID      uuid.UUID
+	Name           string
+	HeadRevisionID pgtype.UUID
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type ProjectRevision struct {
+	ID                    uuid.UUID
+	ProjectID             uuid.UUID
+	AuthorUserID          uuid.UUID
+	Message               string
+	ParentRevisionID      pgtype.UUID
+	MergeParentRevisionID pgtype.UUID
+	CreatedAt             time.Time
 }
 
 type Session struct {
