@@ -37,7 +37,8 @@ func main() {
 	defer db.Close()
 
 	queries := dbgen.New(db)
-	projectService := projects.NewService(queries)
+	projectStore := database.NewProjectStore(db)
+	projectService := projects.NewService(projectStore)
 
 	registrationStore := database.NewRegistrationStore(db)
 
