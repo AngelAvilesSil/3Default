@@ -124,3 +124,43 @@ func (q *Queries) GetProjectBranchByIDAndProject(ctx context.Context, arg GetPro
 	)
 	return i, err
 }
+
+const listProjectBranchesByProject = `-- name: ListProjectBranchesByProject :many
+SELECT
+    id,
+    project_id,
+    name,
+    head_revision_id,
+    created_at,
+    updated_at
+FROM project_branches
+WHERE project_id = $1
+ORDER BY name ASC, id ASC
+`
+
+func (q *Queries) ListProjectBranchesByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectBranch, error) {
+	rows, err := q.db.Query(ctx, listProjectBranchesByProject, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProjectBranch
+	for rows.Next() {
+		var i ProjectBranch
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Name,
+			&i.HeadRevisionID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

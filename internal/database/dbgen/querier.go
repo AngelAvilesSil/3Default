@@ -25,8 +25,10 @@ type Querier interface {
 	GetPasswordCredentialByUserID(ctx context.Context, userID uuid.UUID) (PasswordCredential, error)
 	GetProjectBranchByIDAndProject(ctx context.Context, arg GetProjectBranchByIDAndProjectParams) (ProjectBranch, error)
 	GetProjectByIDAndOwner(ctx context.Context, arg GetProjectByIDAndOwnerParams) (Project, error)
+	GetProjectRevisionByIDAndProject(ctx context.Context, arg GetProjectRevisionByIDAndProjectParams) (ProjectRevision, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	ListProjectBranchesByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectBranch, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 	UpdateProjectMetadataByIDAndOwner(ctx context.Context, arg UpdateProjectMetadataByIDAndOwnerParams) (Project, error)
 }
