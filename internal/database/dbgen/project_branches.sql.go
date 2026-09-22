@@ -9,7 +9,52 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const advanceProjectBranchHead = `-- name: AdvanceProjectBranchHead :one
+UPDATE project_branches
+SET
+    head_revision_id = $1,
+    updated_at = now()
+WHERE id = $2
+  AND project_id = $3
+  AND head_revision_id IS NOT DISTINCT FROM
+      $4
+RETURNING
+    id,
+    project_id,
+    name,
+    head_revision_id,
+    created_at,
+    updated_at
+`
+
+type AdvanceProjectBranchHeadParams struct {
+	NewHeadRevisionID      pgtype.UUID
+	BranchID               uuid.UUID
+	ProjectID              uuid.UUID
+	ExpectedHeadRevisionID pgtype.UUID
+}
+
+func (q *Queries) AdvanceProjectBranchHead(ctx context.Context, arg AdvanceProjectBranchHeadParams) (ProjectBranch, error) {
+	row := q.db.QueryRow(ctx, advanceProjectBranchHead,
+		arg.NewHeadRevisionID,
+		arg.BranchID,
+		arg.ProjectID,
+		arg.ExpectedHeadRevisionID,
+	)
+	var i ProjectBranch
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.HeadRevisionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
 
 const createProjectBranch = `-- name: CreateProjectBranch :one
 INSERT INTO project_branches (
@@ -36,6 +81,38 @@ type CreateProjectBranchParams struct {
 
 func (q *Queries) CreateProjectBranch(ctx context.Context, arg CreateProjectBranchParams) (ProjectBranch, error) {
 	row := q.db.QueryRow(ctx, createProjectBranch, arg.ProjectID, arg.Name)
+	var i ProjectBranch
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.HeadRevisionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getProjectBranchByIDAndProject = `-- name: GetProjectBranchByIDAndProject :one
+SELECT
+    id,
+    project_id,
+    name,
+    head_revision_id,
+    created_at,
+    updated_at
+FROM project_branches
+WHERE id = $1
+  AND project_id = $2
+`
+
+type GetProjectBranchByIDAndProjectParams struct {
+	BranchID  uuid.UUID
+	ProjectID uuid.UUID
+}
+
+func (q *Queries) GetProjectBranchByIDAndProject(ctx context.Context, arg GetProjectBranchByIDAndProjectParams) (ProjectBranch, error) {
+	row := q.db.QueryRow(ctx, getProjectBranchByIDAndProject, arg.BranchID, arg.ProjectID)
 	var i ProjectBranch
 	err := row.Scan(
 		&i.ID,

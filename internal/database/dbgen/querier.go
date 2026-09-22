@@ -11,9 +11,11 @@ import (
 )
 
 type Querier interface {
+	AdvanceProjectBranchHead(ctx context.Context, arg AdvanceProjectBranchHeadParams) (ProjectBranch, error)
 	CreatePasswordCredential(ctx context.Context, arg CreatePasswordCredentialParams) (PasswordCredential, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateProjectBranch(ctx context.Context, arg CreateProjectBranchParams) (ProjectBranch, error)
+	CreateProjectRevision(ctx context.Context, arg CreateProjectRevisionParams) (ProjectRevision, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteExpiredSessions(ctx context.Context) (int64, error)
@@ -21,6 +23,7 @@ type Querier interface {
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveSessionByTokenHashRow, error)
 	GetLoginCredentialByEmail(ctx context.Context, email string) (GetLoginCredentialByEmailRow, error)
 	GetPasswordCredentialByUserID(ctx context.Context, userID uuid.UUID) (PasswordCredential, error)
+	GetProjectBranchByIDAndProject(ctx context.Context, arg GetProjectBranchByIDAndProjectParams) (ProjectBranch, error)
 	GetProjectByIDAndOwner(ctx context.Context, arg GetProjectByIDAndOwnerParams) (Project, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
