@@ -43,3 +43,15 @@ RETURNING
     head_revision_id,
     created_at,
     updated_at;
+
+-- name: ListProjectBranchesByProject :many
+SELECT
+    id,
+    project_id,
+    name,
+    head_revision_id,
+    created_at,
+    updated_at
+FROM project_branches
+WHERE project_id = sqlc.arg(project_id)
+ORDER BY name ASC, id ASC;

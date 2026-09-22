@@ -65,3 +65,37 @@ func (q *Queries) CreateProjectRevision(ctx context.Context, arg CreateProjectRe
 	)
 	return i, err
 }
+
+const getProjectRevisionByIDAndProject = `-- name: GetProjectRevisionByIDAndProject :one
+SELECT
+    id,
+    project_id,
+    author_user_id,
+    message,
+    parent_revision_id,
+    merge_parent_revision_id,
+    created_at
+FROM project_revisions
+WHERE id = $1
+  AND project_id = $2
+`
+
+type GetProjectRevisionByIDAndProjectParams struct {
+	RevisionID uuid.UUID
+	ProjectID  uuid.UUID
+}
+
+func (q *Queries) GetProjectRevisionByIDAndProject(ctx context.Context, arg GetProjectRevisionByIDAndProjectParams) (ProjectRevision, error) {
+	row := q.db.QueryRow(ctx, getProjectRevisionByIDAndProject, arg.RevisionID, arg.ProjectID)
+	var i ProjectRevision
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.AuthorUserID,
+		&i.Message,
+		&i.ParentRevisionID,
+		&i.MergeParentRevisionID,
+		&i.CreatedAt,
+	)
+	return i, err
+}

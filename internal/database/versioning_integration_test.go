@@ -13,6 +13,7 @@ import (
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/versioning"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -383,6 +384,282 @@ func TestProjectStoreCreatesMergeRevisionAndAdvancesTargetBranch(
 		sideBranchID,
 		sideRevision.ID,
 	)
+}
+
+func TestListProjectBranchesByProjectScopesAndOrdersBranches(
+	t *testing.T,
+) {
+	ctx, pool, store, queries, userID, projectID, mainBranchID :=
+		setupVersioningStoreTest(t)
+
+	rootRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     mainBranchID,
+			AuthorUserID: userID,
+			Message:      "Initial revision",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create root revision: %v", err)
+	}
+
+	_, err = pool.Exec(
+		ctx,
+		`INSERT INTO project_branches (
+			project_id,
+			name,
+			head_revision_id
+		)
+		VALUES
+			($1, 'feature', $2),
+			($1, 'alpha', NULL)`,
+		projectID,
+		rootRevision.ID,
+	)
+	if err != nil {
+		t.Fatalf("create additional project branches: %v", err)
+	}
+
+	otherProject, err := store.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: userID,
+			Name:        "Other Versioning Project",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create other project: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, err := pool.Exec(
+			context.Background(),
+			"DELETE FROM projects WHERE id = $1",
+			otherProject.ID,
+		)
+		if err != nil {
+			t.Errorf("delete other versioning project: %v", err)
+		}
+	})
+
+	branches, err := queries.ListProjectBranchesByProject(
+		ctx,
+		projectID,
+	)
+	if err != nil {
+		t.Fatalf("list project branches: %v", err)
+	}
+
+	if len(branches) != 3 {
+		t.Fatalf(
+			"expected 3 project branches, got %d",
+			len(branches),
+		)
+	}
+
+	expectedNames := []string{
+		"alpha",
+		"feature",
+		"main",
+	}
+
+	for index, expectedName := range expectedNames {
+		branch := branches[index]
+
+		if branch.ProjectID != projectID {
+			t.Fatalf(
+				"expected branch project ID %s, got %s",
+				projectID,
+				branch.ProjectID,
+			)
+		}
+
+		if branch.Name != expectedName {
+			t.Fatalf(
+				"expected branch %d name %q, got %q",
+				index,
+				expectedName,
+				branch.Name,
+			)
+		}
+	}
+
+	if branches[0].HeadRevisionID.Valid {
+		t.Fatalf(
+			"expected alpha branch head to be null, got %s",
+			uuid.UUID(branches[0].HeadRevisionID.Bytes),
+		)
+	}
+
+	for _, index := range []int{1, 2} {
+		if !branches[index].HeadRevisionID.Valid {
+			t.Fatalf(
+				"expected %s branch head to be set",
+				branches[index].Name,
+			)
+		}
+
+		actualHead :=
+			uuid.UUID(branches[index].HeadRevisionID.Bytes)
+
+		if actualHead != rootRevision.ID {
+			t.Fatalf(
+				"expected %s branch head %s, got %s",
+				branches[index].Name,
+				rootRevision.ID,
+				actualHead,
+			)
+		}
+	}
+
+	otherBranches, err := queries.ListProjectBranchesByProject(
+		ctx,
+		otherProject.ID,
+	)
+	if err != nil {
+		t.Fatalf("list other project branches: %v", err)
+	}
+
+	if len(otherBranches) != 1 {
+		t.Fatalf(
+			"expected 1 other-project branch, got %d",
+			len(otherBranches),
+		)
+	}
+
+	if otherBranches[0].ProjectID != otherProject.ID {
+		t.Fatalf(
+			"expected other branch project ID %s, got %s",
+			otherProject.ID,
+			otherBranches[0].ProjectID,
+		)
+	}
+
+	if otherBranches[0].Name != "main" {
+		t.Fatalf(
+			"expected other project branch name %q, got %q",
+			"main",
+			otherBranches[0].Name,
+		)
+	}
+}
+
+func TestGetProjectRevisionByIDAndProjectScopesRevision(
+	t *testing.T,
+) {
+	ctx, pool, store, queries, userID, projectID, branchID :=
+		setupVersioningStoreTest(t)
+
+	revision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     branchID,
+			AuthorUserID: userID,
+			Message:      "Initial revision",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create project revision: %v", err)
+	}
+
+	otherProject, err := store.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: userID,
+			Name:        "Other Revision Project",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create other project: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, err := pool.Exec(
+			context.Background(),
+			"DELETE FROM projects WHERE id = $1",
+			otherProject.ID,
+		)
+		if err != nil {
+			t.Errorf("delete other revision project: %v", err)
+		}
+	})
+
+	foundRevision, err :=
+		queries.GetProjectRevisionByIDAndProject(
+			ctx,
+			dbgen.GetProjectRevisionByIDAndProjectParams{
+				RevisionID: revision.ID,
+				ProjectID:  projectID,
+			},
+		)
+	if err != nil {
+		t.Fatalf("get project revision: %v", err)
+	}
+
+	if foundRevision.ID != revision.ID {
+		t.Fatalf(
+			"expected revision ID %s, got %s",
+			revision.ID,
+			foundRevision.ID,
+		)
+	}
+
+	if foundRevision.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			foundRevision.ProjectID,
+		)
+	}
+
+	if foundRevision.AuthorUserID != userID {
+		t.Fatalf(
+			"expected author ID %s, got %s",
+			userID,
+			foundRevision.AuthorUserID,
+		)
+	}
+
+	if foundRevision.Message != "Initial revision" {
+		t.Fatalf(
+			"expected revision message %q, got %q",
+			"Initial revision",
+			foundRevision.Message,
+		)
+	}
+
+	_, err = queries.GetProjectRevisionByIDAndProject(
+		ctx,
+		dbgen.GetProjectRevisionByIDAndProjectParams{
+			RevisionID: revision.ID,
+			ProjectID:  otherProject.ID,
+		},
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected cross-project revision lookup to return pgx.ErrNoRows, got %v",
+			err,
+		)
+	}
+
+	_, err = queries.GetProjectRevisionByIDAndProject(
+		ctx,
+		dbgen.GetProjectRevisionByIDAndProjectParams{
+			RevisionID: uuid.New(),
+			ProjectID:  projectID,
+		},
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected missing revision lookup to return pgx.ErrNoRows, got %v",
+			err,
+		)
+	}
 }
 
 func setupVersioningStoreTest(
