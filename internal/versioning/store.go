@@ -32,4 +32,12 @@ type RevisionStore interface {
 		ctx context.Context,
 		arg CreateRevisionOnBranchParams,
 	) (dbgen.ProjectRevision, error)
+	GetProjectRevisionByIDAndProject(
+		ctx context.Context,
+		arg dbgen.GetProjectRevisionByIDAndProjectParams,
+	) (dbgen.ProjectRevision, error)
+	ListProjectBranchesByProject(
+		ctx context.Context,
+		projectID uuid.UUID,
+	) ([]dbgen.ProjectBranch, error)
 }

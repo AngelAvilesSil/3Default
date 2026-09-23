@@ -32,6 +32,16 @@ type fakeRevisionStore struct {
 	params   CreateRevisionOnBranchParams
 	revision dbgen.ProjectRevision
 	err      error
+
+	listCalled    bool
+	listProjectID uuid.UUID
+	branches      []dbgen.ProjectBranch
+	listErr       error
+
+	getCalled   bool
+	getParams   dbgen.GetProjectRevisionByIDAndProjectParams
+	getRevision dbgen.ProjectRevision
+	getErr      error
 }
 
 func (f *fakeRevisionStore) CreateRevisionOnBranch(
@@ -42,6 +52,26 @@ func (f *fakeRevisionStore) CreateRevisionOnBranch(
 	f.params = arg
 
 	return f.revision, f.err
+}
+
+func (f *fakeRevisionStore) GetProjectRevisionByIDAndProject(
+	_ context.Context,
+	arg dbgen.GetProjectRevisionByIDAndProjectParams,
+) (dbgen.ProjectRevision, error) {
+	f.getCalled = true
+	f.getParams = arg
+
+	return f.getRevision, f.getErr
+}
+
+func (f *fakeRevisionStore) ListProjectBranchesByProject(
+	_ context.Context,
+	projectID uuid.UUID,
+) ([]dbgen.ProjectBranch, error) {
+	f.listCalled = true
+	f.listProjectID = projectID
+
+	return f.branches, f.listErr
 }
 
 func TestCreateRevisionNormalizesInputAndCreatesRevision(

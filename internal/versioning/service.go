@@ -18,6 +18,9 @@ var (
 	ErrProjectIDRequired = errors.New(
 		"project ID is required",
 	)
+	ErrRevisionIDRequired = errors.New(
+		"project revision ID is required",
+	)
 	ErrBranchIDRequired = errors.New(
 		"project branch ID is required",
 	)
@@ -38,6 +41,9 @@ var (
 	)
 	ErrProjectNotFound = errors.New(
 		"project not found",
+	)
+	ErrRevisionNotFound = errors.New(
+		"project revision not found",
 	)
 )
 
@@ -71,6 +77,110 @@ func NewService(
 		projects:  projects,
 		revisions: revisions,
 	}
+}
+
+func (s *Service) ListBranches(
+	ctx context.Context,
+	ownerUserID uuid.UUID,
+	projectID uuid.UUID,
+) ([]dbgen.ProjectBranch, error) {
+	if ownerUserID == uuid.Nil {
+		return nil, ErrOwnerRequired
+	}
+
+	if projectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+
+	_, err := s.projects.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   projectID,
+			OwnerUserID: ownerUserID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrProjectNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get project for branch listing: %w",
+			err,
+		)
+	}
+
+	branches, err := s.revisions.ListProjectBranchesByProject(
+		ctx,
+		projectID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list project branches: %w",
+			err,
+		)
+	}
+
+	if branches == nil {
+		return []dbgen.ProjectBranch{}, nil
+	}
+
+	return branches, nil
+}
+
+func (s *Service) GetRevision(
+	ctx context.Context,
+	ownerUserID uuid.UUID,
+	projectID uuid.UUID,
+	revisionID uuid.UUID,
+) (dbgen.ProjectRevision, error) {
+	if ownerUserID == uuid.Nil {
+		return dbgen.ProjectRevision{}, ErrOwnerRequired
+	}
+
+	if projectID == uuid.Nil {
+		return dbgen.ProjectRevision{}, ErrProjectIDRequired
+	}
+
+	if revisionID == uuid.Nil {
+		return dbgen.ProjectRevision{}, ErrRevisionIDRequired
+	}
+
+	_, err := s.projects.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   projectID,
+			OwnerUserID: ownerUserID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.ProjectRevision{}, ErrProjectNotFound
+	}
+	if err != nil {
+		return dbgen.ProjectRevision{}, fmt.Errorf(
+			"get project for revision lookup: %w",
+			err,
+		)
+	}
+
+	revision, err :=
+		s.revisions.GetProjectRevisionByIDAndProject(
+			ctx,
+			dbgen.GetProjectRevisionByIDAndProjectParams{
+				RevisionID: revisionID,
+				ProjectID:  projectID,
+			},
+		)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.ProjectRevision{}, ErrRevisionNotFound
+	}
+	if err != nil {
+		return dbgen.ProjectRevision{}, fmt.Errorf(
+			"get project revision: %w",
+			err,
+		)
+	}
+
+	return revision, nil
 }
 
 func (s *Service) CreateRevision(
