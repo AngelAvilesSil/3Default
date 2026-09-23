@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,11 @@ import (
 )
 
 type fakeVersioningService struct {
+	createCalled bool
+	createInput  versioning.CreateRevisionInput
+	createResult dbgen.ProjectRevision
+	createErr    error
+
 	listCalled      bool
 	listOwnerUserID uuid.UUID
 	listProjectID   uuid.UUID
@@ -29,6 +35,16 @@ type fakeVersioningService struct {
 	getRevisionID  uuid.UUID
 	revision       dbgen.ProjectRevision
 	getErr         error
+}
+
+func (f *fakeVersioningService) CreateRevision(
+	_ context.Context,
+	input versioning.CreateRevisionInput,
+) (dbgen.ProjectRevision, error) {
+	f.createCalled = true
+	f.createInput = input
+
+	return f.createResult, f.createErr
 }
 
 func (f *fakeVersioningService) ListBranches(
@@ -1019,5 +1035,858 @@ func TestGetProjectRevisionReturnsNullParentsForRootRevision(
 			"expected merge parent to be null, got %s",
 			*body.MergeParentRevisionId,
 		)
+	}
+}
+
+func TestCreateProjectRevisionRequiresAuthentication(t *testing.T) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	projectID := uuid.New()
+	branchID := uuid.New()
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String()+
+			"/revisions",
+		strings.NewReader(
+			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusUnauthorized,
+			response.Code,
+		)
+	}
+
+	if service.createCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "authentication required" {
+		t.Fatalf(
+			"expected authentication error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectRevisionRejectsSessionResolutionFailure(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String()+
+			"/revisions",
+		strings.NewReader(
+			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSessionResolutionError(
+		request,
+		errors.New("database unavailable"),
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	if service.createCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to authenticate request" {
+		t.Fatalf(
+			"expected authentication failure error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectRevisionRejectsCrossOriginBrowserRequest(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String()+
+			"/revisions",
+		strings.NewReader(
+			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusForbidden,
+			response.Code,
+		)
+	}
+
+	if service.createCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+}
+
+func TestCreateProjectRevisionRejectsMalformedPathIDs(t *testing.T) {
+	tests := []struct {
+		name      string
+		projectID string
+		branchID  string
+	}{
+		{
+			name:      "malformed project ID",
+			projectID: "not-a-uuid",
+			branchID:  uuid.New().String(),
+		},
+		{
+			name:      "malformed branch ID",
+			projectID: uuid.New().String(),
+			branchID:  "not-a-uuid",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeVersioningService{}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/projects/"+
+					test.projectID+
+					"/branches/"+
+					test.branchID+
+					"/revisions",
+				strings.NewReader(
+					`{"message":"Revision","expectedHeadRevisionId":null}`,
+				),
+			)
+			request.Header.Set(
+				"Content-Type",
+				"application/json",
+			)
+			request = requestWithSession(
+				request,
+				uuid.New(),
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusBadRequest,
+					response.Code,
+				)
+			}
+
+			if service.createCalled {
+				t.Fatal(
+					"expected versioning service not to be called",
+				)
+			}
+		})
+	}
+}
+
+func TestCreateProjectRevisionRejectsInvalidJSON(t *testing.T) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String()+
+			"/revisions",
+		strings.NewReader(`{"message":`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if service.createCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+}
+
+func TestCreateProjectRevisionRequiresExpectedHeadField(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String()+
+			"/revisions",
+		strings.NewReader(`{"message":"Initial revision"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if service.createCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "expected head revision ID is required" {
+		t.Fatalf(
+			"expected missing expected-head error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectRevisionRejectsMissingVersioningDependency(
+	t *testing.T,
+) {
+	projectID := uuid.New()
+	branchID := uuid.New()
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String()+
+			"/revisions",
+		strings.NewReader(
+			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to create project revision" {
+		t.Fatalf(
+			"expected missing dependency error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectRevisionMapsServiceErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		projectID   uuid.UUID
+		branchID    uuid.UUID
+		serviceErr  error
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "missing project ID",
+			projectID:   uuid.Nil,
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrProjectIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "project ID is required",
+		},
+		{
+			name:        "missing branch ID",
+			projectID:   uuid.New(),
+			branchID:    uuid.Nil,
+			serviceErr:  versioning.ErrBranchIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "branch ID is required",
+		},
+		{
+			name:        "message required",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrMessageRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "revision message is required",
+		},
+		{
+			name:        "invalid expected head",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrExpectedHeadRevisionIDInvalid,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "expected head revision ID is invalid",
+		},
+		{
+			name:        "invalid merge parent",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrMergeParentRevisionIDInvalid,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "merge parent revision ID is invalid",
+		},
+		{
+			name:        "merge requires head",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrMergeRequiresHead,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "merge revision requires an expected branch head",
+		},
+		{
+			name:        "parents must differ",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrRevisionParentsMustDiffer,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "revision parents must differ",
+		},
+		{
+			name:        "project not found",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrProjectNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "project not found",
+		},
+		{
+			name:        "branch not found",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrBranchNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "branch not found",
+		},
+		{
+			name:        "branch head changed",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrBranchHeadConflict,
+			wantStatus:  http.StatusConflict,
+			wantMessage: "branch head changed",
+		},
+		{
+			name:        "unexpected service error",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  errors.New("database unavailable"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "unable to create project revision",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			userID := uuid.New()
+			service := &fakeVersioningService{
+				createErr: test.serviceErr,
+			}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/projects/"+
+					test.projectID.String()+
+					"/branches/"+
+					test.branchID.String()+
+					"/revisions",
+				strings.NewReader(
+					`{"message":"Revision","expectedHeadRevisionId":null}`,
+				),
+			)
+			request.Header.Set(
+				"Content-Type",
+				"application/json",
+			)
+			request = requestWithSession(request, userID)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d",
+					test.wantStatus,
+					response.Code,
+				)
+			}
+
+			if !service.createCalled {
+				t.Fatal("expected versioning service to be called")
+			}
+
+			if service.createInput.OwnerUserID != userID {
+				t.Fatalf(
+					"expected owner ID %s, got %s",
+					userID,
+					service.createInput.OwnerUserID,
+				)
+			}
+
+			if service.createInput.ProjectID != test.projectID {
+				t.Fatalf(
+					"expected project ID %s, got %s",
+					test.projectID,
+					service.createInput.ProjectID,
+				)
+			}
+
+			if service.createInput.BranchID != test.branchID {
+				t.Fatalf(
+					"expected branch ID %s, got %s",
+					test.branchID,
+					service.createInput.BranchID,
+				)
+			}
+
+			body := decodeErrorResponse(t, response)
+			if body.Error != test.wantMessage {
+				t.Fatalf(
+					"expected error %q, got %q",
+					test.wantMessage,
+					body.Error,
+				)
+			}
+		})
+	}
+}
+
+func TestCreateProjectRevisionAcceptsExplicitNullExpectedHead(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+	revisionID := uuid.New()
+
+	createdAt := time.Date(
+		2026,
+		time.September,
+		22,
+		20,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	service := &fakeVersioningService{
+		createResult: dbgen.ProjectRevision{
+			ID:           revisionID,
+			ProjectID:    projectID,
+			AuthorUserID: userID,
+			Message:      "Initial revision",
+			CreatedAt:    createdAt,
+		},
+	}
+
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String()+
+			"/revisions",
+		strings.NewReader(
+			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusCreated,
+			response.Code,
+		)
+	}
+
+	if !service.createCalled {
+		t.Fatal("expected versioning service to be called")
+	}
+
+	if service.createInput.OwnerUserID != userID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			userID,
+			service.createInput.OwnerUserID,
+		)
+	}
+
+	if service.createInput.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			service.createInput.ProjectID,
+		)
+	}
+
+	if service.createInput.BranchID != branchID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branchID,
+			service.createInput.BranchID,
+		)
+	}
+
+	if service.createInput.Message != "Initial revision" {
+		t.Fatalf(
+			"expected message %q, got %q",
+			"Initial revision",
+			service.createInput.Message,
+		)
+	}
+
+	if service.createInput.ExpectedHeadRevisionID != nil {
+		t.Fatalf(
+			"expected nil expected head, got %s",
+			*service.createInput.ExpectedHeadRevisionID,
+		)
+	}
+
+	if service.createInput.MergeParentRevisionID != nil {
+		t.Fatalf(
+			"expected nil merge parent, got %s",
+			*service.createInput.MergeParentRevisionID,
+		)
+	}
+
+	var body api.ProjectRevisionResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode revision response: %v", err)
+	}
+
+	if uuid.UUID(body.Id) != revisionID {
+		t.Fatalf(
+			"expected revision ID %s, got %s",
+			revisionID,
+			body.Id,
+		)
+	}
+
+	if uuid.UUID(body.ProjectId) != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			body.ProjectId,
+		)
+	}
+
+	if uuid.UUID(body.AuthorUserId) != userID {
+		t.Fatalf(
+			"expected author ID %s, got %s",
+			userID,
+			body.AuthorUserId,
+		)
+	}
+
+	if body.Message != "Initial revision" {
+		t.Fatalf(
+			"expected message %q, got %q",
+			"Initial revision",
+			body.Message,
+		)
+	}
+
+	if body.ParentRevisionId != nil {
+		t.Fatalf(
+			"expected parent revision to be null, got %s",
+			*body.ParentRevisionId,
+		)
+	}
+
+	if body.MergeParentRevisionId != nil {
+		t.Fatalf(
+			"expected merge parent revision to be null, got %s",
+			*body.MergeParentRevisionId,
+		)
+	}
+
+	if !body.CreatedAt.Equal(createdAt) {
+		t.Fatalf(
+			"expected created time %s, got %s",
+			createdAt,
+			body.CreatedAt,
+		)
+	}
+}
+
+func TestCreateProjectRevisionForwardsExpectedHeadAndMergeParent(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+	revisionID := uuid.New()
+	expectedHeadID := uuid.New()
+	mergeParentID := uuid.New()
+
+	createdAt := time.Date(
+		2026,
+		time.September,
+		22,
+		21,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+
+	service := &fakeVersioningService{
+		createResult: dbgen.ProjectRevision{
+			ID:           revisionID,
+			ProjectID:    projectID,
+			AuthorUserID: userID,
+			Message:      "Merge feature branch",
+			ParentRevisionID: pgtype.UUID{
+				Bytes: expectedHeadID,
+				Valid: true,
+			},
+			MergeParentRevisionID: pgtype.UUID{
+				Bytes: mergeParentID,
+				Valid: true,
+			},
+			CreatedAt: createdAt,
+		},
+	}
+
+	handler := newVersioningHandler(service)
+
+	requestBody :=
+		`{"message":"Merge feature branch",` +
+			`"expectedHeadRevisionId":"` +
+			expectedHeadID.String() +
+			`","mergeParentRevisionId":"` +
+			mergeParentID.String() +
+			`"}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String()+
+			"/revisions",
+		strings.NewReader(requestBody),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusCreated,
+			response.Code,
+		)
+	}
+
+	if !service.createCalled {
+		t.Fatal("expected versioning service to be called")
+	}
+
+	if service.createInput.ExpectedHeadRevisionID == nil {
+		t.Fatal("expected branch head revision ID")
+	}
+
+	if *service.createInput.ExpectedHeadRevisionID != expectedHeadID {
+		t.Fatalf(
+			"expected head revision ID %s, got %s",
+			expectedHeadID,
+			*service.createInput.ExpectedHeadRevisionID,
+		)
+	}
+
+	if service.createInput.MergeParentRevisionID == nil {
+		t.Fatal("expected merge parent revision ID")
+	}
+
+	if *service.createInput.MergeParentRevisionID != mergeParentID {
+		t.Fatalf(
+			"expected merge parent revision ID %s, got %s",
+			mergeParentID,
+			*service.createInput.MergeParentRevisionID,
+		)
+	}
+
+	var body api.ProjectRevisionResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode revision response: %v", err)
+	}
+
+	if body.ParentRevisionId == nil {
+		t.Fatal("expected parent revision in response")
+	}
+
+	if uuid.UUID(*body.ParentRevisionId) != expectedHeadID {
+		t.Fatalf(
+			"expected response parent ID %s, got %s",
+			expectedHeadID,
+			*body.ParentRevisionId,
+		)
+	}
+
+	if body.MergeParentRevisionId == nil {
+		t.Fatal("expected merge parent revision in response")
+	}
+
+	if uuid.UUID(*body.MergeParentRevisionId) != mergeParentID {
+		t.Fatalf(
+			"expected response merge parent ID %s, got %s",
+			mergeParentID,
+			*body.MergeParentRevisionId,
+		)
+	}
+}
+
+func TestCreateProjectRevisionRejectsMalformedBodyUUIDs(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "malformed expected head revision ID",
+			body: `{
+				"message":"Revision",
+				"expectedHeadRevisionId":"not-a-uuid"
+			}`,
+		},
+		{
+			name: "malformed merge parent revision ID",
+			body: `{
+				"message":"Merge revision",
+				"expectedHeadRevisionId":null,
+				"mergeParentRevisionId":"not-a-uuid"
+			}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeVersioningService{}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/projects/"+
+					uuid.New().String()+
+					"/branches/"+
+					uuid.New().String()+
+					"/revisions",
+				strings.NewReader(test.body),
+			)
+			request.Header.Set(
+				"Content-Type",
+				"application/json",
+			)
+			request = requestWithSession(
+				request,
+				uuid.New(),
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusBadRequest,
+					response.Code,
+				)
+			}
+
+			if service.createCalled {
+				t.Fatal(
+					"expected versioning service not to be called",
+				)
+			}
+		})
 	}
 }

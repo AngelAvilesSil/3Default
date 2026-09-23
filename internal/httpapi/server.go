@@ -40,6 +40,10 @@ type ProjectService interface {
 }
 
 type VersioningService interface {
+	CreateRevision(
+		ctx context.Context,
+		input versioning.CreateRevisionInput,
+	) (dbgen.ProjectRevision, error)
 	ListBranches(
 		ctx context.Context,
 		ownerUserID googleuuid.UUID,
@@ -658,6 +662,146 @@ func (s *Server) ListProjectBranches(
 	}
 
 	return response, nil
+}
+
+func (s *Server) CreateProjectRevision(
+	ctx context.Context,
+	request api.CreateProjectRevisionRequestObject,
+) (api.CreateProjectRevisionResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.CreateProjectRevision500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.CreateProjectRevision401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.versioning == nil {
+		return api.CreateProjectRevision500JSONResponse{
+			Error: "unable to create project revision",
+		}, nil
+	}
+
+	if request.Body == nil {
+		return api.CreateProjectRevision400JSONResponse{
+			Error: "request body is required",
+		}, nil
+	}
+
+	if !request.Body.ExpectedHeadRevisionId.IsSpecified() {
+		return api.CreateProjectRevision400JSONResponse{
+			Error: "expected head revision ID is required",
+		}, nil
+	}
+
+	var expectedHeadRevisionID *googleuuid.UUID
+	if !request.Body.ExpectedHeadRevisionId.IsNull() {
+		value := request.Body.ExpectedHeadRevisionId.MustGet()
+		converted := googleuuid.UUID(value)
+		expectedHeadRevisionID = &converted
+	}
+
+	var mergeParentRevisionID *googleuuid.UUID
+	if request.Body.MergeParentRevisionId != nil {
+		converted := googleuuid.UUID(
+			*request.Body.MergeParentRevisionId,
+		)
+		mergeParentRevisionID = &converted
+	}
+
+	revision, err := s.versioning.CreateRevision(
+		ctx,
+		versioning.CreateRevisionInput{
+			OwnerUserID:            session.UserID,
+			ProjectID:              googleuuid.UUID(request.ProjectId),
+			BranchID:               googleuuid.UUID(request.BranchId),
+			Message:                request.Body.Message,
+			ExpectedHeadRevisionID: expectedHeadRevisionID,
+			MergeParentRevisionID:  mergeParentRevisionID,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, versioning.ErrProjectIDRequired):
+			return api.CreateProjectRevision400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchIDRequired):
+			return api.CreateProjectRevision400JSONResponse{
+				Error: "branch ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrMessageRequired):
+			return api.CreateProjectRevision400JSONResponse{
+				Error: "revision message is required",
+			}, nil
+
+		case errors.Is(
+			err,
+			versioning.ErrExpectedHeadRevisionIDInvalid,
+		):
+			return api.CreateProjectRevision400JSONResponse{
+				Error: "expected head revision ID is invalid",
+			}, nil
+
+		case errors.Is(
+			err,
+			versioning.ErrMergeParentRevisionIDInvalid,
+		):
+			return api.CreateProjectRevision400JSONResponse{
+				Error: "merge parent revision ID is invalid",
+			}, nil
+
+		case errors.Is(err, versioning.ErrMergeRequiresHead):
+			return api.CreateProjectRevision400JSONResponse{
+				Error: "merge revision requires an expected branch head",
+			}, nil
+
+		case errors.Is(
+			err,
+			versioning.ErrRevisionParentsMustDiffer,
+		):
+			return api.CreateProjectRevision400JSONResponse{
+				Error: "revision parents must differ",
+			}, nil
+
+		case errors.Is(err, versioning.ErrProjectNotFound):
+			return api.CreateProjectRevision404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchNotFound):
+			return api.CreateProjectRevision404JSONResponse{
+				Error: "branch not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchHeadConflict):
+			return api.CreateProjectRevision409JSONResponse{
+				Error: "branch head changed",
+			}, nil
+
+		default:
+			return api.CreateProjectRevision500JSONResponse{
+				Error: "unable to create project revision",
+			}, nil
+		}
+	}
+
+	return api.CreateProjectRevision201JSONResponse{
+		Id:                    uuid.UUID(revision.ID),
+		ProjectId:             uuid.UUID(revision.ProjectID),
+		AuthorUserId:          uuid.UUID(revision.AuthorUserID),
+		Message:               revision.Message,
+		ParentRevisionId:      apiUUIDFromPGUUID(revision.ParentRevisionID),
+		MergeParentRevisionId: apiUUIDFromPGUUID(revision.MergeParentRevisionID),
+		CreatedAt:             revision.CreatedAt,
+	}, nil
 }
 
 func (s *Server) GetProjectRevision(

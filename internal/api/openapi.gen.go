@@ -75,6 +75,13 @@ type CreateProjectRequest struct {
 	Name        string  `json:"name"`
 }
 
+// CreateProjectRevisionRequest defines model for CreateProjectRevisionRequest.
+type CreateProjectRevisionRequest struct {
+	ExpectedHeadRevisionId nullable.Nullable[uuid.UUID] `json:"expectedHeadRevisionId"`
+	MergeParentRevisionId  *uuid.UUID                   `json:"mergeParentRevisionId,omitempty"`
+	Message                string                       `json:"message"`
+}
+
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
 	Error string `json:"error"`
@@ -170,6 +177,9 @@ type CreateProjectJSONRequestBody = CreateProjectRequest
 // UpdateProjectJSONRequestBody defines body for UpdateProject for application/json ContentType.
 type UpdateProjectJSONRequestBody = UpdateProjectRequest
 
+// CreateProjectRevisionJSONRequestBody defines body for CreateProjectRevision for application/json ContentType.
+type CreateProjectRevisionJSONRequestBody = CreateProjectRevisionRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// LoginUser Log in a user
@@ -202,6 +212,9 @@ type ServerInterface interface {
 	// ListProjectBranches List branches for a project owned by the current user
 	// (GET /api/projects/{projectId}/branches)
 	ListProjectBranches(w http.ResponseWriter, r *http.Request, projectId uuid.UUID)
+	// CreateProjectRevision Create a revision on a project branch
+	// (POST /api/projects/{projectId}/branches/{branchId}/revisions)
+	CreateProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, branchId uuid.UUID)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID)
@@ -395,6 +408,41 @@ func (siw *ServerInterfaceWrapper) ListProjectBranches(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// CreateProjectRevision operation middleware
+func (siw *ServerInterfaceWrapper) CreateProjectRevision(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "branchId" -------------
+	var branchId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "branchId", r.PathValue("branchId"), &branchId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "branchId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateProjectRevision(w, r, projectId, branchId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetProjectRevision operation middleware
 func (siw *ServerInterfaceWrapper) GetProjectRevision(w http.ResponseWriter, r *http.Request) {
 
@@ -575,6 +623,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}", wrapper.GetProject)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/projects/{projectId}", wrapper.UpdateProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.ListProjectBranches)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}/revisions", wrapper.CreateProjectRevision)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/revisions/{revisionId}", wrapper.GetProjectRevision)
 
 	return m
@@ -1257,6 +1306,114 @@ func (response ListProjectBranches500JSONResponse) VisitListProjectBranchesRespo
 	return err
 }
 
+type CreateProjectRevisionRequestObject struct {
+	ProjectId uuid.UUID `json:"projectId"`
+	BranchId  uuid.UUID `json:"branchId"`
+	Body      *CreateProjectRevisionJSONRequestBody
+}
+
+type CreateProjectRevisionResponseObject interface {
+	VisitCreateProjectRevisionResponse(w http.ResponseWriter) error
+}
+
+type CreateProjectRevision201JSONResponse ProjectRevisionResponse
+
+func (response CreateProjectRevision201JSONResponse) VisitCreateProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectRevision400JSONResponse ErrorResponse
+
+func (response CreateProjectRevision400JSONResponse) VisitCreateProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectRevision401JSONResponse ErrorResponse
+
+func (response CreateProjectRevision401JSONResponse) VisitCreateProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectRevision403JSONResponse ErrorResponse
+
+func (response CreateProjectRevision403JSONResponse) VisitCreateProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectRevision404JSONResponse ErrorResponse
+
+func (response CreateProjectRevision404JSONResponse) VisitCreateProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectRevision409JSONResponse ErrorResponse
+
+func (response CreateProjectRevision409JSONResponse) VisitCreateProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectRevision500JSONResponse ErrorResponse
+
+func (response CreateProjectRevision500JSONResponse) VisitCreateProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetProjectRevisionRequestObject struct {
 	ProjectId  uuid.UUID `json:"projectId"`
 	RevisionId uuid.UUID `json:"revisionId"`
@@ -1403,6 +1560,9 @@ type StrictServerInterface interface {
 	// ListProjectBranches List branches for a project owned by the current user
 	// (GET /api/projects/{projectId}/branches)
 	ListProjectBranches(ctx context.Context, request ListProjectBranchesRequestObject) (ListProjectBranchesResponseObject, error)
+	// CreateProjectRevision Create a revision on a project branch
+	// (POST /api/projects/{projectId}/branches/{branchId}/revisions)
+	CreateProjectRevision(ctx context.Context, request CreateProjectRevisionRequestObject) (CreateProjectRevisionResponseObject, error)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(ctx context.Context, request GetProjectRevisionRequestObject) (GetProjectRevisionResponseObject, error)
@@ -1717,6 +1877,40 @@ func (sh *strictHandler) ListProjectBranches(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListProjectBranchesResponseObject); ok {
 		if err := validResponse.VisitListProjectBranchesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateProjectRevision operation middleware
+func (sh *strictHandler) CreateProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, branchId uuid.UUID) {
+	var request CreateProjectRevisionRequestObject
+
+	request.ProjectId = projectId
+	request.BranchId = branchId
+
+	var body CreateProjectRevisionJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateProjectRevision(ctx, request.(CreateProjectRevisionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateProjectRevision")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateProjectRevisionResponseObject); ok {
+		if err := validResponse.VisitCreateProjectRevisionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
