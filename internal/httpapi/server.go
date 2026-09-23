@@ -10,7 +10,9 @@ import (
 	"github.com/AngelAvilesSil/3Default/internal/auth"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/projects"
+	"github.com/AngelAvilesSil/3Default/internal/versioning"
 	googleuuid "github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type DatabasePinger interface {
@@ -35,6 +37,20 @@ type ProjectService interface {
 		ctx context.Context,
 		input projects.UpdateInput,
 	) (dbgen.Project, error)
+}
+
+type VersioningService interface {
+	ListBranches(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+	) ([]dbgen.ProjectBranch, error)
+	GetRevision(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+		revisionID googleuuid.UUID,
+	) (dbgen.ProjectRevision, error)
 }
 
 type UserRegistrar interface {
@@ -68,6 +84,7 @@ type CurrentUserReader interface {
 type Server struct {
 	database           DatabasePinger
 	projects           ProjectService
+	versioning         VersioningService
 	registrations      UserRegistrar
 	authentication     UserAuthenticator
 	sessionRevocations SessionRevoker
@@ -90,6 +107,28 @@ func NewServer(
 		sessionRevocations: sessionRevocations,
 		currentUsers:       currentUsers,
 	}
+}
+
+func NewServerWithVersioning(
+	database DatabasePinger,
+	projects ProjectService,
+	versioningService VersioningService,
+	registrations UserRegistrar,
+	authentication UserAuthenticator,
+	sessionRevocations SessionRevoker,
+	currentUsers CurrentUserReader,
+) *Server {
+	server := NewServer(
+		database,
+		projects,
+		registrations,
+		authentication,
+		sessionRevocations,
+		currentUsers,
+	)
+	server.versioning = versioningService
+
+	return server
 }
 
 func (s *Server) GetHealth(
@@ -551,7 +590,157 @@ func (s *Server) CreateProject(
 	}, nil
 }
 
+func (s *Server) ListProjectBranches(
+	ctx context.Context,
+	request api.ListProjectBranchesRequestObject,
+) (api.ListProjectBranchesResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.ListProjectBranches500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.ListProjectBranches401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.versioning == nil {
+		return api.ListProjectBranches500JSONResponse{
+			Error: "unable to list project branches",
+		}, nil
+	}
+
+	branches, err := s.versioning.ListBranches(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, versioning.ErrProjectIDRequired):
+			return api.ListProjectBranches400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrProjectNotFound):
+			return api.ListProjectBranches404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		default:
+			return api.ListProjectBranches500JSONResponse{
+				Error: "unable to list project branches",
+			}, nil
+		}
+	}
+
+	response := make(
+		api.ListProjectBranches200JSONResponse,
+		0,
+		len(branches),
+	)
+
+	for _, branch := range branches {
+		response = append(
+			response,
+			api.ProjectBranchResponse{
+				Id:             uuid.UUID(branch.ID),
+				ProjectId:      uuid.UUID(branch.ProjectID),
+				Name:           branch.Name,
+				HeadRevisionId: apiUUIDFromPGUUID(branch.HeadRevisionID),
+				CreatedAt:      branch.CreatedAt,
+				UpdatedAt:      branch.UpdatedAt,
+			},
+		)
+	}
+
+	return response, nil
+}
+
+func (s *Server) GetProjectRevision(
+	ctx context.Context,
+	request api.GetProjectRevisionRequestObject,
+) (api.GetProjectRevisionResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.GetProjectRevision500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.GetProjectRevision401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.versioning == nil {
+		return api.GetProjectRevision500JSONResponse{
+			Error: "unable to get project revision",
+		}, nil
+	}
+
+	revision, err := s.versioning.GetRevision(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+		googleuuid.UUID(request.RevisionId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, versioning.ErrProjectIDRequired):
+			return api.GetProjectRevision400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrRevisionIDRequired):
+			return api.GetProjectRevision400JSONResponse{
+				Error: "revision ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrProjectNotFound):
+			return api.GetProjectRevision404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrRevisionNotFound):
+			return api.GetProjectRevision404JSONResponse{
+				Error: "revision not found",
+			}, nil
+
+		default:
+			return api.GetProjectRevision500JSONResponse{
+				Error: "unable to get project revision",
+			}, nil
+		}
+	}
+
+	return api.GetProjectRevision200JSONResponse{
+		Id:                    uuid.UUID(revision.ID),
+		ProjectId:             uuid.UUID(revision.ProjectID),
+		AuthorUserId:          uuid.UUID(revision.AuthorUserID),
+		Message:               revision.Message,
+		ParentRevisionId:      apiUUIDFromPGUUID(revision.ParentRevisionID),
+		MergeParentRevisionId: apiUUIDFromPGUUID(revision.MergeParentRevisionID),
+		CreatedAt:             revision.CreatedAt,
+	}, nil
+}
+
+func apiUUIDFromPGUUID(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+
+	converted := uuid.UUID(value.Bytes)
+
+	return &converted
+}
+
 var _ ProjectService = (*projects.Service)(nil)
+var _ VersioningService = (*versioning.Service)(nil)
 var _ UserRegistrar = (*auth.RegistrationService)(nil)
 var _ UserAuthenticator = (*auth.LoginService)(nil)
 var _ SessionRevoker = (*auth.SessionService)(nil)

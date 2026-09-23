@@ -94,6 +94,16 @@ type LoginUserRequest struct {
 	Password string `json:"password"`
 }
 
+// ProjectBranchResponse defines model for ProjectBranchResponse.
+type ProjectBranchResponse struct {
+	CreatedAt      time.Time  `json:"createdAt"`
+	HeadRevisionId *uuid.UUID `json:"headRevisionId"`
+	Id             uuid.UUID  `json:"id"`
+	Name           string     `json:"name"`
+	ProjectId      uuid.UUID  `json:"projectId"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+}
+
 // ProjectResponse defines model for ProjectResponse.
 type ProjectResponse struct {
 	CreatedAt   time.Time                 `json:"createdAt"`
@@ -106,6 +116,17 @@ type ProjectResponse struct {
 
 // ProjectResponseVisibility defines model for ProjectResponse.Visibility.
 type ProjectResponseVisibility string
+
+// ProjectRevisionResponse defines model for ProjectRevisionResponse.
+type ProjectRevisionResponse struct {
+	AuthorUserId          uuid.UUID  `json:"authorUserId"`
+	CreatedAt             time.Time  `json:"createdAt"`
+	Id                    uuid.UUID  `json:"id"`
+	MergeParentRevisionId *uuid.UUID `json:"mergeParentRevisionId"`
+	Message               string     `json:"message"`
+	ParentRevisionId      *uuid.UUID `json:"parentRevisionId"`
+	ProjectId             uuid.UUID  `json:"projectId"`
+}
 
 // ReadyResponse defines model for ReadyResponse.
 type ReadyResponse struct {
@@ -178,6 +199,12 @@ type ServerInterface interface {
 	// UpdateProject Update project metadata
 	// (PATCH /api/projects/{projectId})
 	UpdateProject(w http.ResponseWriter, r *http.Request, projectId uuid.UUID)
+	// ListProjectBranches List branches for a project owned by the current user
+	// (GET /api/projects/{projectId}/branches)
+	ListProjectBranches(w http.ResponseWriter, r *http.Request, projectId uuid.UUID)
+	// GetProjectRevision Get a revision for a project owned by the current user
+	// (GET /api/projects/{projectId}/revisions/{revisionId})
+	GetProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID)
 	// GetReady Check application readiness
 	// (GET /api/ready)
 	GetReady(w http.ResponseWriter, r *http.Request)
@@ -342,6 +369,67 @@ func (siw *ServerInterfaceWrapper) UpdateProject(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// ListProjectBranches operation middleware
+func (siw *ServerInterfaceWrapper) ListProjectBranches(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjectBranches(w, r, projectId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProjectRevision operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectRevision(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "revisionId" -------------
+	var revisionId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "revisionId", r.PathValue("revisionId"), &revisionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revisionId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectRevision(w, r, projectId, revisionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReady operation middleware
 func (siw *ServerInterfaceWrapper) GetReady(w http.ResponseWriter, r *http.Request) {
 
@@ -486,6 +574,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects", wrapper.CreateProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}", wrapper.GetProject)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/projects/{projectId}", wrapper.UpdateProject)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.ListProjectBranches)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/revisions/{revisionId}", wrapper.GetProjectRevision)
 
 	return m
 }
@@ -1089,6 +1179,163 @@ func (response UpdateProject500JSONResponse) VisitUpdateProjectResponse(w http.R
 	return err
 }
 
+type ListProjectBranchesRequestObject struct {
+	ProjectId uuid.UUID `json:"projectId"`
+}
+
+type ListProjectBranchesResponseObject interface {
+	VisitListProjectBranchesResponse(w http.ResponseWriter) error
+}
+
+type ListProjectBranches200JSONResponse []ProjectBranchResponse
+
+func (response ListProjectBranches200JSONResponse) VisitListProjectBranchesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectBranches400JSONResponse ErrorResponse
+
+func (response ListProjectBranches400JSONResponse) VisitListProjectBranchesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectBranches401JSONResponse ErrorResponse
+
+func (response ListProjectBranches401JSONResponse) VisitListProjectBranchesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectBranches404JSONResponse ErrorResponse
+
+func (response ListProjectBranches404JSONResponse) VisitListProjectBranchesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectBranches500JSONResponse ErrorResponse
+
+func (response ListProjectBranches500JSONResponse) VisitListProjectBranchesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectRevisionRequestObject struct {
+	ProjectId  uuid.UUID `json:"projectId"`
+	RevisionId uuid.UUID `json:"revisionId"`
+}
+
+type GetProjectRevisionResponseObject interface {
+	VisitGetProjectRevisionResponse(w http.ResponseWriter) error
+}
+
+type GetProjectRevision200JSONResponse ProjectRevisionResponse
+
+func (response GetProjectRevision200JSONResponse) VisitGetProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectRevision400JSONResponse ErrorResponse
+
+func (response GetProjectRevision400JSONResponse) VisitGetProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectRevision401JSONResponse ErrorResponse
+
+func (response GetProjectRevision401JSONResponse) VisitGetProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectRevision404JSONResponse ErrorResponse
+
+func (response GetProjectRevision404JSONResponse) VisitGetProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectRevision500JSONResponse ErrorResponse
+
+func (response GetProjectRevision500JSONResponse) VisitGetProjectRevisionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetReadyRequestObject struct {
 }
 
@@ -1153,6 +1400,12 @@ type StrictServerInterface interface {
 	// UpdateProject Update project metadata
 	// (PATCH /api/projects/{projectId})
 	UpdateProject(ctx context.Context, request UpdateProjectRequestObject) (UpdateProjectResponseObject, error)
+	// ListProjectBranches List branches for a project owned by the current user
+	// (GET /api/projects/{projectId}/branches)
+	ListProjectBranches(ctx context.Context, request ListProjectBranchesRequestObject) (ListProjectBranchesResponseObject, error)
+	// GetProjectRevision Get a revision for a project owned by the current user
+	// (GET /api/projects/{projectId}/revisions/{revisionId})
+	GetProjectRevision(ctx context.Context, request GetProjectRevisionRequestObject) (GetProjectRevisionResponseObject, error)
 	// GetReady Check application readiness
 	// (GET /api/ready)
 	GetReady(ctx context.Context, request GetReadyRequestObject) (GetReadyResponseObject, error)
@@ -1438,6 +1691,59 @@ func (sh *strictHandler) UpdateProject(w http.ResponseWriter, r *http.Request, p
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(UpdateProjectResponseObject); ok {
 		if err := validResponse.VisitUpdateProjectResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListProjectBranches operation middleware
+func (sh *strictHandler) ListProjectBranches(w http.ResponseWriter, r *http.Request, projectId uuid.UUID) {
+	var request ListProjectBranchesRequestObject
+
+	request.ProjectId = projectId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListProjectBranches(ctx, request.(ListProjectBranchesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListProjectBranches")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListProjectBranchesResponseObject); ok {
+		if err := validResponse.VisitListProjectBranchesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetProjectRevision operation middleware
+func (sh *strictHandler) GetProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID) {
+	var request GetProjectRevisionRequestObject
+
+	request.ProjectId = projectId
+	request.RevisionId = revisionId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProjectRevision(ctx, request.(GetProjectRevisionRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProjectRevision")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetProjectRevisionResponseObject); ok {
+		if err := validResponse.VisitGetProjectRevisionResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

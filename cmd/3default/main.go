@@ -12,6 +12,7 @@ import (
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/httpapi"
 	"github.com/AngelAvilesSil/3Default/internal/projects"
+	"github.com/AngelAvilesSil/3Default/internal/versioning"
 )
 
 func main() {
@@ -39,6 +40,10 @@ func main() {
 	queries := dbgen.New(db)
 	projectStore := database.NewProjectStore(db)
 	projectService := projects.NewService(projectStore)
+	versioningService := versioning.NewService(
+		projectStore,
+		projectStore,
+	)
 
 	registrationStore := database.NewRegistrationStore(db)
 
@@ -85,9 +90,10 @@ func main() {
 	}
 
 	handler := httpapi.NewHandler(
-		httpapi.NewServer(
+		httpapi.NewServerWithVersioning(
 			db,
 			projectService,
+			versioningService,
 			registrationService,
 			loginService,
 			sessionService,
