@@ -343,6 +343,100 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/projects/{projectId}/branches:
+    get:
+      operationId: listProjectBranches
+      summary: List branches for a project owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Project branches listed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectBranchResponse"
+        "400":
+          description: Invalid project ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/projects/{projectId}/revisions/{revisionId}:
+    get:
+      operationId: getProjectRevision
+      summary: Get a revision for a project owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: revisionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Project revision found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectRevisionResponse"
+        "400":
+          description: Invalid project or revision ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project or revision not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthResponse:
@@ -467,6 +561,74 @@ components:
           type: string
           format: date-time
         updatedAt:
+          type: string
+          format: date-time
+
+    ProjectBranchResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - name
+        - headRevisionId
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        headRevisionId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ProjectRevisionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - authorUserId
+        - message
+        - parentRevisionId
+        - mergeParentRevisionId
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        authorUserId:
+          type: string
+          format: uuid
+        message:
+          type: string
+        parentRevisionId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        mergeParentRevisionId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        createdAt:
           type: string
           format: date-time
 
