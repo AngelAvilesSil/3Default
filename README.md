@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: backend foundation and authenticated project APIs**
+**Current phase: project versioning and authenticated project APIs**
 
 Implemented foundations include:
 
@@ -22,6 +22,9 @@ Implemented foundations include:
 * OpenAPI-first HTTP contracts
 * health and readiness endpoints
 * project persistence and authenticated project creation, listing, detail reads, and metadata updates
+* project revision and branch persistence with automatic `main` branch creation
+* atomic revision creation with optimistic branch-head updates
+* authenticated project branch reads, revision reads, and revision creation
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
 * Argon2id password hashing
@@ -32,7 +35,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication milestone is complete. Basic authenticated project operations are now implemented through metadata updates. Current backend work is moving into project versioning foundations.
+The authentication milestone and basic authenticated project operations are complete. The backend now includes the first project-versioning API surface: project branches, project-scoped revision reads, and atomic revision creation with optimistic branch-head concurrency. Branch management, revision-graph traversal, storage integration, and CAD workflows remain future work.
 
 ---
 
@@ -159,7 +162,8 @@ Go is intentionally **not required on the Windows host**. Go tooling, `gopls`, b
 │   ├── config/
 │   ├── database/
 │   ├── httpapi/
-│   └── projects/
+│   ├── projects/
+│   └── versioning/
 ├── web/
 ├── compose.yaml
 ├── go.mod
@@ -279,7 +283,63 @@ GET   /api/projects
 GET   /api/projects/{projectId}
 POST  /api/projects
 PATCH /api/projects/{projectId}
+
+GET   /api/projects/{projectId}/branches
+GET   /api/projects/{projectId}/revisions/{revisionId}
+POST  /api/projects/{projectId}/branches/{branchId}/revisions
 ```
+
+---
+
+## Versioning Model and API
+
+Each project is created transactionally with a `main` branch. Revisions belong to the project rather than to a branch. A branch is a named, movable pointer to a revision head, and a newly created project's `main` branch initially has no head.
+
+The current revision graph supports zero, one, or two parents:
+
+```text
+Root revision
+    parent = null
+    merge parent = null
+
+Normal revision
+    parent = previously observed target-branch head
+    merge parent = null
+
+Merge revision
+    parent = previously observed target-branch head
+    merge parent = a distinct second revision
+```
+
+For a merge revision, both parents must belong to the same project, the merge parent must differ from the primary parent, and a merge parent cannot be supplied when the target branch has no expected head. The current merge model records revision ancestry only; 3Default does not yet perform automatic CAD-content merging or conflict resolution.
+
+Revision creation and target-branch advancement happen atomically in one database transaction. The client must provide `expectedHeadRevisionId` as an optimistic-concurrency precondition:
+
+* `null` means the caller explicitly observed an empty branch.
+* a UUID means the caller observed that revision as the branch head.
+* omitting the field is invalid.
+
+The branch head is advanced only if it still matches the caller's expected value. If another revision has already moved the branch head, the candidate revision is rolled back and the API returns `409 Conflict`.
+
+`mergeParentRevisionId` is optional. When omitted or `null`, the revision has only its primary parent. When supplied, it records the second parent of a merge revision.
+
+The authenticated project owner is currently also recorded as the revision author. Project ownership is resolved from the server-side session rather than accepted from the request.
+
+Implemented versioning endpoints are:
+
+```text
+GET  /api/projects/{projectId}/branches
+GET  /api/projects/{projectId}/revisions/{revisionId}
+POST /api/projects/{projectId}/branches/{branchId}/revisions
+```
+
+Branch listing returns each branch and its current head revision, if any. Revision reads are scoped to a project. A project that does not exist and a project owned by another user are both exposed as `404` through the owner-scoped application service.
+
+The current implementation deliberately does not expose a flat revision-history endpoint. Revisions form a directed acyclic graph in the intended model, so a single chronological list would not accurately represent branching and merging.
+
+Historical revisions are treated as append-only by the application: there are no revision update or delete operations in the current service or HTTP API. The database schema enforces same-project parent references and several parent constraints, but it does **not** currently prevent arbitrary direct SQL updates to revision rows or fully enforce cycle prevention. Stronger immutable-history enforcement and graph validation remain future work.
+
+Branch creation, renaming, deletion, richer graph traversal, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
 
 ---
 
@@ -485,9 +545,14 @@ The goal is to keep both the codebase and Git history understandable as the proj
 
 ### Versioning, Storage, and CAD
 
-* [ ] revisions and branches
-* [ ] immutable history and merge workflow
-* [ ] conflict-resolution model
+* [x] revision and branch persistence foundation
+* [x] automatic `main` branch creation
+* [x] atomic revision creation with optimistic branch-head updates
+* [x] authenticated branch/revision reads and revision-creation API
+* [ ] branch management API
+* [ ] DAG traversal and history views
+* [ ] immutable-history hardening and cycle prevention
+* [ ] merge and conflict-resolution workflow
 * [ ] content-addressed storage
 * [ ] project and revision file references
 * [ ] source CAD upload
