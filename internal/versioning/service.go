@@ -24,6 +24,12 @@ var (
 	ErrBranchIDRequired = errors.New(
 		"project branch ID is required",
 	)
+	ErrBranchNameRequired = errors.New(
+		"project branch name is required",
+	)
+	ErrHeadRevisionIDInvalid = errors.New(
+		"branch head revision ID is invalid",
+	)
 	ErrMessageRequired = errors.New(
 		"revision message is required",
 	)
@@ -59,6 +65,13 @@ type Service struct {
 	revisions RevisionStore
 }
 
+type CreateBranchInput struct {
+	OwnerUserID    uuid.UUID
+	ProjectID      uuid.UUID
+	Name           string
+	HeadRevisionID *uuid.UUID
+}
+
 type CreateRevisionInput struct {
 	OwnerUserID uuid.UUID
 	ProjectID   uuid.UUID
@@ -77,6 +90,85 @@ func NewService(
 		projects:  projects,
 		revisions: revisions,
 	}
+}
+
+func (s *Service) CreateBranch(
+	ctx context.Context,
+	input CreateBranchInput,
+) (dbgen.ProjectBranch, error) {
+	if input.OwnerUserID == uuid.Nil {
+		return dbgen.ProjectBranch{}, ErrOwnerRequired
+	}
+
+	if input.ProjectID == uuid.Nil {
+		return dbgen.ProjectBranch{}, ErrProjectIDRequired
+	}
+
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return dbgen.ProjectBranch{}, ErrBranchNameRequired
+	}
+
+	if input.HeadRevisionID != nil &&
+		*input.HeadRevisionID == uuid.Nil {
+		return dbgen.ProjectBranch{}, ErrHeadRevisionIDInvalid
+	}
+
+	_, err := s.projects.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   input.ProjectID,
+			OwnerUserID: input.OwnerUserID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.ProjectBranch{}, ErrProjectNotFound
+	}
+	if err != nil {
+		return dbgen.ProjectBranch{}, fmt.Errorf(
+			"get project for branch creation: %w",
+			err,
+		)
+	}
+
+	if input.HeadRevisionID != nil {
+		_, err := s.revisions.GetProjectRevisionByIDAndProject(
+			ctx,
+			dbgen.GetProjectRevisionByIDAndProjectParams{
+				RevisionID: *input.HeadRevisionID,
+				ProjectID:  input.ProjectID,
+			},
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return dbgen.ProjectBranch{}, ErrRevisionNotFound
+		}
+		if err != nil {
+			return dbgen.ProjectBranch{}, fmt.Errorf(
+				"get branch head revision: %w",
+				err,
+			)
+		}
+	}
+
+	branch, err := s.revisions.CreateBranch(
+		ctx,
+		CreateBranchParams{
+			ProjectID:      input.ProjectID,
+			Name:           name,
+			HeadRevisionID: input.HeadRevisionID,
+		},
+	)
+	if errors.Is(err, ErrBranchNameConflict) {
+		return dbgen.ProjectBranch{}, ErrBranchNameConflict
+	}
+	if err != nil {
+		return dbgen.ProjectBranch{}, fmt.Errorf(
+			"create project branch: %w",
+			err,
+		)
+	}
+
+	return branch, nil
 }
 
 func (s *Service) ListBranches(
