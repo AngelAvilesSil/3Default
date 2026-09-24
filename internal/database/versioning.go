@@ -9,8 +9,40 @@ import (
 	"github.com/AngelAvilesSil/3Default/internal/versioning"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func (s *ProjectStore) CreateBranch(
+	ctx context.Context,
+	arg versioning.CreateBranchParams,
+) (dbgen.ProjectBranch, error) {
+	branch, err := s.Queries.CreateProjectBranchWithHead(
+		ctx,
+		dbgen.CreateProjectBranchWithHeadParams{
+			ProjectID:      arg.ProjectID,
+			Name:           arg.Name,
+			HeadRevisionID: nullableUUID(arg.HeadRevisionID),
+		},
+	)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == "23505" &&
+			pgErr.ConstraintName ==
+				"project_branches_project_name_unique" {
+			return dbgen.ProjectBranch{},
+				versioning.ErrBranchNameConflict
+		}
+
+		return dbgen.ProjectBranch{}, fmt.Errorf(
+			"create project branch: %w",
+			err,
+		)
+	}
+
+	return branch, nil
+}
 
 func (s *ProjectStore) CreateRevisionOnBranch(
 	ctx context.Context,

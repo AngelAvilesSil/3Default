@@ -93,6 +93,46 @@ func (q *Queries) CreateProjectBranch(ctx context.Context, arg CreateProjectBran
 	return i, err
 }
 
+const createProjectBranchWithHead = `-- name: CreateProjectBranchWithHead :one
+INSERT INTO project_branches (
+    project_id,
+    name,
+    head_revision_id
+)
+VALUES (
+    $1,
+    $2,
+    $3
+)
+RETURNING
+    id,
+    project_id,
+    name,
+    head_revision_id,
+    created_at,
+    updated_at
+`
+
+type CreateProjectBranchWithHeadParams struct {
+	ProjectID      uuid.UUID
+	Name           string
+	HeadRevisionID pgtype.UUID
+}
+
+func (q *Queries) CreateProjectBranchWithHead(ctx context.Context, arg CreateProjectBranchWithHeadParams) (ProjectBranch, error) {
+	row := q.db.QueryRow(ctx, createProjectBranchWithHead, arg.ProjectID, arg.Name, arg.HeadRevisionID)
+	var i ProjectBranch
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.HeadRevisionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getProjectBranchByIDAndProject = `-- name: GetProjectBranchByIDAndProject :one
 SELECT
     id,
