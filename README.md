@@ -285,6 +285,7 @@ POST  /api/projects
 PATCH /api/projects/{projectId}
 
 GET   /api/projects/{projectId}/branches
+POST  /api/projects/{projectId}/branches
 GET   /api/projects/{projectId}/revisions/{revisionId}
 POST  /api/projects/{projectId}/branches/{branchId}/revisions
 ```
@@ -329,17 +330,28 @@ Implemented versioning endpoints are:
 
 ```text
 GET  /api/projects/{projectId}/branches
+POST /api/projects/{projectId}/branches
 GET  /api/projects/{projectId}/revisions/{revisionId}
 POST /api/projects/{projectId}/branches/{branchId}/revisions
 ```
 
-Branch listing returns each branch and its current head revision, if any. Revision reads are scoped to a project. A project that does not exist and a project owned by another user are both exposed as `404` through the owner-scoped application service.
+Branch listing returns each branch and its current head revision, if any. Branch creation accepts a name and a required-but-nullable `headRevisionId`:
+
+* `null` creates an intentionally empty branch.
+* a UUID creates the branch at that exact revision in the same project.
+* omitting `headRevisionId` is invalid.
+
+Branch names are trimmed, must be nonblank, and are unique within a project. Name uniqueness is currently case-sensitive. Creating a duplicate branch name returns `409 Conflict`. A missing project or supplied head revision is exposed as `404`.
+
+Branch creation deliberately accepts an exact revision rather than a source branch whose current head would be copied. This keeps the starting point explicit and avoids racing against a source branch that may move between observation and branch creation.
+
+Revision reads are scoped to a project. A project that does not exist and a project owned by another user are both exposed as `404` through the owner-scoped application service.
 
 The current implementation deliberately does not expose a flat revision-history endpoint. Revisions form a directed acyclic graph in the intended model, so a single chronological list would not accurately represent branching and merging.
 
 Historical revisions are treated as append-only by the application: there are no revision update or delete operations in the current service or HTTP API. The database schema enforces same-project parent references and several parent constraints, but it does **not** currently prevent arbitrary direct SQL updates to revision rows or fully enforce cycle prevention. Stronger immutable-history enforcement and graph validation remain future work.
 
-Branch creation, renaming, deletion, richer graph traversal, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
+Branch renaming and deletion, richer graph traversal, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
 
 ---
 
@@ -549,7 +561,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] automatic `main` branch creation
 * [x] atomic revision creation with optimistic branch-head updates
 * [x] authenticated branch/revision reads and revision-creation API
-* [ ] branch management API
+* [x] authenticated branch creation API
+* [ ] branch rename/delete and broader branch management
 * [ ] DAG traversal and history views
 * [ ] immutable-history hardening and cycle prevention
 * [ ] merge and conflict-resolution workflow
