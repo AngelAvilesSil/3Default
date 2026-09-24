@@ -40,6 +40,10 @@ type ProjectService interface {
 }
 
 type VersioningService interface {
+	CreateBranch(
+		ctx context.Context,
+		input versioning.CreateBranchInput,
+	) (dbgen.ProjectBranch, error)
 	CreateRevision(
 		ctx context.Context,
 		input versioning.CreateRevisionInput,
@@ -591,6 +595,106 @@ func (s *Server) CreateProject(
 		Visibility:  api.ProjectResponseVisibility(project.Visibility),
 		CreatedAt:   project.CreatedAt,
 		UpdatedAt:   project.UpdatedAt,
+	}, nil
+}
+
+func (s *Server) CreateProjectBranch(
+	ctx context.Context,
+	request api.CreateProjectBranchRequestObject,
+) (api.CreateProjectBranchResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.CreateProjectBranch500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.CreateProjectBranch401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.versioning == nil {
+		return api.CreateProjectBranch500JSONResponse{
+			Error: "unable to create project branch",
+		}, nil
+	}
+
+	if request.Body == nil {
+		return api.CreateProjectBranch400JSONResponse{
+			Error: "request body is required",
+		}, nil
+	}
+
+	if !request.Body.HeadRevisionId.IsSpecified() {
+		return api.CreateProjectBranch400JSONResponse{
+			Error: "head revision ID is required",
+		}, nil
+	}
+
+	var headRevisionID *googleuuid.UUID
+	if !request.Body.HeadRevisionId.IsNull() {
+		value := request.Body.HeadRevisionId.MustGet()
+		converted := googleuuid.UUID(value)
+		headRevisionID = &converted
+	}
+
+	branch, err := s.versioning.CreateBranch(
+		ctx,
+		versioning.CreateBranchInput{
+			OwnerUserID:    session.UserID,
+			ProjectID:      googleuuid.UUID(request.ProjectId),
+			Name:           request.Body.Name,
+			HeadRevisionID: headRevisionID,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, versioning.ErrProjectIDRequired):
+			return api.CreateProjectBranch400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchNameRequired):
+			return api.CreateProjectBranch400JSONResponse{
+				Error: "branch name is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrHeadRevisionIDInvalid):
+			return api.CreateProjectBranch400JSONResponse{
+				Error: "branch head revision ID is invalid",
+			}, nil
+
+		case errors.Is(err, versioning.ErrProjectNotFound):
+			return api.CreateProjectBranch404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrRevisionNotFound):
+			return api.CreateProjectBranch404JSONResponse{
+				Error: "head revision not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchNameConflict):
+			return api.CreateProjectBranch409JSONResponse{
+				Error: "branch name already exists",
+			}, nil
+
+		default:
+			return api.CreateProjectBranch500JSONResponse{
+				Error: "unable to create project branch",
+			}, nil
+		}
+	}
+
+	return api.CreateProjectBranch201JSONResponse{
+		Id:             uuid.UUID(branch.ID),
+		ProjectId:      uuid.UUID(branch.ProjectID),
+		Name:           branch.Name,
+		HeadRevisionId: apiUUIDFromPGUUID(branch.HeadRevisionID),
+		CreatedAt:      branch.CreatedAt,
+		UpdatedAt:      branch.UpdatedAt,
 	}, nil
 }
 

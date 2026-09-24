@@ -23,6 +23,11 @@ type fakeVersioningService struct {
 	createResult dbgen.ProjectRevision
 	createErr    error
 
+	createBranchCalled bool
+	createBranchInput  versioning.CreateBranchInput
+	createBranchResult dbgen.ProjectBranch
+	createBranchErr    error
+
 	listCalled      bool
 	listOwnerUserID uuid.UUID
 	listProjectID   uuid.UUID
@@ -35,6 +40,16 @@ type fakeVersioningService struct {
 	getRevisionID  uuid.UUID
 	revision       dbgen.ProjectRevision
 	getErr         error
+}
+
+func (f *fakeVersioningService) CreateBranch(
+	_ context.Context,
+	input versioning.CreateBranchInput,
+) (dbgen.ProjectBranch, error) {
+	f.createBranchCalled = true
+	f.createBranchInput = input
+
+	return f.createBranchResult, f.createBranchErr
 }
 
 func (f *fakeVersioningService) CreateRevision(
@@ -1035,6 +1050,670 @@ func TestGetProjectRevisionReturnsNullParentsForRootRevision(
 			"expected merge parent to be null, got %s",
 			*body.MergeParentRevisionId,
 		)
+	}
+}
+
+func TestCreateProjectBranchRequiresAuthentication(t *testing.T) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+uuid.New().String()+"/branches",
+		strings.NewReader(
+			`{"name":"feature","headRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusUnauthorized,
+			response.Code,
+		)
+	}
+
+	if service.createBranchCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "authentication required" {
+		t.Fatalf(
+			"expected authentication error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectBranchRejectsSessionResolutionFailure(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+uuid.New().String()+"/branches",
+		strings.NewReader(
+			`{"name":"feature","headRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSessionResolutionError(
+		request,
+		errors.New("database unavailable"),
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	if service.createBranchCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to authenticate request" {
+		t.Fatalf(
+			"expected authentication failure error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectBranchRejectsCrossOriginBrowserRequest(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+uuid.New().String()+"/branches",
+		strings.NewReader(
+			`{"name":"feature","headRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusForbidden,
+			response.Code,
+		)
+	}
+
+	if service.createBranchCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+}
+
+func TestCreateProjectBranchRejectsMalformedProjectID(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/not-a-uuid/branches",
+		strings.NewReader(
+			`{"name":"feature","headRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if service.createBranchCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+}
+
+func TestCreateProjectBranchRejectsInvalidJSON(t *testing.T) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+uuid.New().String()+"/branches",
+		strings.NewReader(`{"name":`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if service.createBranchCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+}
+
+func TestCreateProjectBranchRequiresHeadRevisionField(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+uuid.New().String()+"/branches",
+		strings.NewReader(`{"name":"feature"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if service.createBranchCalled {
+		t.Fatal("expected versioning service not to be called")
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "head revision ID is required" {
+		t.Fatalf(
+			"expected missing head-revision error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectBranchRejectsMissingVersioningDependency(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+uuid.New().String()+"/branches",
+		strings.NewReader(
+			`{"name":"feature","headRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to create project branch" {
+		t.Fatalf(
+			"expected missing dependency error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestCreateProjectBranchMapsServiceErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		projectID   uuid.UUID
+		serviceErr  error
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "missing project ID",
+			projectID:   uuid.Nil,
+			serviceErr:  versioning.ErrProjectIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "project ID is required",
+		},
+		{
+			name:        "branch name required",
+			projectID:   uuid.New(),
+			serviceErr:  versioning.ErrBranchNameRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "branch name is required",
+		},
+		{
+			name:        "invalid head revision ID",
+			projectID:   uuid.New(),
+			serviceErr:  versioning.ErrHeadRevisionIDInvalid,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "branch head revision ID is invalid",
+		},
+		{
+			name:        "project not found",
+			projectID:   uuid.New(),
+			serviceErr:  versioning.ErrProjectNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "project not found",
+		},
+		{
+			name:        "head revision not found",
+			projectID:   uuid.New(),
+			serviceErr:  versioning.ErrRevisionNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "head revision not found",
+		},
+		{
+			name:        "branch name conflict",
+			projectID:   uuid.New(),
+			serviceErr:  versioning.ErrBranchNameConflict,
+			wantStatus:  http.StatusConflict,
+			wantMessage: "branch name already exists",
+		},
+		{
+			name:        "unexpected service error",
+			projectID:   uuid.New(),
+			serviceErr:  errors.New("database unavailable"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "unable to create project branch",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			userID := uuid.New()
+			service := &fakeVersioningService{
+				createBranchErr: test.serviceErr,
+			}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/projects/"+
+					test.projectID.String()+
+					"/branches",
+				strings.NewReader(
+					`{"name":"feature","headRevisionId":null}`,
+				),
+			)
+			request.Header.Set(
+				"Content-Type",
+				"application/json",
+			)
+			request = requestWithSession(request, userID)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d",
+					test.wantStatus,
+					response.Code,
+				)
+			}
+
+			if !service.createBranchCalled {
+				t.Fatal(
+					"expected versioning service to be called",
+				)
+			}
+
+			if service.createBranchInput.OwnerUserID != userID {
+				t.Fatalf(
+					"expected owner ID %s, got %s",
+					userID,
+					service.createBranchInput.OwnerUserID,
+				)
+			}
+
+			if service.createBranchInput.ProjectID != test.projectID {
+				t.Fatalf(
+					"expected project ID %s, got %s",
+					test.projectID,
+					service.createBranchInput.ProjectID,
+				)
+			}
+
+			if service.createBranchInput.Name != "feature" {
+				t.Fatalf(
+					"expected branch name %q, got %q",
+					"feature",
+					service.createBranchInput.Name,
+				)
+			}
+
+			if service.createBranchInput.HeadRevisionID != nil {
+				t.Fatalf(
+					"expected nil head revision, got %s",
+					*service.createBranchInput.HeadRevisionID,
+				)
+			}
+
+			body := decodeErrorResponse(t, response)
+			if body.Error != test.wantMessage {
+				t.Fatalf(
+					"expected error %q, got %q",
+					test.wantMessage,
+					body.Error,
+				)
+			}
+		})
+	}
+}
+
+func TestCreateProjectBranchAcceptsExplicitNullHead(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+
+	createdAt := time.Date(
+		2026,
+		time.September,
+		24,
+		20,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+	updatedAt := createdAt.Add(time.Minute)
+
+	service := &fakeVersioningService{
+		createBranchResult: dbgen.ProjectBranch{
+			ID:        branchID,
+			ProjectID: projectID,
+			Name:      "empty-feature",
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
+		},
+	}
+
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+projectID.String()+"/branches",
+		strings.NewReader(
+			`{"name":"empty-feature","headRevisionId":null}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusCreated,
+			response.Code,
+		)
+	}
+
+	if !service.createBranchCalled {
+		t.Fatal("expected versioning service to be called")
+	}
+
+	if service.createBranchInput.OwnerUserID != userID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			userID,
+			service.createBranchInput.OwnerUserID,
+		)
+	}
+
+	if service.createBranchInput.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			service.createBranchInput.ProjectID,
+		)
+	}
+
+	if service.createBranchInput.Name != "empty-feature" {
+		t.Fatalf(
+			"expected branch name %q, got %q",
+			"empty-feature",
+			service.createBranchInput.Name,
+		)
+	}
+
+	if service.createBranchInput.HeadRevisionID != nil {
+		t.Fatalf(
+			"expected nil branch head, got %s",
+			*service.createBranchInput.HeadRevisionID,
+		)
+	}
+
+	var body api.ProjectBranchResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode branch response: %v", err)
+	}
+
+	if uuid.UUID(body.Id) != branchID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branchID,
+			body.Id,
+		)
+	}
+
+	if uuid.UUID(body.ProjectId) != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			body.ProjectId,
+		)
+	}
+
+	if body.Name != "empty-feature" {
+		t.Fatalf(
+			"expected branch name %q, got %q",
+			"empty-feature",
+			body.Name,
+		)
+	}
+
+	if body.HeadRevisionId != nil {
+		t.Fatalf(
+			"expected response head revision to be null, got %s",
+			*body.HeadRevisionId,
+		)
+	}
+
+	if !body.CreatedAt.Equal(createdAt) {
+		t.Fatalf(
+			"expected created time %s, got %s",
+			createdAt,
+			body.CreatedAt,
+		)
+	}
+
+	if !body.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf(
+			"expected updated time %s, got %s",
+			updatedAt,
+			body.UpdatedAt,
+		)
+	}
+}
+
+func TestCreateProjectBranchForwardsExactHeadRevision(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+	headRevisionID := uuid.New()
+
+	createdAt := time.Date(
+		2026,
+		time.September,
+		24,
+		21,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+	updatedAt := createdAt.Add(time.Minute)
+
+	service := &fakeVersioningService{
+		createBranchResult: dbgen.ProjectBranch{
+			ID:        branchID,
+			ProjectID: projectID,
+			Name:      "feature-gripper",
+			HeadRevisionID: pgtype.UUID{
+				Bytes: headRevisionID,
+				Valid: true,
+			},
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
+		},
+	}
+
+	handler := newVersioningHandler(service)
+
+	requestBody :=
+		`{"name":"feature-gripper","headRevisionId":"` +
+			headRevisionID.String() +
+			`"}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+projectID.String()+"/branches",
+		strings.NewReader(requestBody),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusCreated,
+			response.Code,
+		)
+	}
+
+	if !service.createBranchCalled {
+		t.Fatal("expected versioning service to be called")
+	}
+
+	if service.createBranchInput.HeadRevisionID == nil {
+		t.Fatal("expected branch head revision ID")
+	}
+
+	if *service.createBranchInput.HeadRevisionID != headRevisionID {
+		t.Fatalf(
+			"expected head revision ID %s, got %s",
+			headRevisionID,
+			*service.createBranchInput.HeadRevisionID,
+		)
+	}
+
+	var body api.ProjectBranchResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode branch response: %v", err)
+	}
+
+	if body.HeadRevisionId == nil {
+		t.Fatal("expected head revision in response")
+	}
+
+	if uuid.UUID(*body.HeadRevisionId) != headRevisionID {
+		t.Fatalf(
+			"expected response head ID %s, got %s",
+			headRevisionID,
+			*body.HeadRevisionId,
+		)
+	}
+}
+
+func TestCreateProjectBranchRejectsMalformedHeadRevisionUUID(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+uuid.New().String()+"/branches",
+		strings.NewReader(
+			`{"name":"feature","headRevisionId":"not-a-uuid"}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if service.createBranchCalled {
+		t.Fatal("expected versioning service not to be called")
 	}
 }
 
