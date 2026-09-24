@@ -33,6 +33,11 @@ type fakeRevisionStore struct {
 	revision dbgen.ProjectRevision
 	err      error
 
+	createBranchCalled bool
+	createBranchParams CreateBranchParams
+	createdBranch      dbgen.ProjectBranch
+	createBranchErr    error
+
 	listCalled    bool
 	listProjectID uuid.UUID
 	branches      []dbgen.ProjectBranch
@@ -42,6 +47,16 @@ type fakeRevisionStore struct {
 	getParams   dbgen.GetProjectRevisionByIDAndProjectParams
 	getRevision dbgen.ProjectRevision
 	getErr      error
+}
+
+func (f *fakeRevisionStore) CreateBranch(
+	_ context.Context,
+	arg CreateBranchParams,
+) (dbgen.ProjectBranch, error) {
+	f.createBranchCalled = true
+	f.createBranchParams = arg
+
+	return f.createdBranch, f.createBranchErr
 }
 
 func (f *fakeRevisionStore) CreateRevisionOnBranch(

@@ -12,10 +12,19 @@ var (
 	ErrBranchNotFound = errors.New(
 		"project branch not found",
 	)
+	ErrBranchNameConflict = errors.New(
+		"project branch name already exists",
+	)
 	ErrBranchHeadConflict = errors.New(
 		"project branch head changed",
 	)
 )
+
+type CreateBranchParams struct {
+	ProjectID      uuid.UUID
+	Name           string
+	HeadRevisionID *uuid.UUID
+}
 
 type CreateRevisionOnBranchParams struct {
 	ProjectID    uuid.UUID
@@ -28,6 +37,10 @@ type CreateRevisionOnBranchParams struct {
 }
 
 type RevisionStore interface {
+	CreateBranch(
+		ctx context.Context,
+		arg CreateBranchParams,
+	) (dbgen.ProjectBranch, error)
 	CreateRevisionOnBranch(
 		ctx context.Context,
 		arg CreateRevisionOnBranchParams,

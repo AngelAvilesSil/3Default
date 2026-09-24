@@ -15,6 +15,25 @@ RETURNING
     created_at,
     updated_at;
 
+-- name: CreateProjectBranchWithHead :one
+INSERT INTO project_branches (
+    project_id,
+    name,
+    head_revision_id
+)
+VALUES (
+    sqlc.arg(project_id),
+    sqlc.arg(name),
+    sqlc.narg(head_revision_id)
+)
+RETURNING
+    id,
+    project_id,
+    name,
+    head_revision_id,
+    created_at,
+    updated_at;
+
 -- name: GetProjectBranchByIDAndProject :one
 SELECT
     id,

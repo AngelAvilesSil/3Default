@@ -386,6 +386,163 @@ func TestProjectStoreCreatesMergeRevisionAndAdvancesTargetBranch(
 	)
 }
 
+func TestProjectStoreCreatesEmptyBranch(
+	t *testing.T,
+) {
+	ctx, _, store, queries, _, projectID, _ :=
+		setupVersioningStoreTest(t)
+
+	branch, err := store.CreateBranch(
+		ctx,
+		versioning.CreateBranchParams{
+			ProjectID: projectID,
+			Name:      "empty-feature",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create empty project branch: %v", err)
+	}
+
+	if branch.ProjectID != projectID {
+		t.Fatalf(
+			"expected branch project ID %s, got %s",
+			projectID,
+			branch.ProjectID,
+		)
+	}
+
+	if branch.Name != "empty-feature" {
+		t.Fatalf(
+			"expected branch name %q, got %q",
+			"empty-feature",
+			branch.Name,
+		)
+	}
+
+	if branch.HeadRevisionID.Valid {
+		t.Fatalf(
+			"expected empty branch head to be null, got %s",
+			uuid.UUID(branch.HeadRevisionID.Bytes),
+		)
+	}
+
+	persisted, err := queries.GetProjectBranchByIDAndProject(
+		ctx,
+		dbgen.GetProjectBranchByIDAndProjectParams{
+			BranchID:  branch.ID,
+			ProjectID: projectID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("get created empty branch: %v", err)
+	}
+
+	if persisted.ID != branch.ID {
+		t.Fatalf(
+			"expected persisted branch ID %s, got %s",
+			branch.ID,
+			persisted.ID,
+		)
+	}
+
+	if persisted.HeadRevisionID.Valid {
+		t.Fatalf(
+			"expected persisted empty branch head to be null, got %s",
+			uuid.UUID(persisted.HeadRevisionID.Bytes),
+		)
+	}
+}
+
+func TestProjectStoreCreatesBranchAtExactRevision(
+	t *testing.T,
+) {
+	ctx, _, store, queries, userID, projectID, mainBranchID :=
+		setupVersioningStoreTest(t)
+
+	rootRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     mainBranchID,
+			AuthorUserID: userID,
+			Message:      "Initial revision",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create root revision: %v", err)
+	}
+
+	branch, err := store.CreateBranch(
+		ctx,
+		versioning.CreateBranchParams{
+			ProjectID:      projectID,
+			Name:           "feature-from-root",
+			HeadRevisionID: &rootRevision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create branch at revision: %v", err)
+	}
+
+	if !branch.HeadRevisionID.Valid {
+		t.Fatal("expected created branch head to be set")
+	}
+
+	actualHead := uuid.UUID(branch.HeadRevisionID.Bytes)
+	if actualHead != rootRevision.ID {
+		t.Fatalf(
+			"expected created branch head %s, got %s",
+			rootRevision.ID,
+			actualHead,
+		)
+	}
+
+	persisted, err := queries.GetProjectBranchByIDAndProject(
+		ctx,
+		dbgen.GetProjectBranchByIDAndProjectParams{
+			BranchID:  branch.ID,
+			ProjectID: projectID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("get created branch: %v", err)
+	}
+
+	if !persisted.HeadRevisionID.Valid {
+		t.Fatal("expected persisted branch head to be set")
+	}
+
+	persistedHead := uuid.UUID(persisted.HeadRevisionID.Bytes)
+	if persistedHead != rootRevision.ID {
+		t.Fatalf(
+			"expected persisted branch head %s, got %s",
+			rootRevision.ID,
+			persistedHead,
+		)
+	}
+}
+
+func TestProjectStoreMapsDuplicateBranchNameToConflict(
+	t *testing.T,
+) {
+	ctx, _, store, _, _, projectID, _ :=
+		setupVersioningStoreTest(t)
+
+	_, err := store.CreateBranch(
+		ctx,
+		versioning.CreateBranchParams{
+			ProjectID: projectID,
+			Name:      "main",
+		},
+	)
+	if !errors.Is(err, versioning.ErrBranchNameConflict) {
+		t.Fatalf(
+			"expected branch name conflict, got %v",
+			err,
+		)
+	}
+}
+
 func TestListProjectBranchesByProjectScopesAndOrdersBranches(
 	t *testing.T,
 ) {

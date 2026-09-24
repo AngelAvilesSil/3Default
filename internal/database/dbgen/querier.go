@@ -15,6 +15,7 @@ type Querier interface {
 	CreatePasswordCredential(ctx context.Context, arg CreatePasswordCredentialParams) (PasswordCredential, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateProjectBranch(ctx context.Context, arg CreateProjectBranchParams) (ProjectBranch, error)
+	CreateProjectBranchWithHead(ctx context.Context, arg CreateProjectBranchWithHeadParams) (ProjectBranch, error)
 	CreateProjectRevision(ctx context.Context, arg CreateProjectRevisionParams) (ProjectRevision, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
