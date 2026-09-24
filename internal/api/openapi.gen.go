@@ -69,6 +69,12 @@ func (e ReadyResponseStatus) Valid() bool {
 	}
 }
 
+// CreateProjectBranchRequest defines model for CreateProjectBranchRequest.
+type CreateProjectBranchRequest struct {
+	HeadRevisionId nullable.Nullable[uuid.UUID] `json:"headRevisionId"`
+	Name           string                       `json:"name"`
+}
+
 // CreateProjectRequest defines model for CreateProjectRequest.
 type CreateProjectRequest struct {
 	Description *string `json:"description,omitempty"`
@@ -177,6 +183,9 @@ type CreateProjectJSONRequestBody = CreateProjectRequest
 // UpdateProjectJSONRequestBody defines body for UpdateProject for application/json ContentType.
 type UpdateProjectJSONRequestBody = UpdateProjectRequest
 
+// CreateProjectBranchJSONRequestBody defines body for CreateProjectBranch for application/json ContentType.
+type CreateProjectBranchJSONRequestBody = CreateProjectBranchRequest
+
 // CreateProjectRevisionJSONRequestBody defines body for CreateProjectRevision for application/json ContentType.
 type CreateProjectRevisionJSONRequestBody = CreateProjectRevisionRequest
 
@@ -212,6 +221,9 @@ type ServerInterface interface {
 	// ListProjectBranches List branches for a project owned by the current user
 	// (GET /api/projects/{projectId}/branches)
 	ListProjectBranches(w http.ResponseWriter, r *http.Request, projectId uuid.UUID)
+	// CreateProjectBranch Create a branch for a project owned by the current user
+	// (POST /api/projects/{projectId}/branches)
+	CreateProjectBranch(w http.ResponseWriter, r *http.Request, projectId uuid.UUID)
 	// CreateProjectRevision Create a revision on a project branch
 	// (POST /api/projects/{projectId}/branches/{branchId}/revisions)
 	CreateProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, branchId uuid.UUID)
@@ -399,6 +411,32 @@ func (siw *ServerInterfaceWrapper) ListProjectBranches(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.ListProjectBranches(w, r, projectId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateProjectBranch operation middleware
+func (siw *ServerInterfaceWrapper) CreateProjectBranch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateProjectBranch(w, r, projectId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -623,6 +661,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}", wrapper.GetProject)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/projects/{projectId}", wrapper.UpdateProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.ListProjectBranches)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.CreateProjectBranch)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}/revisions", wrapper.CreateProjectRevision)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/revisions/{revisionId}", wrapper.GetProjectRevision)
 
@@ -1306,6 +1345,113 @@ func (response ListProjectBranches500JSONResponse) VisitListProjectBranchesRespo
 	return err
 }
 
+type CreateProjectBranchRequestObject struct {
+	ProjectId uuid.UUID `json:"projectId"`
+	Body      *CreateProjectBranchJSONRequestBody
+}
+
+type CreateProjectBranchResponseObject interface {
+	VisitCreateProjectBranchResponse(w http.ResponseWriter) error
+}
+
+type CreateProjectBranch201JSONResponse ProjectBranchResponse
+
+func (response CreateProjectBranch201JSONResponse) VisitCreateProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectBranch400JSONResponse ErrorResponse
+
+func (response CreateProjectBranch400JSONResponse) VisitCreateProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectBranch401JSONResponse ErrorResponse
+
+func (response CreateProjectBranch401JSONResponse) VisitCreateProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectBranch403JSONResponse ErrorResponse
+
+func (response CreateProjectBranch403JSONResponse) VisitCreateProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectBranch404JSONResponse ErrorResponse
+
+func (response CreateProjectBranch404JSONResponse) VisitCreateProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectBranch409JSONResponse ErrorResponse
+
+func (response CreateProjectBranch409JSONResponse) VisitCreateProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectBranch500JSONResponse ErrorResponse
+
+func (response CreateProjectBranch500JSONResponse) VisitCreateProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateProjectRevisionRequestObject struct {
 	ProjectId uuid.UUID `json:"projectId"`
 	BranchId  uuid.UUID `json:"branchId"`
@@ -1560,6 +1706,9 @@ type StrictServerInterface interface {
 	// ListProjectBranches List branches for a project owned by the current user
 	// (GET /api/projects/{projectId}/branches)
 	ListProjectBranches(ctx context.Context, request ListProjectBranchesRequestObject) (ListProjectBranchesResponseObject, error)
+	// CreateProjectBranch Create a branch for a project owned by the current user
+	// (POST /api/projects/{projectId}/branches)
+	CreateProjectBranch(ctx context.Context, request CreateProjectBranchRequestObject) (CreateProjectBranchResponseObject, error)
 	// CreateProjectRevision Create a revision on a project branch
 	// (POST /api/projects/{projectId}/branches/{branchId}/revisions)
 	CreateProjectRevision(ctx context.Context, request CreateProjectRevisionRequestObject) (CreateProjectRevisionResponseObject, error)
@@ -1877,6 +2026,39 @@ func (sh *strictHandler) ListProjectBranches(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(ListProjectBranchesResponseObject); ok {
 		if err := validResponse.VisitListProjectBranchesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateProjectBranch operation middleware
+func (sh *strictHandler) CreateProjectBranch(w http.ResponseWriter, r *http.Request, projectId uuid.UUID) {
+	var request CreateProjectBranchRequestObject
+
+	request.ProjectId = projectId
+
+	var body CreateProjectBranchJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateProjectBranch(ctx, request.(CreateProjectBranchRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateProjectBranch")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateProjectBranchResponseObject); ok {
+		if err := validResponse.VisitCreateProjectBranchResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
