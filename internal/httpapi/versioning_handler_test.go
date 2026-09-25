@@ -34,6 +34,13 @@ type fakeVersioningService struct {
 	branches        []dbgen.ProjectBranch
 	listErr         error
 
+	historyCalled      bool
+	historyOwnerUserID uuid.UUID
+	historyProjectID   uuid.UUID
+	historyBranchID    uuid.UUID
+	history            []dbgen.ProjectRevision
+	historyErr         error
+
 	getCalled      bool
 	getOwnerUserID uuid.UUID
 	getProjectID   uuid.UUID
@@ -72,6 +79,20 @@ func (f *fakeVersioningService) ListBranches(
 	f.listProjectID = projectID
 
 	return f.branches, f.listErr
+}
+
+func (f *fakeVersioningService) ListBranchHistory(
+	_ context.Context,
+	ownerUserID uuid.UUID,
+	projectID uuid.UUID,
+	branchID uuid.UUID,
+) ([]dbgen.ProjectRevision, error) {
+	f.historyCalled = true
+	f.historyOwnerUserID = ownerUserID
+	f.historyProjectID = projectID
+	f.historyBranchID = branchID
+
+	return f.history, f.historyErr
 }
 
 func (f *fakeVersioningService) GetRevision(
@@ -2567,5 +2588,602 @@ func TestCreateProjectRevisionRejectsMalformedBodyUUIDs(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestListProjectBranchHistoryRequiresAuthentication(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String()+
+			"/history",
+		nil,
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusUnauthorized,
+			response.Code,
+		)
+	}
+
+	if service.historyCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "authentication required" {
+		t.Fatalf(
+			"expected authentication error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestListProjectBranchHistoryRejectsSessionResolutionFailure(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String()+
+			"/history",
+		nil,
+	)
+	request = requestWithSessionResolutionError(
+		request,
+		errors.New("database unavailable"),
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	if service.historyCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to authenticate request" {
+		t.Fatalf(
+			"expected authentication failure error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestListProjectBranchHistoryRejectsMalformedIDs(
+	t *testing.T,
+) {
+	tests := []struct {
+		name      string
+		projectID string
+		branchID  string
+	}{
+		{
+			name:      "malformed project ID",
+			projectID: "not-a-uuid",
+			branchID:  uuid.New().String(),
+		},
+		{
+			name:      "malformed branch ID",
+			projectID: uuid.New().String(),
+			branchID:  "not-a-uuid",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeVersioningService{}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodGet,
+				"/api/projects/"+
+					test.projectID+
+					"/branches/"+
+					test.branchID+
+					"/history",
+				nil,
+			)
+			request = requestWithSession(
+				request,
+				uuid.New(),
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusBadRequest,
+					response.Code,
+				)
+			}
+
+			if service.historyCalled {
+				t.Fatal(
+					"expected versioning service not to be called",
+				)
+			}
+		})
+	}
+}
+
+func TestListProjectBranchHistoryMapsServiceErrors(
+	t *testing.T,
+) {
+	tests := []struct {
+		name        string
+		projectID   uuid.UUID
+		branchID    uuid.UUID
+		serviceErr  error
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "missing project ID",
+			projectID:   uuid.Nil,
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrProjectIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "project ID is required",
+		},
+		{
+			name:        "missing branch ID",
+			projectID:   uuid.New(),
+			branchID:    uuid.Nil,
+			serviceErr:  versioning.ErrBranchIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "branch ID is required",
+		},
+		{
+			name:        "project not found",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrProjectNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "project not found",
+		},
+		{
+			name:        "branch not found",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrBranchNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "branch not found",
+		},
+		{
+			name:        "unexpected service error",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  errors.New("database unavailable"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "unable to list project branch history",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			userID := uuid.New()
+			service := &fakeVersioningService{
+				historyErr: test.serviceErr,
+			}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodGet,
+				"/api/projects/"+
+					test.projectID.String()+
+					"/branches/"+
+					test.branchID.String()+
+					"/history",
+				nil,
+			)
+			request = requestWithSession(
+				request,
+				userID,
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d",
+					test.wantStatus,
+					response.Code,
+				)
+			}
+
+			if !service.historyCalled {
+				t.Fatal(
+					"expected versioning service to be called",
+				)
+			}
+
+			if service.historyOwnerUserID != userID {
+				t.Fatalf(
+					"expected owner %s, got %s",
+					userID,
+					service.historyOwnerUserID,
+				)
+			}
+
+			if service.historyProjectID != test.projectID {
+				t.Fatalf(
+					"expected project ID %s, got %s",
+					test.projectID,
+					service.historyProjectID,
+				)
+			}
+
+			if service.historyBranchID != test.branchID {
+				t.Fatalf(
+					"expected branch ID %s, got %s",
+					test.branchID,
+					service.historyBranchID,
+				)
+			}
+
+			body := decodeErrorResponse(t, response)
+			if body.Error != test.wantMessage {
+				t.Fatalf(
+					"expected error %q, got %q",
+					test.wantMessage,
+					body.Error,
+				)
+			}
+		})
+	}
+}
+
+func TestListProjectBranchHistoryRejectsMissingVersioningDependency(
+	t *testing.T,
+) {
+	projectID := uuid.New()
+	branchID := uuid.New()
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String()+
+			"/history",
+		nil,
+	)
+	request = requestWithSession(
+		request,
+		uuid.New(),
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to list project branch history" {
+		t.Fatalf(
+			"expected missing dependency error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestListProjectBranchHistoryReturnsRevisionsForAuthenticatedUser(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+
+	rootRevisionID := uuid.New()
+	mainRevisionID := uuid.New()
+	sideRevisionID := uuid.New()
+	mergeRevisionID := uuid.New()
+
+	rootCreatedAt := time.Date(
+		2026,
+		time.September,
+		24,
+		12,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+	mergeCreatedAt := rootCreatedAt.Add(time.Hour)
+
+	service := &fakeVersioningService{
+		history: []dbgen.ProjectRevision{
+			{
+				ID:           mergeRevisionID,
+				ProjectID:    projectID,
+				AuthorUserID: userID,
+				Message:      "Merge feature into main",
+				ParentRevisionID: pgtype.UUID{
+					Bytes: mainRevisionID,
+					Valid: true,
+				},
+				MergeParentRevisionID: pgtype.UUID{
+					Bytes: sideRevisionID,
+					Valid: true,
+				},
+				CreatedAt: mergeCreatedAt,
+			},
+			{
+				ID:           rootRevisionID,
+				ProjectID:    projectID,
+				AuthorUserID: userID,
+				Message:      "Initial revision",
+				CreatedAt:    rootCreatedAt,
+			},
+		},
+	}
+
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String()+
+			"/history",
+		nil,
+	)
+	request = requestWithSession(
+		request,
+		userID,
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !service.historyCalled {
+		t.Fatal(
+			"expected versioning service to be called",
+		)
+	}
+
+	if service.historyOwnerUserID != userID {
+		t.Fatalf(
+			"expected owner %s, got %s",
+			userID,
+			service.historyOwnerUserID,
+		)
+	}
+
+	if service.historyProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			service.historyProjectID,
+		)
+	}
+
+	if service.historyBranchID != branchID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branchID,
+			service.historyBranchID,
+		)
+	}
+
+	var body []api.ProjectRevisionResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf(
+			"decode branch history response: %v",
+			err,
+		)
+	}
+
+	if len(body) != 2 {
+		t.Fatalf(
+			"expected 2 revisions, got %d",
+			len(body),
+		)
+	}
+
+	if uuid.UUID(body[0].Id) != mergeRevisionID {
+		t.Fatalf(
+			"expected first revision ID %s, got %s",
+			mergeRevisionID,
+			body[0].Id,
+		)
+	}
+
+	if uuid.UUID(body[0].ProjectId) != projectID {
+		t.Fatalf(
+			"expected first project ID %s, got %s",
+			projectID,
+			body[0].ProjectId,
+		)
+	}
+
+	if uuid.UUID(body[0].AuthorUserId) != userID {
+		t.Fatalf(
+			"expected first author ID %s, got %s",
+			userID,
+			body[0].AuthorUserId,
+		)
+	}
+
+	if body[0].Message != "Merge feature into main" {
+		t.Fatalf(
+			"expected merge message, got %q",
+			body[0].Message,
+		)
+	}
+
+	if body[0].ParentRevisionId == nil {
+		t.Fatal(
+			"expected primary parent revision",
+		)
+	}
+
+	if uuid.UUID(*body[0].ParentRevisionId) != mainRevisionID {
+		t.Fatalf(
+			"expected primary parent %s, got %s",
+			mainRevisionID,
+			*body[0].ParentRevisionId,
+		)
+	}
+
+	if body[0].MergeParentRevisionId == nil {
+		t.Fatal(
+			"expected merge parent revision",
+		)
+	}
+
+	if uuid.UUID(*body[0].MergeParentRevisionId) != sideRevisionID {
+		t.Fatalf(
+			"expected merge parent %s, got %s",
+			sideRevisionID,
+			*body[0].MergeParentRevisionId,
+		)
+	}
+
+	if !body[0].CreatedAt.Equal(mergeCreatedAt) {
+		t.Fatalf(
+			"expected merge created time %s, got %s",
+			mergeCreatedAt,
+			body[0].CreatedAt,
+		)
+	}
+
+	if uuid.UUID(body[1].Id) != rootRevisionID {
+		t.Fatalf(
+			"expected second revision ID %s, got %s",
+			rootRevisionID,
+			body[1].Id,
+		)
+	}
+
+	if body[1].ParentRevisionId != nil {
+		t.Fatalf(
+			"expected root primary parent to be null, got %s",
+			*body[1].ParentRevisionId,
+		)
+	}
+
+	if body[1].MergeParentRevisionId != nil {
+		t.Fatalf(
+			"expected root merge parent to be null, got %s",
+			*body[1].MergeParentRevisionId,
+		)
+	}
+}
+
+func TestListProjectBranchHistoryReturnsEmptyArray(
+	t *testing.T,
+) {
+	projectID := uuid.New()
+	branchID := uuid.New()
+
+	handler := newVersioningHandler(
+		&fakeVersioningService{},
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String()+
+			"/history",
+		nil,
+	)
+	request = requestWithSession(
+		request,
+		uuid.New(),
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	var body []api.ProjectRevisionResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf(
+			"decode branch history response: %v",
+			err,
+		)
+	}
+
+	if body == nil {
+		t.Fatal(
+			"expected empty array, got null",
+		)
+	}
+
+	if len(body) != 0 {
+		t.Fatalf(
+			"expected 0 revisions, got %d",
+			len(body),
+		)
 	}
 }
