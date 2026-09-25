@@ -47,6 +47,16 @@ type fakeRevisionStore struct {
 	getParams   dbgen.GetProjectRevisionByIDAndProjectParams
 	getRevision dbgen.ProjectRevision
 	getErr      error
+
+	getBranchCalled bool
+	getBranchParams dbgen.GetProjectBranchByIDAndProjectParams
+	getBranch       dbgen.ProjectBranch
+	getBranchErr    error
+
+	historyCalled bool
+	historyParams dbgen.ListReachableProjectRevisionsFromRevisionParams
+	history       []dbgen.ProjectRevision
+	historyErr    error
 }
 
 func (f *fakeRevisionStore) CreateBranch(
@@ -77,6 +87,26 @@ func (f *fakeRevisionStore) GetProjectRevisionByIDAndProject(
 	f.getParams = arg
 
 	return f.getRevision, f.getErr
+}
+
+func (f *fakeRevisionStore) GetProjectBranchByIDAndProject(
+	_ context.Context,
+	arg dbgen.GetProjectBranchByIDAndProjectParams,
+) (dbgen.ProjectBranch, error) {
+	f.getBranchCalled = true
+	f.getBranchParams = arg
+
+	return f.getBranch, f.getBranchErr
+}
+
+func (f *fakeRevisionStore) ListReachableProjectRevisionsFromRevision(
+	_ context.Context,
+	arg dbgen.ListReachableProjectRevisionsFromRevisionParams,
+) ([]dbgen.ProjectRevision, error) {
+	f.historyCalled = true
+	f.historyParams = arg
+
+	return f.history, f.historyErr
 }
 
 func (f *fakeRevisionStore) ListProjectBranchesByProject(
