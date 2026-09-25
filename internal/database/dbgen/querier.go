@@ -31,6 +31,7 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	ListProjectBranchesByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectBranch, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
+	ListReachableProjectRevisionsFromRevision(ctx context.Context, arg ListReachableProjectRevisionsFromRevisionParams) ([]ProjectRevision, error)
 	UpdateProjectMetadataByIDAndOwner(ctx context.Context, arg UpdateProjectMetadataByIDAndOwnerParams) (Project, error)
 }
 

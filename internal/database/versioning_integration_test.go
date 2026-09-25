@@ -819,6 +819,294 @@ func TestGetProjectRevisionByIDAndProjectScopesRevision(
 	}
 }
 
+func TestListReachableProjectRevisionsFromRevisionTraversesMergeDAG(
+	t *testing.T,
+) {
+	ctx, pool, store, queries, userID, projectID, mainBranchID :=
+		setupVersioningStoreTest(t)
+
+	rootRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     mainBranchID,
+			AuthorUserID: userID,
+			Message:      "Root revision",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create root revision: %v", err)
+	}
+
+	sideBranch, err := store.CreateBranch(
+		ctx,
+		versioning.CreateBranchParams{
+			ProjectID:      projectID,
+			Name:           "feature",
+			HeadRevisionID: &rootRevision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create side branch: %v", err)
+	}
+
+	disconnectedBranch, err := store.CreateBranch(
+		ctx,
+		versioning.CreateBranchParams{
+			ProjectID: projectID,
+			Name:      "disconnected",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create disconnected branch: %v", err)
+	}
+
+	mainRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:              projectID,
+			BranchID:               mainBranchID,
+			AuthorUserID:           userID,
+			Message:                "Main revision",
+			ExpectedHeadRevisionID: &rootRevision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create main revision: %v", err)
+	}
+
+	sideRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:              projectID,
+			BranchID:               sideBranch.ID,
+			AuthorUserID:           userID,
+			Message:                "Side revision",
+			ExpectedHeadRevisionID: &rootRevision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create side revision: %v", err)
+	}
+
+	mainHeadRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:              projectID,
+			BranchID:               mainBranchID,
+			AuthorUserID:           userID,
+			Message:                "Main head revision",
+			ExpectedHeadRevisionID: &mainRevision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create main head revision: %v", err)
+	}
+
+	disconnectedRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     disconnectedBranch.ID,
+			AuthorUserID: userID,
+			Message:      "Disconnected revision",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create disconnected revision: %v", err)
+	}
+
+	mergeRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:              projectID,
+			BranchID:               mainBranchID,
+			AuthorUserID:           userID,
+			Message:                "Merge revision",
+			ExpectedHeadRevisionID: &mainHeadRevision.ID,
+			MergeParentRevisionID:  &sideRevision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create merge revision: %v", err)
+	}
+
+	otherProject, err := store.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: userID,
+			Name:        "Other Traversal Project",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create other project: %v", err)
+	}
+
+	t.Cleanup(func() {
+		_, err := pool.Exec(
+			context.Background(),
+			"DELETE FROM projects WHERE id = $1",
+			otherProject.ID,
+		)
+		if err != nil {
+			t.Errorf("delete other traversal project: %v", err)
+		}
+	})
+
+	var otherMainBranchID uuid.UUID
+	err = pool.QueryRow(
+		ctx,
+		`SELECT id
+		 FROM project_branches
+		 WHERE project_id = $1
+		   AND name = 'main'`,
+		otherProject.ID,
+	).Scan(&otherMainBranchID)
+	if err != nil {
+		t.Fatalf("get other project main branch: %v", err)
+	}
+
+	otherRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    otherProject.ID,
+			BranchID:     otherMainBranchID,
+			AuthorUserID: userID,
+			Message:      "Other project revision",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create other project revision: %v", err)
+	}
+
+	revisions, err :=
+		queries.ListReachableProjectRevisionsFromRevision(
+			ctx,
+			dbgen.ListReachableProjectRevisionsFromRevisionParams{
+				ProjectID:       projectID,
+				StartRevisionID: mergeRevision.ID,
+			},
+		)
+	if err != nil {
+		t.Fatalf("list reachable project revisions: %v", err)
+	}
+
+	expectedIDs := map[uuid.UUID]bool{
+		rootRevision.ID:     true,
+		mainRevision.ID:     true,
+		sideRevision.ID:     true,
+		mainHeadRevision.ID: true,
+		mergeRevision.ID:    true,
+	}
+
+	if len(revisions) != len(expectedIDs) {
+		t.Fatalf(
+			"expected %d reachable revisions, got %d",
+			len(expectedIDs),
+			len(revisions),
+		)
+	}
+
+	seen := make(map[uuid.UUID]bool, len(revisions))
+
+	for index, revision := range revisions {
+		if revision.ProjectID != projectID {
+			t.Fatalf(
+				"expected revision %s to belong to project %s, got %s",
+				revision.ID,
+				projectID,
+				revision.ProjectID,
+			)
+		}
+
+		if !expectedIDs[revision.ID] {
+			t.Fatalf(
+				"unexpected reachable revision %s",
+				revision.ID,
+			)
+		}
+
+		if seen[revision.ID] {
+			t.Fatalf(
+				"reachable revision %s returned more than once",
+				revision.ID,
+			)
+		}
+		seen[revision.ID] = true
+
+		if index == 0 {
+			continue
+		}
+
+		previous := revisions[index-1]
+
+		if previous.CreatedAt.Before(revision.CreatedAt) {
+			t.Fatalf(
+				"revisions are not ordered by created_at descending: "+
+					"%s precedes %s",
+				previous.ID,
+				revision.ID,
+			)
+		}
+
+		if previous.CreatedAt.Equal(revision.CreatedAt) &&
+			previous.ID.String() > revision.ID.String() {
+			t.Fatalf(
+				"equal-time revisions are not ordered by ID ascending: "+
+					"%s precedes %s",
+				previous.ID,
+				revision.ID,
+			)
+		}
+	}
+
+	for expectedID := range expectedIDs {
+		if !seen[expectedID] {
+			t.Fatalf(
+				"expected reachable revision %s was not returned",
+				expectedID,
+			)
+		}
+	}
+
+	if seen[disconnectedRevision.ID] {
+		t.Fatalf(
+			"disconnected revision %s was returned",
+			disconnectedRevision.ID,
+		)
+	}
+
+	if seen[otherRevision.ID] {
+		t.Fatalf(
+			"other-project revision %s was returned",
+			otherRevision.ID,
+		)
+	}
+
+	crossProjectStart, err :=
+		queries.ListReachableProjectRevisionsFromRevision(
+			ctx,
+			dbgen.ListReachableProjectRevisionsFromRevisionParams{
+				ProjectID:       projectID,
+				StartRevisionID: otherRevision.ID,
+			},
+		)
+	if err != nil {
+		t.Fatalf(
+			"list reachable revisions from cross-project start: %v",
+			err,
+		)
+	}
+
+	if len(crossProjectStart) != 0 {
+		t.Fatalf(
+			"expected cross-project start to return 0 revisions, got %d",
+			len(crossProjectStart),
+		)
+	}
+}
+
 func setupVersioningStoreTest(
 	t *testing.T,
 ) (
