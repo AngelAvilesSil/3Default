@@ -99,3 +99,68 @@ func (q *Queries) GetProjectRevisionByIDAndProject(ctx context.Context, arg GetP
 	)
 	return i, err
 }
+
+const listReachableProjectRevisionsFromRevision = `-- name: ListReachableProjectRevisionsFromRevision :many
+WITH RECURSIVE reachable_revision_ids (id) AS (
+    SELECT
+        revision.id
+    FROM project_revisions AS revision
+    WHERE revision.id = $2
+      AND revision.project_id = $1
+
+    UNION
+
+    SELECT
+        parent.id
+    FROM reachable_revision_ids AS reachable
+    JOIN project_revisions AS child
+      ON child.id = reachable.id
+     AND child.project_id = $1
+    JOIN project_revisions AS parent
+      ON parent.project_id = child.project_id
+     AND (
+            parent.id = child.parent_revision_id
+            OR parent.id = child.merge_parent_revision_id
+         )
+)
+SELECT
+    revision.id, revision.project_id, revision.author_user_id, revision.message, revision.parent_revision_id, revision.merge_parent_revision_id, revision.created_at
+FROM project_revisions AS revision
+JOIN reachable_revision_ids AS reachable
+  ON reachable.id = revision.id
+WHERE revision.project_id = $1
+ORDER BY revision.created_at DESC, revision.id ASC
+`
+
+type ListReachableProjectRevisionsFromRevisionParams struct {
+	ProjectID       uuid.UUID
+	StartRevisionID uuid.UUID
+}
+
+func (q *Queries) ListReachableProjectRevisionsFromRevision(ctx context.Context, arg ListReachableProjectRevisionsFromRevisionParams) ([]ProjectRevision, error) {
+	rows, err := q.db.Query(ctx, listReachableProjectRevisionsFromRevision, arg.ProjectID, arg.StartRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProjectRevision
+	for rows.Next() {
+		var i ProjectRevision
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.AuthorUserID,
+			&i.Message,
+			&i.ParentRevisionID,
+			&i.MergeParentRevisionID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
