@@ -219,6 +219,86 @@ func (s *Service) ListBranches(
 	return branches, nil
 }
 
+func (s *Service) ListBranchHistory(
+	ctx context.Context,
+	ownerUserID uuid.UUID,
+	projectID uuid.UUID,
+	branchID uuid.UUID,
+) ([]dbgen.ProjectRevision, error) {
+	if ownerUserID == uuid.Nil {
+		return nil, ErrOwnerRequired
+	}
+
+	if projectID == uuid.Nil {
+		return nil, ErrProjectIDRequired
+	}
+
+	if branchID == uuid.Nil {
+		return nil, ErrBranchIDRequired
+	}
+
+	_, err := s.projects.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   projectID,
+			OwnerUserID: ownerUserID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrProjectNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get project for branch history: %w",
+			err,
+		)
+	}
+
+	branch, err := s.revisions.GetProjectBranchByIDAndProject(
+		ctx,
+		dbgen.GetProjectBranchByIDAndProjectParams{
+			BranchID:  branchID,
+			ProjectID: projectID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrBranchNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf(
+			"get project branch for history: %w",
+			err,
+		)
+	}
+
+	if !branch.HeadRevisionID.Valid {
+		return []dbgen.ProjectRevision{}, nil
+	}
+
+	headRevisionID := uuid.UUID(branch.HeadRevisionID.Bytes)
+
+	revisions, err :=
+		s.revisions.ListReachableProjectRevisionsFromRevision(
+			ctx,
+			dbgen.ListReachableProjectRevisionsFromRevisionParams{
+				ProjectID:       projectID,
+				StartRevisionID: headRevisionID,
+			},
+		)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list project branch history: %w",
+			err,
+		)
+	}
+
+	if revisions == nil {
+		return []dbgen.ProjectRevision{}, nil
+	}
+
+	return revisions, nil
+}
+
 func (s *Service) GetRevision(
 	ctx context.Context,
 	ownerUserID uuid.UUID,

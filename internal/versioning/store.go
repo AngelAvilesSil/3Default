@@ -45,6 +45,10 @@ type RevisionStore interface {
 		ctx context.Context,
 		arg CreateRevisionOnBranchParams,
 	) (dbgen.ProjectRevision, error)
+	GetProjectBranchByIDAndProject(
+		ctx context.Context,
+		arg dbgen.GetProjectBranchByIDAndProjectParams,
+	) (dbgen.ProjectBranch, error)
 	GetProjectRevisionByIDAndProject(
 		ctx context.Context,
 		arg dbgen.GetProjectRevisionByIDAndProjectParams,
@@ -53,4 +57,8 @@ type RevisionStore interface {
 		ctx context.Context,
 		projectID uuid.UUID,
 	) ([]dbgen.ProjectBranch, error)
+	ListReachableProjectRevisionsFromRevision(
+		ctx context.Context,
+		arg dbgen.ListReachableProjectRevisionsFromRevisionParams,
+	) ([]dbgen.ProjectRevision, error)
 }
