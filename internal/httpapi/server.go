@@ -53,6 +53,12 @@ type VersioningService interface {
 		ownerUserID googleuuid.UUID,
 		projectID googleuuid.UUID,
 	) ([]dbgen.ProjectBranch, error)
+	ListBranchHistory(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+		branchID googleuuid.UUID,
+	) ([]dbgen.ProjectRevision, error)
 	GetRevision(
 		ctx context.Context,
 		ownerUserID googleuuid.UUID,
@@ -761,6 +767,88 @@ func (s *Server) ListProjectBranches(
 				HeadRevisionId: apiUUIDFromPGUUID(branch.HeadRevisionID),
 				CreatedAt:      branch.CreatedAt,
 				UpdatedAt:      branch.UpdatedAt,
+			},
+		)
+	}
+
+	return response, nil
+}
+
+func (s *Server) ListProjectBranchHistory(
+	ctx context.Context,
+	request api.ListProjectBranchHistoryRequestObject,
+) (api.ListProjectBranchHistoryResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.ListProjectBranchHistory500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.ListProjectBranchHistory401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.versioning == nil {
+		return api.ListProjectBranchHistory500JSONResponse{
+			Error: "unable to list project branch history",
+		}, nil
+	}
+
+	revisions, err := s.versioning.ListBranchHistory(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+		googleuuid.UUID(request.BranchId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, versioning.ErrProjectIDRequired):
+			return api.ListProjectBranchHistory400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchIDRequired):
+			return api.ListProjectBranchHistory400JSONResponse{
+				Error: "branch ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrProjectNotFound):
+			return api.ListProjectBranchHistory404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchNotFound):
+			return api.ListProjectBranchHistory404JSONResponse{
+				Error: "branch not found",
+			}, nil
+
+		default:
+			return api.ListProjectBranchHistory500JSONResponse{
+				Error: "unable to list project branch history",
+			}, nil
+		}
+	}
+
+	response := make(
+		api.ListProjectBranchHistory200JSONResponse,
+		0,
+		len(revisions),
+	)
+
+	for _, revision := range revisions {
+		response = append(
+			response,
+			api.ProjectRevisionResponse{
+				Id:                    uuid.UUID(revision.ID),
+				ProjectId:             uuid.UUID(revision.ProjectID),
+				AuthorUserId:          uuid.UUID(revision.AuthorUserID),
+				Message:               revision.Message,
+				ParentRevisionId:      apiUUIDFromPGUUID(revision.ParentRevisionID),
+				MergeParentRevisionId: apiUUIDFromPGUUID(revision.MergeParentRevisionID),
+				CreatedAt:             revision.CreatedAt,
 			},
 		)
 	}
