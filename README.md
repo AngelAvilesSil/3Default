@@ -24,7 +24,7 @@ Implemented foundations include:
 * project persistence and authenticated project creation, listing, detail reads, and metadata updates
 * project revision and branch persistence with automatic `main` branch creation
 * atomic revision creation with optimistic branch-head updates
-* authenticated project branch reads, revision reads, and revision creation
+* authenticated branch creation, branch listing and history traversal, revision reads, and revision creation
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
 * Argon2id password hashing
@@ -35,7 +35,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication milestone and basic authenticated project operations are complete. The backend now includes the first project-versioning API surface: project branches, project-scoped revision reads, and atomic revision creation with optimistic branch-head concurrency. Branch management, revision-graph traversal, storage integration, and CAD workflows remain future work.
+The authentication milestone and basic authenticated project operations are complete. The backend now includes the first project-versioning API surface: branch listing and creation, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, and branch-head history traversal. Branch rename/delete, immutable-history hardening and cycle prevention, storage integration, and CAD workflows remain future work.
 
 ---
 
@@ -286,6 +286,7 @@ PATCH /api/projects/{projectId}
 
 GET   /api/projects/{projectId}/branches
 POST  /api/projects/{projectId}/branches
+GET   /api/projects/{projectId}/branches/{branchId}/history
 GET   /api/projects/{projectId}/revisions/{revisionId}
 POST  /api/projects/{projectId}/branches/{branchId}/revisions
 ```
@@ -331,6 +332,7 @@ Implemented versioning endpoints are:
 ```text
 GET  /api/projects/{projectId}/branches
 POST /api/projects/{projectId}/branches
+GET  /api/projects/{projectId}/branches/{branchId}/history
 GET  /api/projects/{projectId}/revisions/{revisionId}
 POST /api/projects/{projectId}/branches/{branchId}/revisions
 ```
@@ -347,11 +349,13 @@ Branch creation deliberately accepts an exact revision rather than a source bran
 
 Revision reads are scoped to a project. A project that does not exist and a project owned by another user are both exposed as `404` through the owner-scoped application service.
 
-The current implementation deliberately does not expose a flat revision-history endpoint. Revisions form a directed acyclic graph in the intended model, so a single chronological list would not accurately represent branching and merging.
+Branch history is exposed through `GET /api/projects/{projectId}/branches/{branchId}/history`. For an existing non-empty branch, traversal starts from the branch's current persisted head and returns every unique revision reachable by recursively following both `parentRevisionId` and `mergeParentRevisionId`. An existing empty branch returns `[]`.
+
+History results use a deterministic presentation order of `createdAt` descending and revision ID ascending. That ordering does **not** define a linear commit chain. The parent IDs on each revision are the authoritative graph structure, so branching and merge ancestry remain explicit in the response.
 
 Historical revisions are treated as append-only by the application: there are no revision update or delete operations in the current service or HTTP API. The database schema enforces same-project parent references and several parent constraints, but it does **not** currently prevent arbitrary direct SQL updates to revision rows or fully enforce cycle prevention. Stronger immutable-history enforcement and graph validation remain future work.
 
-Branch renaming and deletion, richer graph traversal, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
+Branch renaming and deletion, immutable-history hardening and cycle prevention, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
 
 ---
 
@@ -563,7 +567,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] authenticated branch/revision reads and revision-creation API
 * [x] authenticated branch creation API
 * [ ] branch rename/delete and broader branch management
-* [ ] DAG traversal and history views
+* [x] branch-head DAG traversal and history API
 * [ ] immutable-history hardening and cycle prevention
 * [ ] merge and conflict-resolution workflow
 * [ ] content-addressed storage
