@@ -44,6 +44,10 @@ type VersioningService interface {
 		ctx context.Context,
 		input versioning.CreateBranchInput,
 	) (dbgen.ProjectBranch, error)
+	RenameBranch(
+		ctx context.Context,
+		input versioning.RenameBranchInput,
+	) (dbgen.ProjectBranch, error)
 	CreateRevision(
 		ctx context.Context,
 		input versioning.CreateRevisionInput,
@@ -695,6 +699,93 @@ func (s *Server) CreateProjectBranch(
 	}
 
 	return api.CreateProjectBranch201JSONResponse{
+		Id:             uuid.UUID(branch.ID),
+		ProjectId:      uuid.UUID(branch.ProjectID),
+		Name:           branch.Name,
+		HeadRevisionId: apiUUIDFromPGUUID(branch.HeadRevisionID),
+		CreatedAt:      branch.CreatedAt,
+		UpdatedAt:      branch.UpdatedAt,
+	}, nil
+}
+
+func (s *Server) RenameProjectBranch(
+	ctx context.Context,
+	request api.RenameProjectBranchRequestObject,
+) (api.RenameProjectBranchResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.RenameProjectBranch500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.RenameProjectBranch401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.versioning == nil {
+		return api.RenameProjectBranch500JSONResponse{
+			Error: "unable to rename project branch",
+		}, nil
+	}
+
+	if request.Body == nil {
+		return api.RenameProjectBranch400JSONResponse{
+			Error: "request body is required",
+		}, nil
+	}
+
+	branch, err := s.versioning.RenameBranch(
+		ctx,
+		versioning.RenameBranchInput{
+			OwnerUserID: session.UserID,
+			ProjectID:   googleuuid.UUID(request.ProjectId),
+			BranchID:    googleuuid.UUID(request.BranchId),
+			Name:        request.Body.Name,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, versioning.ErrProjectIDRequired):
+			return api.RenameProjectBranch400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchIDRequired):
+			return api.RenameProjectBranch400JSONResponse{
+				Error: "branch ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchNameRequired):
+			return api.RenameProjectBranch400JSONResponse{
+				Error: "branch name is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrProjectNotFound):
+			return api.RenameProjectBranch404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchNotFound):
+			return api.RenameProjectBranch404JSONResponse{
+				Error: "branch not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchNameConflict):
+			return api.RenameProjectBranch409JSONResponse{
+				Error: "branch name already exists",
+			}, nil
+
+		default:
+			return api.RenameProjectBranch500JSONResponse{
+				Error: "unable to rename project branch",
+			}, nil
+		}
+	}
+
+	return api.RenameProjectBranch200JSONResponse{
 		Id:             uuid.UUID(branch.ID),
 		ProjectId:      uuid.UUID(branch.ProjectID),
 		Name:           branch.Name,
