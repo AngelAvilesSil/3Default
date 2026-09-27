@@ -24,7 +24,7 @@ Implemented foundations include:
 * project persistence and authenticated project creation, listing, detail reads, and metadata updates
 * project revision and branch persistence with automatic `main` branch creation
 * atomic revision creation with optimistic branch-head updates
-* authenticated branch creation, branch listing and history traversal, revision reads, and revision creation
+* authenticated branch creation and rename, branch listing and history traversal, revision reads, and revision creation
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
 * Argon2id password hashing
@@ -35,7 +35,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication milestone and basic authenticated project operations are complete. The backend now includes the first project-versioning API surface: branch listing and creation, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, and branch-head history traversal. Branch rename/delete, immutable-history hardening and cycle prevention, storage integration, and CAD workflows remain future work.
+The authentication milestone and basic authenticated project operations are complete. The backend now includes the first project-versioning API surface: branch listing, creation, and rename, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, and branch-head history traversal. Branch deletion, immutable-history hardening and cycle prevention, storage integration, and CAD workflows remain future work.
 
 ---
 
@@ -286,6 +286,7 @@ PATCH /api/projects/{projectId}
 
 GET   /api/projects/{projectId}/branches
 POST  /api/projects/{projectId}/branches
+PATCH /api/projects/{projectId}/branches/{branchId}
 GET   /api/projects/{projectId}/branches/{branchId}/history
 GET   /api/projects/{projectId}/revisions/{revisionId}
 POST  /api/projects/{projectId}/branches/{branchId}/revisions
@@ -330,9 +331,10 @@ The authenticated project owner is currently also recorded as the revision autho
 Implemented versioning endpoints are:
 
 ```text
-GET  /api/projects/{projectId}/branches
-POST /api/projects/{projectId}/branches
-GET  /api/projects/{projectId}/branches/{branchId}/history
+GET   /api/projects/{projectId}/branches
+POST  /api/projects/{projectId}/branches
+PATCH /api/projects/{projectId}/branches/{branchId}
+GET   /api/projects/{projectId}/branches/{branchId}/history
 GET  /api/projects/{projectId}/revisions/{revisionId}
 POST /api/projects/{projectId}/branches/{branchId}/revisions
 ```
@@ -347,6 +349,10 @@ Branch names are trimmed, must be nonblank, and are unique within a project. Nam
 
 Branch creation deliberately accepts an exact revision rather than a source branch whose current head would be copied. This keeps the starting point explicit and avoids racing against a source branch that may move between observation and branch creation.
 
+Branch renaming is exposed through `PATCH /api/projects/{projectId}/branches/{branchId}` with a required `name`. The service trims the supplied name and rejects a blank result. Renaming to the branch's current exact name succeeds idempotently, while renaming to another existing branch name in the same project returns `409 Conflict`. Missing projects and missing or wrong-project branches are exposed as `404`.
+
+A rename changes the branch name and `updatedAt` only. The branch ID, project ID, `headRevisionId`, and `createdAt` are preserved. Branch names remain case-sensitive, and there is currently no special rename restriction for the `main` branch.
+
 Revision reads are scoped to a project. A project that does not exist and a project owned by another user are both exposed as `404` through the owner-scoped application service.
 
 Branch history is exposed through `GET /api/projects/{projectId}/branches/{branchId}/history`. For an existing non-empty branch, traversal starts from the branch's current persisted head and returns every unique revision reachable by recursively following both `parentRevisionId` and `mergeParentRevisionId`. An existing empty branch returns `[]`.
@@ -355,7 +361,7 @@ History results use a deterministic presentation order of `createdAt` descending
 
 Historical revisions are treated as append-only by the application: there are no revision update or delete operations in the current service or HTTP API. The database schema enforces same-project parent references and several parent constraints, but it does **not** currently prevent arbitrary direct SQL updates to revision rows or fully enforce cycle prevention. Stronger immutable-history enforcement and graph validation remain future work.
 
-Branch renaming and deletion, immutable-history hardening and cycle prevention, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
+Branch deletion, immutable-history hardening and cycle prevention, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
 
 ---
 
@@ -566,7 +572,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] atomic revision creation with optimistic branch-head updates
 * [x] authenticated branch/revision reads and revision-creation API
 * [x] authenticated branch creation API
-* [ ] branch rename/delete and broader branch management
+* [x] authenticated branch rename API
+* [ ] branch deletion and broader branch management
 * [x] branch-head DAG traversal and history API
 * [ ] immutable-history hardening and cycle prevention
 * [ ] merge and conflict-resolution workflow
