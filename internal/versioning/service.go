@@ -72,6 +72,13 @@ type CreateBranchInput struct {
 	HeadRevisionID *uuid.UUID
 }
 
+type RenameBranchInput struct {
+	OwnerUserID uuid.UUID
+	ProjectID   uuid.UUID
+	BranchID    uuid.UUID
+	Name        string
+}
+
 type CreateRevisionInput struct {
 	OwnerUserID uuid.UUID
 	ProjectID   uuid.UUID
@@ -164,6 +171,68 @@ func (s *Service) CreateBranch(
 	if err != nil {
 		return dbgen.ProjectBranch{}, fmt.Errorf(
 			"create project branch: %w",
+			err,
+		)
+	}
+
+	return branch, nil
+}
+
+func (s *Service) RenameBranch(
+	ctx context.Context,
+	input RenameBranchInput,
+) (dbgen.ProjectBranch, error) {
+	if input.OwnerUserID == uuid.Nil {
+		return dbgen.ProjectBranch{}, ErrOwnerRequired
+	}
+
+	if input.ProjectID == uuid.Nil {
+		return dbgen.ProjectBranch{}, ErrProjectIDRequired
+	}
+
+	if input.BranchID == uuid.Nil {
+		return dbgen.ProjectBranch{}, ErrBranchIDRequired
+	}
+
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return dbgen.ProjectBranch{}, ErrBranchNameRequired
+	}
+
+	_, err := s.projects.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   input.ProjectID,
+			OwnerUserID: input.OwnerUserID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.ProjectBranch{}, ErrProjectNotFound
+	}
+	if err != nil {
+		return dbgen.ProjectBranch{}, fmt.Errorf(
+			"get project for branch rename: %w",
+			err,
+		)
+	}
+
+	branch, err := s.revisions.RenameBranch(
+		ctx,
+		RenameBranchParams{
+			ProjectID: input.ProjectID,
+			BranchID:  input.BranchID,
+			Name:      name,
+		},
+	)
+	if errors.Is(err, ErrBranchNotFound) {
+		return dbgen.ProjectBranch{}, ErrBranchNotFound
+	}
+	if errors.Is(err, ErrBranchNameConflict) {
+		return dbgen.ProjectBranch{}, ErrBranchNameConflict
+	}
+	if err != nil {
+		return dbgen.ProjectBranch{}, fmt.Errorf(
+			"rename project branch: %w",
 			err,
 		)
 	}
