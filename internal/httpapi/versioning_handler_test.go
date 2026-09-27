@@ -28,6 +28,11 @@ type fakeVersioningService struct {
 	createBranchResult dbgen.ProjectBranch
 	createBranchErr    error
 
+	renameBranchCalled bool
+	renameBranchInput  versioning.RenameBranchInput
+	renameBranchResult dbgen.ProjectBranch
+	renameBranchErr    error
+
 	listCalled      bool
 	listOwnerUserID uuid.UUID
 	listProjectID   uuid.UUID
@@ -57,6 +62,16 @@ func (f *fakeVersioningService) CreateBranch(
 	f.createBranchInput = input
 
 	return f.createBranchResult, f.createBranchErr
+}
+
+func (f *fakeVersioningService) RenameBranch(
+	_ context.Context,
+	input versioning.RenameBranchInput,
+) (dbgen.ProjectBranch, error) {
+	f.renameBranchCalled = true
+	f.renameBranchInput = input
+
+	return f.renameBranchResult, f.renameBranchErr
 }
 
 func (f *fakeVersioningService) CreateRevision(
@@ -1735,6 +1750,593 @@ func TestCreateProjectBranchRejectsMalformedHeadRevisionUUID(
 
 	if service.createBranchCalled {
 		t.Fatal("expected versioning service not to be called")
+	}
+}
+
+func TestRenameProjectBranchRequiresAuthentication(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String(),
+		strings.NewReader(`{"name":"feature-renamed"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusUnauthorized,
+			response.Code,
+		)
+	}
+
+	if service.renameBranchCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "authentication required" {
+		t.Fatalf(
+			"expected authentication error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestRenameProjectBranchRejectsSessionResolutionFailure(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String(),
+		strings.NewReader(`{"name":"feature-renamed"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSessionResolutionError(
+		request,
+		errors.New("database unavailable"),
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	if service.renameBranchCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to authenticate request" {
+		t.Fatalf(
+			"expected authentication failure error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestRenameProjectBranchRejectsCrossOriginBrowserRequest(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String(),
+		strings.NewReader(`{"name":"feature-renamed"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusForbidden,
+			response.Code,
+		)
+	}
+
+	if service.renameBranchCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+}
+
+func TestRenameProjectBranchRejectsMalformedIDs(
+	t *testing.T,
+) {
+	tests := []struct {
+		name      string
+		projectID string
+		branchID  string
+	}{
+		{
+			name:      "malformed project ID",
+			projectID: "not-a-uuid",
+			branchID:  uuid.New().String(),
+		},
+		{
+			name:      "malformed branch ID",
+			projectID: uuid.New().String(),
+			branchID:  "not-a-uuid",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeVersioningService{}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodPatch,
+				"/api/projects/"+
+					test.projectID+
+					"/branches/"+
+					test.branchID,
+				strings.NewReader(
+					`{"name":"feature-renamed"}`,
+				),
+			)
+			request.Header.Set(
+				"Content-Type",
+				"application/json",
+			)
+			request = requestWithSession(
+				request,
+				uuid.New(),
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusBadRequest,
+					response.Code,
+				)
+			}
+
+			if service.renameBranchCalled {
+				t.Fatal(
+					"expected versioning service not to be called",
+				)
+			}
+		})
+	}
+}
+
+func TestRenameProjectBranchRejectsInvalidJSON(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String(),
+		strings.NewReader(`{"name":`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusBadRequest,
+			response.Code,
+		)
+	}
+
+	if service.renameBranchCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+}
+
+func TestRenameProjectBranchRejectsMissingVersioningDependency(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String(),
+		strings.NewReader(`{"name":"feature-renamed"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to rename project branch" {
+		t.Fatalf(
+			"expected missing dependency error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestRenameProjectBranchMapsServiceErrors(
+	t *testing.T,
+) {
+	tests := []struct {
+		name        string
+		projectID   uuid.UUID
+		branchID    uuid.UUID
+		serviceErr  error
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "missing project ID",
+			projectID:   uuid.Nil,
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrProjectIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "project ID is required",
+		},
+		{
+			name:        "missing branch ID",
+			projectID:   uuid.New(),
+			branchID:    uuid.Nil,
+			serviceErr:  versioning.ErrBranchIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "branch ID is required",
+		},
+		{
+			name:        "branch name required",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrBranchNameRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "branch name is required",
+		},
+		{
+			name:        "project not found",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrProjectNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "project not found",
+		},
+		{
+			name:        "branch not found",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrBranchNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "branch not found",
+		},
+		{
+			name:        "branch name conflict",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrBranchNameConflict,
+			wantStatus:  http.StatusConflict,
+			wantMessage: "branch name already exists",
+		},
+		{
+			name:        "unexpected service error",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  errors.New("database unavailable"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "unable to rename project branch",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			userID := uuid.New()
+
+			service := &fakeVersioningService{
+				renameBranchErr: test.serviceErr,
+			}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodPatch,
+				"/api/projects/"+
+					test.projectID.String()+
+					"/branches/"+
+					test.branchID.String(),
+				strings.NewReader(
+					`{"name":"feature-renamed"}`,
+				),
+			)
+			request.Header.Set(
+				"Content-Type",
+				"application/json",
+			)
+			request = requestWithSession(
+				request,
+				userID,
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d",
+					test.wantStatus,
+					response.Code,
+				)
+			}
+
+			if !service.renameBranchCalled {
+				t.Fatal(
+					"expected versioning service to be called",
+				)
+			}
+
+			if service.renameBranchInput.OwnerUserID != userID {
+				t.Fatalf(
+					"expected owner ID %s, got %s",
+					userID,
+					service.renameBranchInput.OwnerUserID,
+				)
+			}
+
+			if service.renameBranchInput.ProjectID != test.projectID {
+				t.Fatalf(
+					"expected project ID %s, got %s",
+					test.projectID,
+					service.renameBranchInput.ProjectID,
+				)
+			}
+
+			if service.renameBranchInput.BranchID != test.branchID {
+				t.Fatalf(
+					"expected branch ID %s, got %s",
+					test.branchID,
+					service.renameBranchInput.BranchID,
+				)
+			}
+
+			if service.renameBranchInput.Name != "feature-renamed" {
+				t.Fatalf(
+					"expected branch name %q, got %q",
+					"feature-renamed",
+					service.renameBranchInput.Name,
+				)
+			}
+
+			body := decodeErrorResponse(t, response)
+			if body.Error != test.wantMessage {
+				t.Fatalf(
+					"expected error %q, got %q",
+					test.wantMessage,
+					body.Error,
+				)
+			}
+		})
+	}
+}
+
+func TestRenameProjectBranchReturnsRenamedBranch(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+	headRevisionID := uuid.New()
+
+	createdAt := time.Date(
+		2026,
+		time.September,
+		26,
+		20,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+	updatedAt := createdAt.Add(time.Minute)
+
+	service := &fakeVersioningService{
+		renameBranchResult: dbgen.ProjectBranch{
+			ID:        branchID,
+			ProjectID: projectID,
+			Name:      "feature-renamed",
+			HeadRevisionID: pgtype.UUID{
+				Bytes: headRevisionID,
+				Valid: true,
+			},
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
+		},
+	}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String(),
+		strings.NewReader(
+			`{"name":"  feature-renamed  "}`,
+		),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !service.renameBranchCalled {
+		t.Fatal(
+			"expected versioning service to be called",
+		)
+	}
+
+	if service.renameBranchInput.OwnerUserID != userID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			userID,
+			service.renameBranchInput.OwnerUserID,
+		)
+	}
+
+	if service.renameBranchInput.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			service.renameBranchInput.ProjectID,
+		)
+	}
+
+	if service.renameBranchInput.BranchID != branchID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branchID,
+			service.renameBranchInput.BranchID,
+		)
+	}
+
+	if service.renameBranchInput.Name != "  feature-renamed  " {
+		t.Fatalf(
+			"expected raw branch name %q, got %q",
+			"  feature-renamed  ",
+			service.renameBranchInput.Name,
+		)
+	}
+
+	var body api.ProjectBranchResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf(
+			"decode renamed branch response: %v",
+			err,
+		)
+	}
+
+	if uuid.UUID(body.Id) != branchID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branchID,
+			body.Id,
+		)
+	}
+
+	if uuid.UUID(body.ProjectId) != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			body.ProjectId,
+		)
+	}
+
+	if body.Name != "feature-renamed" {
+		t.Fatalf(
+			"expected branch name %q, got %q",
+			"feature-renamed",
+			body.Name,
+		)
+	}
+
+	if body.HeadRevisionId == nil {
+		t.Fatal(
+			"expected branch head revision ID",
+		)
+	}
+
+	if uuid.UUID(*body.HeadRevisionId) != headRevisionID {
+		t.Fatalf(
+			"expected head revision ID %s, got %s",
+			headRevisionID,
+			*body.HeadRevisionId,
+		)
+	}
+
+	if !body.CreatedAt.Equal(createdAt) {
+		t.Fatalf(
+			"expected created time %s, got %s",
+			createdAt,
+			body.CreatedAt,
+		)
+	}
+
+	if !body.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf(
+			"expected updated time %s, got %s",
+			updatedAt,
+			body.UpdatedAt,
+		)
 	}
 }
 
