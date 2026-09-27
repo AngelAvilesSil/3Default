@@ -24,7 +24,7 @@ Implemented foundations include:
 * project persistence and authenticated project creation, listing, detail reads, and metadata updates
 * project revision and branch persistence with automatic `main` branch creation
 * atomic revision creation with optimistic branch-head updates
-* authenticated branch creation and rename, branch listing and history traversal, revision reads, and revision creation
+* authenticated branch creation, rename, and deletion, branch listing and history traversal, revision reads, and revision creation
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
 * Argon2id password hashing
@@ -35,7 +35,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication milestone and basic authenticated project operations are complete. The backend now includes the first project-versioning API surface: branch listing, creation, and rename, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, and branch-head history traversal. Branch deletion, immutable-history hardening and cycle prevention, storage integration, and CAD workflows remain future work.
+The authentication milestone and basic authenticated project operations are complete. The backend now includes the first project-versioning API surface: branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, and branch-head history traversal. Immutable-history hardening and cycle prevention, storage integration, and CAD workflows remain future work.
 
 ---
 
@@ -284,12 +284,13 @@ GET   /api/projects/{projectId}
 POST  /api/projects
 PATCH /api/projects/{projectId}
 
-GET   /api/projects/{projectId}/branches
-POST  /api/projects/{projectId}/branches
-PATCH /api/projects/{projectId}/branches/{branchId}
-GET   /api/projects/{projectId}/branches/{branchId}/history
-GET   /api/projects/{projectId}/revisions/{revisionId}
-POST  /api/projects/{projectId}/branches/{branchId}/revisions
+GET    /api/projects/{projectId}/branches
+POST   /api/projects/{projectId}/branches
+PATCH  /api/projects/{projectId}/branches/{branchId}
+DELETE /api/projects/{projectId}/branches/{branchId}
+GET    /api/projects/{projectId}/branches/{branchId}/history
+GET    /api/projects/{projectId}/revisions/{revisionId}
+POST   /api/projects/{projectId}/branches/{branchId}/revisions
 ```
 
 ---
@@ -331,12 +332,13 @@ The authenticated project owner is currently also recorded as the revision autho
 Implemented versioning endpoints are:
 
 ```text
-GET   /api/projects/{projectId}/branches
-POST  /api/projects/{projectId}/branches
-PATCH /api/projects/{projectId}/branches/{branchId}
-GET   /api/projects/{projectId}/branches/{branchId}/history
-GET  /api/projects/{projectId}/revisions/{revisionId}
-POST /api/projects/{projectId}/branches/{branchId}/revisions
+GET    /api/projects/{projectId}/branches
+POST   /api/projects/{projectId}/branches
+PATCH  /api/projects/{projectId}/branches/{branchId}
+DELETE /api/projects/{projectId}/branches/{branchId}
+GET    /api/projects/{projectId}/branches/{branchId}/history
+GET    /api/projects/{projectId}/revisions/{revisionId}
+POST   /api/projects/{projectId}/branches/{branchId}/revisions
 ```
 
 Branch listing returns each branch and its current head revision, if any. Branch creation accepts a name and a required-but-nullable `headRevisionId`:
@@ -353,6 +355,10 @@ Branch renaming is exposed through `PATCH /api/projects/{projectId}/branches/{br
 
 A rename changes the branch name and `updatedAt` only. The branch ID, project ID, `headRevisionId`, and `createdAt` are preserved. Branch names remain case-sensitive, and there is currently no special rename restriction for the `main` branch.
 
+Branch deletion is exposed through `DELETE /api/projects/{projectId}/branches/{branchId}`. Deletion removes only the movable branch pointer; it does not delete project revisions. Both empty and non-empty branches may be deleted, there is no special deletion protection for `main`, and deleting the project's last branch is allowed. A project can therefore temporarily have zero branches and later create a new branch either empty or at an exact existing revision.
+
+Missing or non-owned projects and missing or wrong-project branches are exposed as `404`. Malformed project or branch IDs are rejected as `400`, unsafe cross-origin browser requests are rejected by the shared request protection, and successful deletion returns `204 No Content`. Branch deletion has no `409 Conflict` case.
+
 Revision reads are scoped to a project. A project that does not exist and a project owned by another user are both exposed as `404` through the owner-scoped application service.
 
 Branch history is exposed through `GET /api/projects/{projectId}/branches/{branchId}/history`. For an existing non-empty branch, traversal starts from the branch's current persisted head and returns every unique revision reachable by recursively following both `parentRevisionId` and `mergeParentRevisionId`. An existing empty branch returns `[]`.
@@ -361,7 +367,7 @@ History results use a deterministic presentation order of `createdAt` descending
 
 Historical revisions are treated as append-only by the application: there are no revision update or delete operations in the current service or HTTP API. The database schema enforces same-project parent references and several parent constraints, but it does **not** currently prevent arbitrary direct SQL updates to revision rows or fully enforce cycle prevention. Stronger immutable-history enforcement and graph validation remain future work.
 
-Branch deletion, immutable-history hardening and cycle prevention, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
+Immutable-history hardening and cycle prevention, broader branch management, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
 
 ---
 
@@ -573,7 +579,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] authenticated branch/revision reads and revision-creation API
 * [x] authenticated branch creation API
 * [x] authenticated branch rename API
-* [ ] branch deletion and broader branch management
+* [x] authenticated branch deletion API
+* [ ] broader branch management
 * [x] branch-head DAG traversal and history API
 * [ ] immutable-history hardening and cycle prevention
 * [ ] merge and conflict-resolution workflow
