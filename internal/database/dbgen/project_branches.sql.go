@@ -133,6 +133,25 @@ func (q *Queries) CreateProjectBranchWithHead(ctx context.Context, arg CreatePro
 	return i, err
 }
 
+const deleteProjectBranch = `-- name: DeleteProjectBranch :execrows
+DELETE FROM project_branches
+WHERE id = $1
+  AND project_id = $2
+`
+
+type DeleteProjectBranchParams struct {
+	BranchID  uuid.UUID
+	ProjectID uuid.UUID
+}
+
+func (q *Queries) DeleteProjectBranch(ctx context.Context, arg DeleteProjectBranchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectBranch, arg.BranchID, arg.ProjectID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getProjectBranchByIDAndProject = `-- name: GetProjectBranchByIDAndProject :one
 SELECT
     id,

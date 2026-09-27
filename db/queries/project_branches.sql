@@ -61,6 +61,11 @@ RETURNING
     created_at,
     updated_at;
 
+-- name: DeleteProjectBranch :execrows
+DELETE FROM project_branches
+WHERE id = sqlc.arg(branch_id)
+  AND project_id = sqlc.arg(project_id);
+
 -- name: AdvanceProjectBranchHead :one
 UPDATE project_branches
 SET

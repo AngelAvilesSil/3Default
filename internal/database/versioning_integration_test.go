@@ -797,6 +797,147 @@ func TestProjectStoreRenameBranchMapsDuplicateNameToConflict(
 	}
 }
 
+func TestProjectStoreDeleteBranchRemovesPointerAndPreservesRevision(
+	t *testing.T,
+) {
+	ctx, _, store, queries, userID, projectID, branchID :=
+		setupVersioningStoreTest(t)
+
+	revision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     branchID,
+			AuthorUserID: userID,
+			Message:      "Revision before branch deletion",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create project revision: %v", err)
+	}
+
+	err = store.DeleteBranch(
+		ctx,
+		versioning.DeleteBranchParams{
+			ProjectID: projectID,
+			BranchID:  branchID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("delete project branch: %v", err)
+	}
+
+	branches, err := queries.ListProjectBranchesByProject(
+		ctx,
+		projectID,
+	)
+	if err != nil {
+		t.Fatalf("list project branches after deletion: %v", err)
+	}
+
+	if len(branches) != 0 {
+		t.Fatalf(
+			"expected project to have 0 branches after deleting its last branch, got %d",
+			len(branches),
+		)
+	}
+
+	persistedRevision, err :=
+		queries.GetProjectRevisionByIDAndProject(
+			ctx,
+			dbgen.GetProjectRevisionByIDAndProjectParams{
+				RevisionID: revision.ID,
+				ProjectID:  projectID,
+			},
+		)
+	if err != nil {
+		t.Fatalf(
+			"get revision after deleting branch: %v",
+			err,
+		)
+	}
+
+	if persistedRevision.ID != revision.ID {
+		t.Fatalf(
+			"expected revision ID %s, got %s",
+			revision.ID,
+			persistedRevision.ID,
+		)
+	}
+
+	if persistedRevision.ProjectID != projectID {
+		t.Fatalf(
+			"expected revision project ID %s, got %s",
+			projectID,
+			persistedRevision.ProjectID,
+		)
+	}
+}
+
+func TestProjectStoreDeleteBranchMapsMissingOrWrongProjectToNotFound(
+	t *testing.T,
+) {
+	ctx, _, store, queries, _, projectID, branchID :=
+		setupVersioningStoreTest(t)
+
+	tests := []struct {
+		name      string
+		projectID uuid.UUID
+		branchID  uuid.UUID
+	}{
+		{
+			name:      "missing branch",
+			projectID: projectID,
+			branchID:  uuid.New(),
+		},
+		{
+			name:      "wrong project",
+			projectID: uuid.New(),
+			branchID:  branchID,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := store.DeleteBranch(
+				ctx,
+				versioning.DeleteBranchParams{
+					ProjectID: test.projectID,
+					BranchID:  test.branchID,
+				},
+			)
+			if !errors.Is(err, versioning.ErrBranchNotFound) {
+				t.Fatalf(
+					"expected ErrBranchNotFound, got %v",
+					err,
+				)
+			}
+		})
+	}
+
+	branch, err := queries.GetProjectBranchByIDAndProject(
+		ctx,
+		dbgen.GetProjectBranchByIDAndProjectParams{
+			BranchID:  branchID,
+			ProjectID: projectID,
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"get branch after rejected deletions: %v",
+			err,
+		)
+	}
+
+	if branch.ID != branchID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branchID,
+			branch.ID,
+		)
+	}
+}
+
 func TestListProjectBranchesByProjectScopesAndOrdersBranches(
 	t *testing.T,
 ) {

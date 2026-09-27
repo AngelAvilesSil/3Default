@@ -20,6 +20,7 @@ type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteExpiredSessions(ctx context.Context) (int64, error)
+	DeleteProjectBranch(ctx context.Context, arg DeleteProjectBranchParams) (int64, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveSessionByTokenHashRow, error)
 	GetLoginCredentialByEmail(ctx context.Context, email string) (GetLoginCredentialByEmailRow, error)

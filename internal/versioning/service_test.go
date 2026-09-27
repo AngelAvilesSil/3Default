@@ -43,6 +43,10 @@ type fakeRevisionStore struct {
 	renamedBranch      dbgen.ProjectBranch
 	renameBranchErr    error
 
+	deleteBranchCalled bool
+	deleteBranchParams DeleteBranchParams
+	deleteBranchErr    error
+
 	listCalled    bool
 	listProjectID uuid.UUID
 	branches      []dbgen.ProjectBranch
@@ -82,6 +86,16 @@ func (f *fakeRevisionStore) RenameBranch(
 	f.renameBranchParams = arg
 
 	return f.renamedBranch, f.renameBranchErr
+}
+
+func (f *fakeRevisionStore) DeleteBranch(
+	_ context.Context,
+	arg DeleteBranchParams,
+) error {
+	f.deleteBranchCalled = true
+	f.deleteBranchParams = arg
+
+	return f.deleteBranchErr
 }
 
 func (f *fakeRevisionStore) CreateRevisionOnBranch(
