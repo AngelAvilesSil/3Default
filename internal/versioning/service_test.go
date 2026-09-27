@@ -38,6 +38,11 @@ type fakeRevisionStore struct {
 	createdBranch      dbgen.ProjectBranch
 	createBranchErr    error
 
+	renameBranchCalled bool
+	renameBranchParams RenameBranchParams
+	renamedBranch      dbgen.ProjectBranch
+	renameBranchErr    error
+
 	listCalled    bool
 	listProjectID uuid.UUID
 	branches      []dbgen.ProjectBranch
@@ -71,9 +76,12 @@ func (f *fakeRevisionStore) CreateBranch(
 
 func (f *fakeRevisionStore) RenameBranch(
 	_ context.Context,
-	_ RenameBranchParams,
+	arg RenameBranchParams,
 ) (dbgen.ProjectBranch, error) {
-	return dbgen.ProjectBranch{}, nil
+	f.renameBranchCalled = true
+	f.renameBranchParams = arg
+
+	return f.renamedBranch, f.renameBranchErr
 }
 
 func (f *fakeRevisionStore) CreateRevisionOnBranch(
@@ -549,6 +557,317 @@ func validCreateBranchInput() CreateBranchInput {
 		OwnerUserID: uuid.New(),
 		ProjectID:   uuid.New(),
 		Name:        "feature",
+	}
+}
+
+func TestRenameBranchNormalizesInputAndRenamesBranch(
+	t *testing.T,
+) {
+	ownerID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+
+	projects := &fakeProjectReader{
+		project: dbgen.Project{
+			ID:          projectID,
+			OwnerUserID: ownerID,
+		},
+	}
+	revisions := &fakeRevisionStore{
+		renamedBranch: dbgen.ProjectBranch{
+			ID:        branchID,
+			ProjectID: projectID,
+			Name:      "feature-renamed",
+		},
+	}
+
+	service := NewService(projects, revisions)
+
+	branch, err := service.RenameBranch(
+		context.Background(),
+		RenameBranchInput{
+			OwnerUserID: ownerID,
+			ProjectID:   projectID,
+			BranchID:    branchID,
+			Name:        "  feature-renamed  ",
+		},
+	)
+	if err != nil {
+		t.Fatalf("rename branch: %v", err)
+	}
+
+	if !projects.called {
+		t.Fatal("expected project ownership lookup")
+	}
+
+	if projects.params.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			projects.params.ProjectID,
+		)
+	}
+
+	if projects.params.OwnerUserID != ownerID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			ownerID,
+			projects.params.OwnerUserID,
+		)
+	}
+
+	if !revisions.renameBranchCalled {
+		t.Fatal("expected branch rename store to be called")
+	}
+
+	if revisions.renameBranchParams.ProjectID != projectID {
+		t.Fatalf(
+			"expected rename project ID %s, got %s",
+			projectID,
+			revisions.renameBranchParams.ProjectID,
+		)
+	}
+
+	if revisions.renameBranchParams.BranchID != branchID {
+		t.Fatalf(
+			"expected rename branch ID %s, got %s",
+			branchID,
+			revisions.renameBranchParams.BranchID,
+		)
+	}
+
+	if revisions.renameBranchParams.Name != "feature-renamed" {
+		t.Fatalf(
+			"expected normalized branch name %q, got %q",
+			"feature-renamed",
+			revisions.renameBranchParams.Name,
+		)
+	}
+
+	if branch.ID != branchID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branchID,
+			branch.ID,
+		)
+	}
+
+	if branch.Name != "feature-renamed" {
+		t.Fatalf(
+			"expected branch name %q, got %q",
+			"feature-renamed",
+			branch.Name,
+		)
+	}
+}
+
+func TestRenameBranchRejectsInvalidInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		input RenameBranchInput
+		want  error
+	}{
+		{
+			name: "missing owner",
+			input: RenameBranchInput{
+				ProjectID: uuid.New(),
+				BranchID:  uuid.New(),
+				Name:      "feature",
+			},
+			want: ErrOwnerRequired,
+		},
+		{
+			name: "missing project ID",
+			input: RenameBranchInput{
+				OwnerUserID: uuid.New(),
+				BranchID:    uuid.New(),
+				Name:        "feature",
+			},
+			want: ErrProjectIDRequired,
+		},
+		{
+			name: "missing branch ID",
+			input: RenameBranchInput{
+				OwnerUserID: uuid.New(),
+				ProjectID:   uuid.New(),
+				Name:        "feature",
+			},
+			want: ErrBranchIDRequired,
+		},
+		{
+			name: "blank branch name",
+			input: RenameBranchInput{
+				OwnerUserID: uuid.New(),
+				ProjectID:   uuid.New(),
+				BranchID:    uuid.New(),
+				Name:        "   ",
+			},
+			want: ErrBranchNameRequired,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projects := &fakeProjectReader{}
+			revisions := &fakeRevisionStore{}
+
+			service := NewService(projects, revisions)
+
+			_, err := service.RenameBranch(
+				context.Background(),
+				test.input,
+			)
+			if !errors.Is(err, test.want) {
+				t.Fatalf(
+					"expected %v, got %v",
+					test.want,
+					err,
+				)
+			}
+
+			if projects.called {
+				t.Fatal(
+					"expected project store not to be called",
+				)
+			}
+
+			if revisions.renameBranchCalled {
+				t.Fatal(
+					"expected branch rename store not to be called",
+				)
+			}
+		})
+	}
+}
+
+func TestRenameBranchMapsMissingProjectToNotFound(
+	t *testing.T,
+) {
+	projects := &fakeProjectReader{
+		err: pgx.ErrNoRows,
+	}
+	revisions := &fakeRevisionStore{}
+
+	service := NewService(projects, revisions)
+
+	_, err := service.RenameBranch(
+		context.Background(),
+		validRenameBranchInput(),
+	)
+	if !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf(
+			"expected ErrProjectNotFound, got %v",
+			err,
+		)
+	}
+
+	if revisions.renameBranchCalled {
+		t.Fatal(
+			"expected branch rename store not to be called",
+		)
+	}
+}
+
+func TestRenameBranchWrapsProjectLookupError(t *testing.T) {
+	databaseErr := errors.New("database unavailable")
+
+	projects := &fakeProjectReader{
+		err: databaseErr,
+	}
+	revisions := &fakeRevisionStore{}
+
+	service := NewService(projects, revisions)
+
+	_, err := service.RenameBranch(
+		context.Background(),
+		validRenameBranchInput(),
+	)
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"expected wrapped database error, got %v",
+			err,
+		)
+	}
+
+	if revisions.renameBranchCalled {
+		t.Fatal(
+			"expected branch rename store not to be called",
+		)
+	}
+}
+
+func TestRenameBranchPreservesBranchNotFound(
+	t *testing.T,
+) {
+	projects := &fakeProjectReader{}
+	revisions := &fakeRevisionStore{
+		renameBranchErr: ErrBranchNotFound,
+	}
+
+	service := NewService(projects, revisions)
+
+	_, err := service.RenameBranch(
+		context.Background(),
+		validRenameBranchInput(),
+	)
+	if !errors.Is(err, ErrBranchNotFound) {
+		t.Fatalf(
+			"expected ErrBranchNotFound, got %v",
+			err,
+		)
+	}
+}
+
+func TestRenameBranchPreservesNameConflict(
+	t *testing.T,
+) {
+	projects := &fakeProjectReader{}
+	revisions := &fakeRevisionStore{
+		renameBranchErr: ErrBranchNameConflict,
+	}
+
+	service := NewService(projects, revisions)
+
+	_, err := service.RenameBranch(
+		context.Background(),
+		validRenameBranchInput(),
+	)
+	if !errors.Is(err, ErrBranchNameConflict) {
+		t.Fatalf(
+			"expected ErrBranchNameConflict, got %v",
+			err,
+		)
+	}
+}
+
+func TestRenameBranchWrapsStoreError(t *testing.T) {
+	databaseErr := errors.New("database unavailable")
+
+	projects := &fakeProjectReader{}
+	revisions := &fakeRevisionStore{
+		renameBranchErr: databaseErr,
+	}
+
+	service := NewService(projects, revisions)
+
+	_, err := service.RenameBranch(
+		context.Background(),
+		validRenameBranchInput(),
+	)
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"expected wrapped database error, got %v",
+			err,
+		)
+	}
+}
+
+func validRenameBranchInput() RenameBranchInput {
+	return RenameBranchInput{
+		OwnerUserID: uuid.New(),
+		ProjectID:   uuid.New(),
+		BranchID:    uuid.New(),
+		Name:        "feature-renamed",
 	}
 }
 
