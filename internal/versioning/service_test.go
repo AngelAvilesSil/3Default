@@ -69,6 +69,13 @@ func (f *fakeRevisionStore) CreateBranch(
 	return f.createdBranch, f.createBranchErr
 }
 
+func (f *fakeRevisionStore) RenameBranch(
+	_ context.Context,
+	_ RenameBranchParams,
+) (dbgen.ProjectBranch, error) {
+	return dbgen.ProjectBranch{}, nil
+}
+
 func (f *fakeRevisionStore) CreateRevisionOnBranch(
 	_ context.Context,
 	arg CreateRevisionOnBranchParams,

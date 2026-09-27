@@ -543,6 +543,260 @@ func TestProjectStoreMapsDuplicateBranchNameToConflict(
 	}
 }
 
+func TestProjectStoreRenamesBranchAndPreservesBranchState(
+	t *testing.T,
+) {
+	ctx, _, store, queries, userID, projectID, mainBranchID :=
+		setupVersioningStoreTest(t)
+
+	rootRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     mainBranchID,
+			AuthorUserID: userID,
+			Message:      "Initial revision",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create root revision: %v", err)
+	}
+
+	branch, err := store.CreateBranch(
+		ctx,
+		versioning.CreateBranchParams{
+			ProjectID:      projectID,
+			Name:           "feature",
+			HeadRevisionID: &rootRevision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create project branch: %v", err)
+	}
+
+	renamed, err := store.RenameBranch(
+		ctx,
+		versioning.RenameBranchParams{
+			ProjectID: projectID,
+			BranchID:  branch.ID,
+			Name:      "feature-renamed",
+		},
+	)
+	if err != nil {
+		t.Fatalf("rename project branch: %v", err)
+	}
+
+	if renamed.ID != branch.ID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branch.ID,
+			renamed.ID,
+		)
+	}
+
+	if renamed.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			renamed.ProjectID,
+		)
+	}
+
+	if renamed.Name != "feature-renamed" {
+		t.Fatalf(
+			"expected renamed branch name %q, got %q",
+			"feature-renamed",
+			renamed.Name,
+		)
+	}
+
+	if !renamed.HeadRevisionID.Valid {
+		t.Fatal("expected renamed branch head to remain set")
+	}
+
+	actualHead := uuid.UUID(renamed.HeadRevisionID.Bytes)
+	if actualHead != rootRevision.ID {
+		t.Fatalf(
+			"expected branch head %s, got %s",
+			rootRevision.ID,
+			actualHead,
+		)
+	}
+
+	if !renamed.CreatedAt.Equal(branch.CreatedAt) {
+		t.Fatalf(
+			"expected created_at %s to remain unchanged, got %s",
+			branch.CreatedAt,
+			renamed.CreatedAt,
+		)
+	}
+
+	if renamed.UpdatedAt.Before(branch.UpdatedAt) {
+		t.Fatalf(
+			"expected updated_at not before %s, got %s",
+			branch.UpdatedAt,
+			renamed.UpdatedAt,
+		)
+	}
+
+	persisted, err := queries.GetProjectBranchByIDAndProject(
+		ctx,
+		dbgen.GetProjectBranchByIDAndProjectParams{
+			BranchID:  branch.ID,
+			ProjectID: projectID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("get renamed project branch: %v", err)
+	}
+
+	if persisted.Name != "feature-renamed" {
+		t.Fatalf(
+			"expected persisted branch name %q, got %q",
+			"feature-renamed",
+			persisted.Name,
+		)
+	}
+
+	if !persisted.HeadRevisionID.Valid ||
+		uuid.UUID(persisted.HeadRevisionID.Bytes) != rootRevision.ID {
+		t.Fatal("expected persisted branch head to remain unchanged")
+	}
+}
+
+func TestProjectStoreRenameBranchAllowsSameName(
+	t *testing.T,
+) {
+	ctx, _, store, _, _, projectID, _ :=
+		setupVersioningStoreTest(t)
+
+	branch, err := store.CreateBranch(
+		ctx,
+		versioning.CreateBranchParams{
+			ProjectID: projectID,
+			Name:      "feature",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create project branch: %v", err)
+	}
+
+	renamed, err := store.RenameBranch(
+		ctx,
+		versioning.RenameBranchParams{
+			ProjectID: projectID,
+			BranchID:  branch.ID,
+			Name:      "feature",
+		},
+	)
+	if err != nil {
+		t.Fatalf("rename branch to same name: %v", err)
+	}
+
+	if renamed.ID != branch.ID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branch.ID,
+			renamed.ID,
+		)
+	}
+
+	if renamed.Name != "feature" {
+		t.Fatalf(
+			"expected branch name %q, got %q",
+			"feature",
+			renamed.Name,
+		)
+	}
+}
+
+func TestProjectStoreRenameBranchMapsMissingOrWrongProjectToNotFound(
+	t *testing.T,
+) {
+	ctx, _, store, _, _, projectID, _ :=
+		setupVersioningStoreTest(t)
+
+	branch, err := store.CreateBranch(
+		ctx,
+		versioning.CreateBranchParams{
+			ProjectID: projectID,
+			Name:      "feature",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create project branch: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		projectID uuid.UUID
+		branchID  uuid.UUID
+	}{
+		{
+			name:      "missing branch",
+			projectID: projectID,
+			branchID:  uuid.New(),
+		},
+		{
+			name:      "wrong project",
+			projectID: uuid.New(),
+			branchID:  branch.ID,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := store.RenameBranch(
+				ctx,
+				versioning.RenameBranchParams{
+					ProjectID: test.projectID,
+					BranchID:  test.branchID,
+					Name:      "renamed",
+				},
+			)
+			if !errors.Is(err, versioning.ErrBranchNotFound) {
+				t.Fatalf(
+					"expected ErrBranchNotFound, got %v",
+					err,
+				)
+			}
+		})
+	}
+}
+
+func TestProjectStoreRenameBranchMapsDuplicateNameToConflict(
+	t *testing.T,
+) {
+	ctx, _, store, _, _, projectID, _ :=
+		setupVersioningStoreTest(t)
+
+	branch, err := store.CreateBranch(
+		ctx,
+		versioning.CreateBranchParams{
+			ProjectID: projectID,
+			Name:      "feature",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create project branch: %v", err)
+	}
+
+	_, err = store.RenameBranch(
+		ctx,
+		versioning.RenameBranchParams{
+			ProjectID: projectID,
+			BranchID:  branch.ID,
+			Name:      "main",
+		},
+	)
+	if !errors.Is(err, versioning.ErrBranchNameConflict) {
+		t.Fatalf(
+			"expected ErrBranchNameConflict, got %v",
+			err,
+		)
+	}
+}
+
 func TestListProjectBranchesByProjectScopesAndOrdersBranches(
 	t *testing.T,
 ) {

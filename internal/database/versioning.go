@@ -44,6 +44,41 @@ func (s *ProjectStore) CreateBranch(
 	return branch, nil
 }
 
+func (s *ProjectStore) RenameBranch(
+	ctx context.Context,
+	arg versioning.RenameBranchParams,
+) (dbgen.ProjectBranch, error) {
+	branch, err := s.Queries.RenameProjectBranch(
+		ctx,
+		dbgen.RenameProjectBranchParams{
+			Name:      arg.Name,
+			BranchID:  arg.BranchID,
+			ProjectID: arg.ProjectID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.ProjectBranch{},
+			versioning.ErrBranchNotFound
+	}
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) &&
+			pgErr.Code == "23505" &&
+			pgErr.ConstraintName ==
+				"project_branches_project_name_unique" {
+			return dbgen.ProjectBranch{},
+				versioning.ErrBranchNameConflict
+		}
+
+		return dbgen.ProjectBranch{}, fmt.Errorf(
+			"rename project branch: %w",
+			err,
+		)
+	}
+
+	return branch, nil
+}
+
 func (s *ProjectStore) CreateRevisionOnBranch(
 	ctx context.Context,
 	arg versioning.CreateRevisionOnBranchParams,

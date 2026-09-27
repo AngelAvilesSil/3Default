@@ -46,6 +46,21 @@ FROM project_branches
 WHERE id = sqlc.arg(branch_id)
   AND project_id = sqlc.arg(project_id);
 
+-- name: RenameProjectBranch :one
+UPDATE project_branches
+SET
+    name = sqlc.arg(name),
+    updated_at = now()
+WHERE id = sqlc.arg(branch_id)
+  AND project_id = sqlc.arg(project_id)
+RETURNING
+    id,
+    project_id,
+    name,
+    head_revision_id,
+    created_at,
+    updated_at;
+
 -- name: AdvanceProjectBranchHead :one
 UPDATE project_branches
 SET
