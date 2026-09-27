@@ -515,6 +515,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+    delete:
+      operationId: deleteProjectBranch
+      summary: Delete a branch for a project owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: branchId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Project branch deleted
+        "400":
+          description: Invalid project or branch ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Cross-origin request rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project or branch not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/projects/{projectId}/branches/{branchId}/history:
     get:
       operationId: listProjectBranchHistory

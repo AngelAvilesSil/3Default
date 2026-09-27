@@ -33,6 +33,10 @@ type fakeVersioningService struct {
 	renameBranchResult dbgen.ProjectBranch
 	renameBranchErr    error
 
+	deleteBranchCalled bool
+	deleteBranchInput  versioning.DeleteBranchInput
+	deleteBranchErr    error
+
 	listCalled      bool
 	listOwnerUserID uuid.UUID
 	listProjectID   uuid.UUID
@@ -72,6 +76,16 @@ func (f *fakeVersioningService) RenameBranch(
 	f.renameBranchInput = input
 
 	return f.renameBranchResult, f.renameBranchErr
+}
+
+func (f *fakeVersioningService) DeleteBranch(
+	_ context.Context,
+	input versioning.DeleteBranchInput,
+) error {
+	f.deleteBranchCalled = true
+	f.deleteBranchInput = input
+
+	return f.deleteBranchErr
 }
 
 func (f *fakeVersioningService) CreateRevision(
@@ -2336,6 +2350,428 @@ func TestRenameProjectBranchReturnsRenamedBranch(
 			"expected updated time %s, got %s",
 			updatedAt,
 			body.UpdatedAt,
+		)
+	}
+}
+
+func TestDeleteProjectBranchRequiresAuthentication(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String(),
+		nil,
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusUnauthorized,
+			response.Code,
+		)
+	}
+
+	if service.deleteBranchCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "authentication required" {
+		t.Fatalf(
+			"expected authentication error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestDeleteProjectBranchRejectsSessionResolutionFailure(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String(),
+		nil,
+	)
+	request = requestWithSessionResolutionError(
+		request,
+		errors.New("database unavailable"),
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	if service.deleteBranchCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to authenticate request" {
+		t.Fatalf(
+			"expected authentication failure error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestDeleteProjectBranchRejectsCrossOriginBrowserRequest(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String(),
+		nil,
+	)
+	request.Header.Set("Sec-Fetch-Site", "cross-site")
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusForbidden,
+			response.Code,
+		)
+	}
+
+	if service.deleteBranchCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+}
+
+func TestDeleteProjectBranchRejectsMalformedIDs(
+	t *testing.T,
+) {
+	tests := []struct {
+		name      string
+		projectID string
+		branchID  string
+	}{
+		{
+			name:      "malformed project ID",
+			projectID: "not-a-uuid",
+			branchID:  uuid.New().String(),
+		},
+		{
+			name:      "malformed branch ID",
+			projectID: uuid.New().String(),
+			branchID:  "not-a-uuid",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeVersioningService{}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodDelete,
+				"/api/projects/"+
+					test.projectID+
+					"/branches/"+
+					test.branchID,
+				nil,
+			)
+			request = requestWithSession(
+				request,
+				uuid.New(),
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusBadRequest,
+					response.Code,
+				)
+			}
+
+			if service.deleteBranchCalled {
+				t.Fatal(
+					"expected versioning service not to be called",
+				)
+			}
+
+		})
+	}
+}
+
+func TestDeleteProjectBranchRejectsMissingVersioningDependency(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/branches/"+
+			uuid.New().String(),
+		nil,
+	)
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to delete project branch" {
+		t.Fatalf(
+			"expected missing dependency error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestDeleteProjectBranchMapsServiceErrors(
+	t *testing.T,
+) {
+	tests := []struct {
+		name        string
+		projectID   uuid.UUID
+		branchID    uuid.UUID
+		serviceErr  error
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "missing project ID",
+			projectID:   uuid.Nil,
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrProjectIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "project ID is required",
+		},
+		{
+			name:        "missing branch ID",
+			projectID:   uuid.New(),
+			branchID:    uuid.Nil,
+			serviceErr:  versioning.ErrBranchIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "branch ID is required",
+		},
+		{
+			name:        "project not found",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrProjectNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "project not found",
+		},
+		{
+			name:        "branch not found",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  versioning.ErrBranchNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "branch not found",
+		},
+		{
+			name:        "unexpected service error",
+			projectID:   uuid.New(),
+			branchID:    uuid.New(),
+			serviceErr:  errors.New("database unavailable"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "unable to delete project branch",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			userID := uuid.New()
+
+			service := &fakeVersioningService{
+				deleteBranchErr: test.serviceErr,
+			}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodDelete,
+				"/api/projects/"+
+					test.projectID.String()+
+					"/branches/"+
+					test.branchID.String(),
+				nil,
+			)
+			request = requestWithSession(
+				request,
+				userID,
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d",
+					test.wantStatus,
+					response.Code,
+				)
+			}
+
+			if !service.deleteBranchCalled {
+				t.Fatal(
+					"expected versioning service to be called",
+				)
+			}
+
+			if service.deleteBranchInput.OwnerUserID != userID {
+				t.Fatalf(
+					"expected owner ID %s, got %s",
+					userID,
+					service.deleteBranchInput.OwnerUserID,
+				)
+			}
+
+			if service.deleteBranchInput.ProjectID != test.projectID {
+				t.Fatalf(
+					"expected project ID %s, got %s",
+					test.projectID,
+					service.deleteBranchInput.ProjectID,
+				)
+			}
+
+			if service.deleteBranchInput.BranchID != test.branchID {
+				t.Fatalf(
+					"expected branch ID %s, got %s",
+					test.branchID,
+					service.deleteBranchInput.BranchID,
+				)
+			}
+
+			body := decodeErrorResponse(t, response)
+			if body.Error != test.wantMessage {
+				t.Fatalf(
+					"expected error %q, got %q",
+					test.wantMessage,
+					body.Error,
+				)
+			}
+		})
+	}
+}
+
+func TestDeleteProjectBranchReturnsNoContent(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String(),
+		nil,
+	)
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusNoContent,
+			response.Code,
+		)
+	}
+
+	if !service.deleteBranchCalled {
+		t.Fatal(
+			"expected versioning service to be called",
+		)
+	}
+
+	if service.deleteBranchInput.OwnerUserID != userID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			userID,
+			service.deleteBranchInput.OwnerUserID,
+		)
+	}
+
+	if service.deleteBranchInput.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			service.deleteBranchInput.ProjectID,
+		)
+	}
+
+	if service.deleteBranchInput.BranchID != branchID {
+		t.Fatalf(
+			"expected branch ID %s, got %s",
+			branchID,
+			service.deleteBranchInput.BranchID,
+		)
+	}
+
+	if response.Body.Len() != 0 {
+		t.Fatalf(
+			"expected empty response body, got %q",
+			response.Body.String(),
 		)
 	}
 }

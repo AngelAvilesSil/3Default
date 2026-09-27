@@ -48,6 +48,10 @@ type VersioningService interface {
 		ctx context.Context,
 		input versioning.RenameBranchInput,
 	) (dbgen.ProjectBranch, error)
+	DeleteBranch(
+		ctx context.Context,
+		input versioning.DeleteBranchInput,
+	) error
 	CreateRevision(
 		ctx context.Context,
 		input versioning.CreateRevisionInput,
@@ -793,6 +797,69 @@ func (s *Server) RenameProjectBranch(
 		CreatedAt:      branch.CreatedAt,
 		UpdatedAt:      branch.UpdatedAt,
 	}, nil
+}
+
+func (s *Server) DeleteProjectBranch(
+	ctx context.Context,
+	request api.DeleteProjectBranchRequestObject,
+) (api.DeleteProjectBranchResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.DeleteProjectBranch500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.DeleteProjectBranch401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.versioning == nil {
+		return api.DeleteProjectBranch500JSONResponse{
+			Error: "unable to delete project branch",
+		}, nil
+	}
+
+	err := s.versioning.DeleteBranch(
+		ctx,
+		versioning.DeleteBranchInput{
+			OwnerUserID: session.UserID,
+			ProjectID:   googleuuid.UUID(request.ProjectId),
+			BranchID:    googleuuid.UUID(request.BranchId),
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, versioning.ErrProjectIDRequired):
+			return api.DeleteProjectBranch400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchIDRequired):
+			return api.DeleteProjectBranch400JSONResponse{
+				Error: "branch ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrProjectNotFound):
+			return api.DeleteProjectBranch404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrBranchNotFound):
+			return api.DeleteProjectBranch404JSONResponse{
+				Error: "branch not found",
+			}, nil
+
+		default:
+			return api.DeleteProjectBranch500JSONResponse{
+				Error: "unable to delete project branch",
+			}, nil
+		}
+	}
+
+	return api.DeleteProjectBranch204Response{}, nil
 }
 
 func (s *Server) ListProjectBranches(
