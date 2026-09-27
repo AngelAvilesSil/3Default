@@ -232,6 +232,9 @@ type ServerInterface interface {
 	// CreateProjectBranch Create a branch for a project owned by the current user
 	// (POST /api/projects/{projectId}/branches)
 	CreateProjectBranch(w http.ResponseWriter, r *http.Request, projectId uuid.UUID)
+	// DeleteProjectBranch Delete a branch for a project owned by the current user
+	// (DELETE /api/projects/{projectId}/branches/{branchId})
+	DeleteProjectBranch(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, branchId uuid.UUID)
 	// RenameProjectBranch Rename a branch for a project owned by the current user
 	// (PATCH /api/projects/{projectId}/branches/{branchId})
 	RenameProjectBranch(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, branchId uuid.UUID)
@@ -451,6 +454,41 @@ func (siw *ServerInterfaceWrapper) CreateProjectBranch(w http.ResponseWriter, r 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.CreateProjectBranch(w, r, projectId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteProjectBranch operation middleware
+func (siw *ServerInterfaceWrapper) DeleteProjectBranch(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "branchId" -------------
+	var branchId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "branchId", r.PathValue("branchId"), &branchId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "branchId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteProjectBranch(w, r, projectId, branchId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -746,6 +784,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/projects/{projectId}", wrapper.UpdateProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.ListProjectBranches)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.CreateProjectBranch)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}", wrapper.DeleteProjectBranch)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}", wrapper.RenameProjectBranch)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}/history", wrapper.ListProjectBranchHistory)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}/revisions", wrapper.CreateProjectRevision)
@@ -1538,6 +1577,93 @@ func (response CreateProjectBranch500JSONResponse) VisitCreateProjectBranchRespo
 	return err
 }
 
+type DeleteProjectBranchRequestObject struct {
+	ProjectId uuid.UUID `json:"projectId"`
+	BranchId  uuid.UUID `json:"branchId"`
+}
+
+type DeleteProjectBranchResponseObject interface {
+	VisitDeleteProjectBranchResponse(w http.ResponseWriter) error
+}
+
+type DeleteProjectBranch204Response struct {
+}
+
+func (response DeleteProjectBranch204Response) VisitDeleteProjectBranchResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteProjectBranch400JSONResponse ErrorResponse
+
+func (response DeleteProjectBranch400JSONResponse) VisitDeleteProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteProjectBranch401JSONResponse ErrorResponse
+
+func (response DeleteProjectBranch401JSONResponse) VisitDeleteProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteProjectBranch403JSONResponse ErrorResponse
+
+func (response DeleteProjectBranch403JSONResponse) VisitDeleteProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteProjectBranch404JSONResponse ErrorResponse
+
+func (response DeleteProjectBranch404JSONResponse) VisitDeleteProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteProjectBranch500JSONResponse ErrorResponse
+
+func (response DeleteProjectBranch500JSONResponse) VisitDeleteProjectBranchResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RenameProjectBranchRequestObject struct {
 	ProjectId uuid.UUID `json:"projectId"`
 	BranchId  uuid.UUID `json:"branchId"`
@@ -1982,6 +2108,9 @@ type StrictServerInterface interface {
 	// CreateProjectBranch Create a branch for a project owned by the current user
 	// (POST /api/projects/{projectId}/branches)
 	CreateProjectBranch(ctx context.Context, request CreateProjectBranchRequestObject) (CreateProjectBranchResponseObject, error)
+	// DeleteProjectBranch Delete a branch for a project owned by the current user
+	// (DELETE /api/projects/{projectId}/branches/{branchId})
+	DeleteProjectBranch(ctx context.Context, request DeleteProjectBranchRequestObject) (DeleteProjectBranchResponseObject, error)
 	// RenameProjectBranch Rename a branch for a project owned by the current user
 	// (PATCH /api/projects/{projectId}/branches/{branchId})
 	RenameProjectBranch(ctx context.Context, request RenameProjectBranchRequestObject) (RenameProjectBranchResponseObject, error)
@@ -2338,6 +2467,33 @@ func (sh *strictHandler) CreateProjectBranch(w http.ResponseWriter, r *http.Requ
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateProjectBranchResponseObject); ok {
 		if err := validResponse.VisitCreateProjectBranchResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteProjectBranch operation middleware
+func (sh *strictHandler) DeleteProjectBranch(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, branchId uuid.UUID) {
+	var request DeleteProjectBranchRequestObject
+
+	request.ProjectId = projectId
+	request.BranchId = branchId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteProjectBranch(ctx, request.(DeleteProjectBranchRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteProjectBranch")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteProjectBranchResponseObject); ok {
+		if err := validResponse.VisitDeleteProjectBranchResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
