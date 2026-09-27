@@ -79,6 +79,12 @@ type RenameBranchInput struct {
 	Name        string
 }
 
+type DeleteBranchInput struct {
+	OwnerUserID uuid.UUID
+	ProjectID   uuid.UUID
+	BranchID    uuid.UUID
+}
+
 type CreateRevisionInput struct {
 	OwnerUserID uuid.UUID
 	ProjectID   uuid.UUID
@@ -238,6 +244,59 @@ func (s *Service) RenameBranch(
 	}
 
 	return branch, nil
+}
+
+func (s *Service) DeleteBranch(
+	ctx context.Context,
+	input DeleteBranchInput,
+) error {
+	if input.OwnerUserID == uuid.Nil {
+		return ErrOwnerRequired
+	}
+
+	if input.ProjectID == uuid.Nil {
+		return ErrProjectIDRequired
+	}
+
+	if input.BranchID == uuid.Nil {
+		return ErrBranchIDRequired
+	}
+
+	_, err := s.projects.GetProjectByIDAndOwner(
+		ctx,
+		dbgen.GetProjectByIDAndOwnerParams{
+			ProjectID:   input.ProjectID,
+			OwnerUserID: input.OwnerUserID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrProjectNotFound
+	}
+	if err != nil {
+		return fmt.Errorf(
+			"get project for branch deletion: %w",
+			err,
+		)
+	}
+
+	err = s.revisions.DeleteBranch(
+		ctx,
+		DeleteBranchParams{
+			ProjectID: input.ProjectID,
+			BranchID:  input.BranchID,
+		},
+	)
+	if errors.Is(err, ErrBranchNotFound) {
+		return ErrBranchNotFound
+	}
+	if err != nil {
+		return fmt.Errorf(
+			"delete project branch: %w",
+			err,
+		)
+	}
+
+	return nil
 }
 
 func (s *Service) ListBranches(

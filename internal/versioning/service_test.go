@@ -885,6 +885,250 @@ func validRenameBranchInput() RenameBranchInput {
 	}
 }
 
+func TestDeleteBranchDeletesOwnedProjectBranch(
+	t *testing.T,
+) {
+	ownerID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+
+	projects := &fakeProjectReader{
+		project: dbgen.Project{
+			ID:          projectID,
+			OwnerUserID: ownerID,
+		},
+	}
+	revisions := &fakeRevisionStore{}
+
+	service := NewService(projects, revisions)
+
+	err := service.DeleteBranch(
+		context.Background(),
+		DeleteBranchInput{
+			OwnerUserID: ownerID,
+			ProjectID:   projectID,
+			BranchID:    branchID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("delete branch: %v", err)
+	}
+
+	if !projects.called {
+		t.Fatal("expected project ownership lookup")
+	}
+
+	if projects.params.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			projects.params.ProjectID,
+		)
+	}
+
+	if projects.params.OwnerUserID != ownerID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			ownerID,
+			projects.params.OwnerUserID,
+		)
+	}
+
+	if !revisions.deleteBranchCalled {
+		t.Fatal("expected branch delete store to be called")
+	}
+
+	if revisions.deleteBranchParams.ProjectID != projectID {
+		t.Fatalf(
+			"expected delete project ID %s, got %s",
+			projectID,
+			revisions.deleteBranchParams.ProjectID,
+		)
+	}
+
+	if revisions.deleteBranchParams.BranchID != branchID {
+		t.Fatalf(
+			"expected delete branch ID %s, got %s",
+			branchID,
+			revisions.deleteBranchParams.BranchID,
+		)
+	}
+}
+
+func TestDeleteBranchRejectsInvalidInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		input DeleteBranchInput
+		want  error
+	}{
+		{
+			name: "missing owner",
+			input: DeleteBranchInput{
+				ProjectID: uuid.New(),
+				BranchID:  uuid.New(),
+			},
+			want: ErrOwnerRequired,
+		},
+		{
+			name: "missing project ID",
+			input: DeleteBranchInput{
+				OwnerUserID: uuid.New(),
+				BranchID:    uuid.New(),
+			},
+			want: ErrProjectIDRequired,
+		},
+		{
+			name: "missing branch ID",
+			input: DeleteBranchInput{
+				OwnerUserID: uuid.New(),
+				ProjectID:   uuid.New(),
+			},
+			want: ErrBranchIDRequired,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projects := &fakeProjectReader{}
+			revisions := &fakeRevisionStore{}
+
+			service := NewService(projects, revisions)
+
+			err := service.DeleteBranch(
+				context.Background(),
+				test.input,
+			)
+			if !errors.Is(err, test.want) {
+				t.Fatalf(
+					"expected %v, got %v",
+					test.want,
+					err,
+				)
+			}
+
+			if projects.called {
+				t.Fatal(
+					"expected project store not to be called",
+				)
+			}
+
+			if revisions.deleteBranchCalled {
+				t.Fatal(
+					"expected branch delete store not to be called",
+				)
+			}
+		})
+	}
+}
+
+func TestDeleteBranchMapsMissingProjectToNotFound(
+	t *testing.T,
+) {
+	projects := &fakeProjectReader{
+		err: pgx.ErrNoRows,
+	}
+	revisions := &fakeRevisionStore{}
+
+	service := NewService(projects, revisions)
+
+	err := service.DeleteBranch(
+		context.Background(),
+		validDeleteBranchInput(),
+	)
+	if !errors.Is(err, ErrProjectNotFound) {
+		t.Fatalf(
+			"expected ErrProjectNotFound, got %v",
+			err,
+		)
+	}
+
+	if revisions.deleteBranchCalled {
+		t.Fatal(
+			"expected branch delete store not to be called",
+		)
+	}
+}
+
+func TestDeleteBranchWrapsProjectLookupError(t *testing.T) {
+	databaseErr := errors.New("database unavailable")
+
+	projects := &fakeProjectReader{
+		err: databaseErr,
+	}
+	revisions := &fakeRevisionStore{}
+
+	service := NewService(projects, revisions)
+
+	err := service.DeleteBranch(
+		context.Background(),
+		validDeleteBranchInput(),
+	)
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"expected wrapped database error, got %v",
+			err,
+		)
+	}
+
+	if revisions.deleteBranchCalled {
+		t.Fatal(
+			"expected branch delete store not to be called",
+		)
+	}
+}
+
+func TestDeleteBranchPreservesBranchNotFound(
+	t *testing.T,
+) {
+	projects := &fakeProjectReader{}
+	revisions := &fakeRevisionStore{
+		deleteBranchErr: ErrBranchNotFound,
+	}
+
+	service := NewService(projects, revisions)
+
+	err := service.DeleteBranch(
+		context.Background(),
+		validDeleteBranchInput(),
+	)
+	if !errors.Is(err, ErrBranchNotFound) {
+		t.Fatalf(
+			"expected ErrBranchNotFound, got %v",
+			err,
+		)
+	}
+}
+
+func TestDeleteBranchWrapsStoreError(t *testing.T) {
+	databaseErr := errors.New("database unavailable")
+
+	projects := &fakeProjectReader{}
+	revisions := &fakeRevisionStore{
+		deleteBranchErr: databaseErr,
+	}
+
+	service := NewService(projects, revisions)
+
+	err := service.DeleteBranch(
+		context.Background(),
+		validDeleteBranchInput(),
+	)
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"expected wrapped database error, got %v",
+			err,
+		)
+	}
+}
+
+func validDeleteBranchInput() DeleteBranchInput {
+	return DeleteBranchInput{
+		OwnerUserID: uuid.New(),
+		ProjectID:   uuid.New(),
+		BranchID:    uuid.New(),
+	}
+}
+
 func TestCreateRevisionNormalizesInputAndCreatesRevision(
 	t *testing.T,
 ) {
