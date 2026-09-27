@@ -204,3 +204,39 @@ func (q *Queries) ListProjectBranchesByProject(ctx context.Context, projectID uu
 	}
 	return items, nil
 }
+
+const renameProjectBranch = `-- name: RenameProjectBranch :one
+UPDATE project_branches
+SET
+    name = $1,
+    updated_at = now()
+WHERE id = $2
+  AND project_id = $3
+RETURNING
+    id,
+    project_id,
+    name,
+    head_revision_id,
+    created_at,
+    updated_at
+`
+
+type RenameProjectBranchParams struct {
+	Name      string
+	BranchID  uuid.UUID
+	ProjectID uuid.UUID
+}
+
+func (q *Queries) RenameProjectBranch(ctx context.Context, arg RenameProjectBranchParams) (ProjectBranch, error) {
+	row := q.db.QueryRow(ctx, renameProjectBranch, arg.Name, arg.BranchID, arg.ProjectID)
+	var i ProjectBranch
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.HeadRevisionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
