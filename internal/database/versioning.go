@@ -79,6 +79,31 @@ func (s *ProjectStore) RenameBranch(
 	return branch, nil
 }
 
+func (s *ProjectStore) DeleteBranch(
+	ctx context.Context,
+	arg versioning.DeleteBranchParams,
+) error {
+	deleted, err := s.Queries.DeleteProjectBranch(
+		ctx,
+		dbgen.DeleteProjectBranchParams{
+			BranchID:  arg.BranchID,
+			ProjectID: arg.ProjectID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"delete project branch: %w",
+			err,
+		)
+	}
+
+	if deleted == 0 {
+		return versioning.ErrBranchNotFound
+	}
+
+	return nil
+}
+
 func (s *ProjectStore) CreateRevisionOnBranch(
 	ctx context.Context,
 	arg versioning.CreateRevisionOnBranchParams,

@@ -32,6 +32,11 @@ type RenameBranchParams struct {
 	Name      string
 }
 
+type DeleteBranchParams struct {
+	ProjectID uuid.UUID
+	BranchID  uuid.UUID
+}
+
 type CreateRevisionOnBranchParams struct {
 	ProjectID    uuid.UUID
 	BranchID     uuid.UUID
@@ -51,6 +56,10 @@ type RevisionStore interface {
 		ctx context.Context,
 		arg RenameBranchParams,
 	) (dbgen.ProjectBranch, error)
+	DeleteBranch(
+		ctx context.Context,
+		arg DeleteBranchParams,
+	) error
 	CreateRevisionOnBranch(
 		ctx context.Context,
 		arg CreateRevisionOnBranchParams,
