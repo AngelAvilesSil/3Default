@@ -1683,6 +1683,398 @@ func TestFileStorageSchemaConstraints(t *testing.T) {
 	})
 }
 
+func TestFileStorageQueries(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for database integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create database pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	queries := dbgen.New(tx)
+
+	firstUser, err := queries.CreateUser(
+		ctx,
+		dbgen.CreateUserParams{
+			Email:       "storage-queries-one@example.com",
+			DisplayName: "Storage Queries User One",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create first storage query user: %v", err)
+	}
+
+	secondUser, err := queries.CreateUser(
+		ctx,
+		dbgen.CreateUserParams{
+			Email:       "storage-queries-two@example.com",
+			DisplayName: "Storage Queries User Two",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create second storage query user: %v", err)
+	}
+
+	firstProject, err := queries.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: firstUser.ID,
+			Name:        "Storage Queries Project One",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create first storage query project: %v", err)
+	}
+
+	secondProject, err := queries.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: secondUser.ID,
+			Name:        "Storage Queries Project Two",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create second storage query project: %v", err)
+	}
+
+	firstHash := strings.Repeat("1", 64)
+	secondHash := strings.Repeat("2", 64)
+	thirdHash := strings.Repeat("3", 64)
+
+	firstObject, err := queries.EnsureContentObject(
+		ctx,
+		dbgen.EnsureContentObjectParams{
+			Sha256:    firstHash,
+			SizeBytes: 512,
+		},
+	)
+	if err != nil {
+		t.Fatalf("ensure first content object: %v", err)
+	}
+
+	if firstObject.Sha256 != firstHash {
+		t.Fatalf(
+			"expected content hash %q, got %q",
+			firstHash,
+			firstObject.Sha256,
+		)
+	}
+
+	if firstObject.SizeBytes != 512 {
+		t.Fatalf(
+			"expected content size %d, got %d",
+			512,
+			firstObject.SizeBytes,
+		)
+	}
+
+	sameObject, err := queries.EnsureContentObject(
+		ctx,
+		dbgen.EnsureContentObjectParams{
+			Sha256:    firstHash,
+			SizeBytes: 512,
+		},
+	)
+	if err != nil {
+		t.Fatalf("ensure existing matching content object: %v", err)
+	}
+
+	if sameObject.Sha256 != firstObject.Sha256 ||
+		sameObject.SizeBytes != firstObject.SizeBytes ||
+		!sameObject.CreatedAt.Equal(firstObject.CreatedAt) {
+		t.Fatalf(
+			"expected idempotent ensure to return existing object, got %+v",
+			sameObject,
+		)
+	}
+
+	_, err = queries.EnsureContentObject(
+		ctx,
+		dbgen.EnsureContentObjectParams{
+			Sha256:    firstHash,
+			SizeBytes: 513,
+		},
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected size mismatch to return pgx.ErrNoRows, got %v",
+			err,
+		)
+	}
+
+	foundObject, err := queries.GetContentObjectBySHA256(
+		ctx,
+		firstHash,
+	)
+	if err != nil {
+		t.Fatalf("get content object by hash: %v", err)
+	}
+
+	if foundObject.Sha256 != firstObject.Sha256 ||
+		foundObject.SizeBytes != firstObject.SizeBytes ||
+		!foundObject.CreatedAt.Equal(firstObject.CreatedAt) {
+		t.Fatalf(
+			"expected persisted content object %+v, got %+v",
+			firstObject,
+			foundObject,
+		)
+	}
+
+	for _, object := range []dbgen.EnsureContentObjectParams{
+		{
+			Sha256:    secondHash,
+			SizeBytes: 1024,
+		},
+		{
+			Sha256:    thirdHash,
+			SizeBytes: 2048,
+		},
+	} {
+		if _, err := queries.EnsureContentObject(ctx, object); err != nil {
+			t.Fatalf(
+				"ensure additional content object %q: %v",
+				object.Sha256,
+				err,
+			)
+		}
+	}
+
+	firstFile, err := queries.CreateProjectFile(
+		ctx,
+		dbgen.CreateProjectFileParams{
+			ProjectID:        firstProject.ID,
+			UploadedByUserID: firstUser.ID,
+			ContentSha256:    firstHash,
+			OriginalFilename: "gripper.step",
+			MediaType:        nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create first project file: %v", err)
+	}
+
+	if firstFile.MediaType != nil {
+		t.Fatalf(
+			"expected nil media type, got %q",
+			*firstFile.MediaType,
+		)
+	}
+
+	stepMediaType := "model/step"
+
+	secondFile, err := queries.CreateProjectFile(
+		ctx,
+		dbgen.CreateProjectFileParams{
+			ProjectID:        firstProject.ID,
+			UploadedByUserID: firstUser.ID,
+			ContentSha256:    secondHash,
+			OriginalFilename: "jaw.step",
+			MediaType:        &stepMediaType,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create second project file: %v", err)
+	}
+
+	if secondFile.MediaType == nil ||
+		*secondFile.MediaType != stepMediaType {
+		t.Fatalf(
+			"expected media type %q, got %v",
+			stepMediaType,
+			secondFile.MediaType,
+		)
+	}
+
+	thirdFile, err := queries.CreateProjectFile(
+		ctx,
+		dbgen.CreateProjectFileParams{
+			ProjectID:        firstProject.ID,
+			UploadedByUserID: firstUser.ID,
+			ContentSha256:    thirdHash,
+			OriginalFilename: "mount.step",
+			MediaType:        &stepMediaType,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create third project file: %v", err)
+	}
+
+	secondProjectFile, err := queries.CreateProjectFile(
+		ctx,
+		dbgen.CreateProjectFileParams{
+			ProjectID:        secondProject.ID,
+			UploadedByUserID: secondUser.ID,
+			ContentSha256:    firstHash,
+			OriginalFilename: "same-content.step",
+			MediaType:        nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create second-project file: %v", err)
+	}
+
+	if secondProjectFile.ContentSha256 != firstHash {
+		t.Fatalf(
+			"expected shared content hash %q, got %q",
+			firstHash,
+			secondProjectFile.ContentSha256,
+		)
+	}
+
+	foundFile, err := queries.GetProjectFileByIDAndProject(
+		ctx,
+		dbgen.GetProjectFileByIDAndProjectParams{
+			ProjectFileID: firstFile.ID,
+			ProjectID:     firstProject.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("get project file by ID and project: %v", err)
+	}
+
+	if foundFile.ID != firstFile.ID ||
+		foundFile.ProjectID != firstProject.ID ||
+		foundFile.UploadedByUserID != firstUser.ID ||
+		foundFile.ContentSha256 != firstHash ||
+		foundFile.OriginalFilename != "gripper.step" ||
+		foundFile.MediaType != nil {
+		t.Fatalf(
+			"unexpected project file returned: %+v",
+			foundFile,
+		)
+	}
+
+	_, err = queries.GetProjectFileByIDAndProject(
+		ctx,
+		dbgen.GetProjectFileByIDAndProjectParams{
+			ProjectFileID: firstFile.ID,
+			ProjectID:     secondProject.ID,
+		},
+	)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"expected cross-project file lookup to return pgx.ErrNoRows, got %v",
+			err,
+		)
+	}
+
+	olderTime := time.Date(
+		2026,
+		time.January,
+		1,
+		12,
+		0,
+		0,
+		0,
+		time.UTC,
+	)
+	newerTime := olderTime.Add(time.Hour)
+
+	if _, err := tx.Exec(
+		ctx,
+		`UPDATE project_files
+		SET created_at = $1
+		WHERE id = $2`,
+		olderTime,
+		firstFile.ID,
+	); err != nil {
+		t.Fatalf("set first project file timestamp: %v", err)
+	}
+
+	for _, fileID := range []uuid.UUID{
+		secondFile.ID,
+		thirdFile.ID,
+	} {
+		if _, err := tx.Exec(
+			ctx,
+			`UPDATE project_files
+			SET created_at = $1
+			WHERE id = $2`,
+			newerTime,
+			fileID,
+		); err != nil {
+			t.Fatalf(
+				"set project file %s timestamp: %v",
+				fileID,
+				err,
+			)
+		}
+	}
+
+	files, err := queries.ListProjectFilesByProject(
+		ctx,
+		firstProject.ID,
+	)
+	if err != nil {
+		t.Fatalf("list project files: %v", err)
+	}
+
+	if len(files) != 3 {
+		t.Fatalf(
+			"expected 3 first-project files, got %d",
+			len(files),
+		)
+	}
+
+	expectedNewestFirst := secondFile.ID
+	expectedNewestSecond := thirdFile.ID
+
+	if secondFile.ID.String() < thirdFile.ID.String() {
+		expectedNewestFirst = thirdFile.ID
+		expectedNewestSecond = secondFile.ID
+	}
+
+	expectedOrder := []uuid.UUID{
+		expectedNewestFirst,
+		expectedNewestSecond,
+		firstFile.ID,
+	}
+
+	for i, expectedID := range expectedOrder {
+		if files[i].ID != expectedID {
+			t.Fatalf(
+				"expected project file %d to be %s, got %s",
+				i,
+				expectedID,
+				files[i].ID,
+			)
+		}
+
+		if files[i].ProjectID != firstProject.ID {
+			t.Fatalf(
+				"expected listed file project %s, got %s",
+				firstProject.ID,
+				files[i].ProjectID,
+			)
+		}
+	}
+}
+
 func TestSessionQueries(t *testing.T) {
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {

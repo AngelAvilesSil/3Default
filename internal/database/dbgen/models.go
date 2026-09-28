@@ -11,6 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ContentObject struct {
+	Sha256    string
+	SizeBytes int64
+	CreatedAt time.Time
+}
+
 type PasswordCredential struct {
 	UserID       uuid.UUID
 	PasswordHash string
@@ -37,6 +43,16 @@ type ProjectBranch struct {
 	UpdatedAt      time.Time
 }
 
+type ProjectFile struct {
+	ID               uuid.UUID
+	ProjectID        uuid.UUID
+	UploadedByUserID uuid.UUID
+	ContentSha256    string
+	OriginalFilename string
+	MediaType        *string
+	CreatedAt        time.Time
+}
+
 type ProjectRevision struct {
 	ID                    uuid.UUID
 	ProjectID             uuid.UUID
@@ -45,6 +61,12 @@ type ProjectRevision struct {
 	ParentRevisionID      pgtype.UUID
 	MergeParentRevisionID pgtype.UUID
 	CreatedAt             time.Time
+}
+
+type ProjectRevisionFile struct {
+	ProjectID     uuid.UUID
+	RevisionID    uuid.UUID
+	ProjectFileID uuid.UUID
 }
 
 type Session struct {
