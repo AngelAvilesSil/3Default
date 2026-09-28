@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -937,6 +938,748 @@ func TestProjectVersioningSchemaConstraints(t *testing.T) {
 				return err
 			},
 		)
+	})
+}
+
+func TestFileStorageSchemaConstraints(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for database integration tests")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create database pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin transaction: %v", err)
+	}
+
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	queries := dbgen.New(tx)
+
+	firstUser, err := queries.CreateUser(
+		ctx,
+		dbgen.CreateUserParams{
+			Email:       "storage-one@example.com",
+			DisplayName: "Storage User One",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create first storage user: %v", err)
+	}
+
+	secondUser, err := queries.CreateUser(
+		ctx,
+		dbgen.CreateUserParams{
+			Email:       "storage-two@example.com",
+			DisplayName: "Storage User Two",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create second storage user: %v", err)
+	}
+
+	firstProject, err := queries.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: firstUser.ID,
+			Name:        "Storage Project One",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create first storage project: %v", err)
+	}
+
+	secondProject, err := queries.CreateProject(
+		ctx,
+		dbgen.CreateProjectParams{
+			OwnerUserID: secondUser.ID,
+			Name:        "Storage Project Two",
+			Description: nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create second storage project: %v", err)
+	}
+
+	firstRevisionID := uuid.New()
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO project_revisions (
+			id,
+			project_id,
+			author_user_id,
+			message
+		)
+		VALUES ($1, $2, $3, $4)`,
+		firstRevisionID,
+		firstProject.ID,
+		firstUser.ID,
+		"Storage revision one",
+	); err != nil {
+		t.Fatalf("create first storage revision: %v", err)
+	}
+
+	secondRevisionID := uuid.New()
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO project_revisions (
+			id,
+			project_id,
+			author_user_id,
+			message
+		)
+		VALUES ($1, $2, $3, $4)`,
+		secondRevisionID,
+		secondProject.ID,
+		secondUser.ID,
+		"Storage revision two",
+	); err != nil {
+		t.Fatalf("create second storage revision: %v", err)
+	}
+
+	firstOnlyHash := strings.Repeat("a", 64)
+	sharedHash := strings.Repeat("b", 64)
+
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO content_objects (
+			sha256,
+			size_bytes
+		)
+		VALUES ($1, $2), ($3, $4)`,
+		firstOnlyHash,
+		int64(0),
+		sharedHash,
+		int64(128),
+	); err != nil {
+		t.Fatalf("create valid content objects: %v", err)
+	}
+
+	firstFileID := uuid.New()
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO project_files (
+			id,
+			project_id,
+			uploaded_by_user_id,
+			content_sha256,
+			original_filename,
+			media_type
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		firstFileID,
+		firstProject.ID,
+		firstUser.ID,
+		firstOnlyHash,
+		"gripper.step",
+		nil,
+	); err != nil {
+		t.Fatalf("create valid project file: %v", err)
+	}
+
+	firstSharedFileID := uuid.New()
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO project_files (
+			id,
+			project_id,
+			uploaded_by_user_id,
+			content_sha256,
+			original_filename,
+			media_type
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		firstSharedFileID,
+		firstProject.ID,
+		firstUser.ID,
+		sharedHash,
+		"shared.step",
+		"model/step",
+	); err != nil {
+		t.Fatalf("create first shared project file: %v", err)
+	}
+
+	secondFileID := uuid.New()
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO project_files (
+			id,
+			project_id,
+			uploaded_by_user_id,
+			content_sha256,
+			original_filename,
+			media_type
+		)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		secondFileID,
+		secondProject.ID,
+		secondUser.ID,
+		sharedHash,
+		"same-content.step",
+		"application/octet-stream",
+	); err != nil {
+		t.Fatalf("create second shared project file: %v", err)
+	}
+
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO project_revision_files (
+			project_id,
+			revision_id,
+			project_file_id
+		)
+		VALUES ($1, $2, $3)`,
+		firstProject.ID,
+		firstRevisionID,
+		firstFileID,
+	); err != nil {
+		t.Fatalf("create valid revision file reference: %v", err)
+	}
+
+	assertConstraintViolation := func(
+		t *testing.T,
+		expectedCode string,
+		expectedConstraint string,
+		run func(pgx.Tx) error,
+	) {
+		t.Helper()
+
+		savepoint, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin constraint-test savepoint: %v", err)
+		}
+
+		err = run(savepoint)
+
+		if rollbackErr := savepoint.Rollback(ctx); rollbackErr != nil {
+			t.Fatalf(
+				"rollback constraint-test savepoint: %v",
+				rollbackErr,
+			)
+		}
+
+		if err == nil {
+			t.Fatalf(
+				"expected PostgreSQL constraint %q to fail",
+				expectedConstraint,
+			)
+		}
+
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) {
+			t.Fatalf(
+				"expected PostgreSQL error for constraint %q, got %v",
+				expectedConstraint,
+				err,
+			)
+		}
+
+		if pgErr.Code != expectedCode {
+			t.Fatalf(
+				"expected PostgreSQL code %q, got %q",
+				expectedCode,
+				pgErr.Code,
+			)
+		}
+
+		if pgErr.ConstraintName != expectedConstraint {
+			t.Fatalf(
+				"expected constraint %q, got %q",
+				expectedConstraint,
+				pgErr.ConstraintName,
+			)
+		}
+	}
+
+	t.Run("rejects short content hash", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"content_objects_sha256_valid",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO content_objects (
+						sha256,
+						size_bytes
+					)
+					VALUES ($1, $2)`,
+					strings.Repeat("c", 63),
+					int64(1),
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects uppercase content hash", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"content_objects_sha256_valid",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO content_objects (
+						sha256,
+						size_bytes
+					)
+					VALUES ($1, $2)`,
+					strings.Repeat("A", 64),
+					int64(1),
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects nonhex content hash", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"content_objects_sha256_valid",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO content_objects (
+						sha256,
+						size_bytes
+					)
+					VALUES ($1, $2)`,
+					strings.Repeat("g", 64),
+					int64(1),
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects negative content size", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"content_objects_size_nonnegative",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO content_objects (
+						sha256,
+						size_bytes
+					)
+					VALUES ($1, $2)`,
+					strings.Repeat("c", 64),
+					int64(-1),
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects duplicate content hash", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23505",
+			"content_objects_pkey",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO content_objects (
+						sha256,
+						size_bytes
+					)
+					VALUES ($1, $2)`,
+					firstOnlyHash,
+					int64(0),
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("requires existing project", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23503",
+			"project_files_project_exists",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_files (
+						project_id,
+						uploaded_by_user_id,
+						content_sha256,
+						original_filename
+					)
+					VALUES ($1, $2, $3, $4)`,
+					uuid.New(),
+					firstUser.ID,
+					firstOnlyHash,
+					"missing-project.step",
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("requires existing uploader", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23503",
+			"project_files_uploader_exists",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_files (
+						project_id,
+						uploaded_by_user_id,
+						content_sha256,
+						original_filename
+					)
+					VALUES ($1, $2, $3, $4)`,
+					firstProject.ID,
+					uuid.New(),
+					firstOnlyHash,
+					"missing-uploader.step",
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("requires existing content object", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23503",
+			"project_files_content_exists",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_files (
+						project_id,
+						uploaded_by_user_id,
+						content_sha256,
+						original_filename
+					)
+					VALUES ($1, $2, $3, $4)`,
+					firstProject.ID,
+					firstUser.ID,
+					strings.Repeat("c", 64),
+					"missing-content.step",
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects blank original filename", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"project_files_original_filename_not_blank",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_files (
+						project_id,
+						uploaded_by_user_id,
+						content_sha256,
+						original_filename
+					)
+					VALUES ($1, $2, $3, '')`,
+					firstProject.ID,
+					firstUser.ID,
+					firstOnlyHash,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects untrimmed original filename", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"project_files_original_filename_trimmed",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_files (
+						project_id,
+						uploaded_by_user_id,
+						content_sha256,
+						original_filename
+					)
+					VALUES ($1, $2, $3, $4)`,
+					firstProject.ID,
+					firstUser.ID,
+					firstOnlyHash,
+					" gripper.step ",
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects blank media type", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"project_files_media_type_not_blank",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_files (
+						project_id,
+						uploaded_by_user_id,
+						content_sha256,
+						original_filename,
+						media_type
+					)
+					VALUES ($1, $2, $3, $4, '')`,
+					firstProject.ID,
+					firstUser.ID,
+					firstOnlyHash,
+					"blank-media.step",
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects untrimmed media type", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23514",
+			"project_files_media_type_trimmed",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_files (
+						project_id,
+						uploaded_by_user_id,
+						content_sha256,
+						original_filename,
+						media_type
+					)
+					VALUES ($1, $2, $3, $4, $5)`,
+					firstProject.ID,
+					firstUser.ID,
+					firstOnlyHash,
+					"untrimmed-media.step",
+					" model/step ",
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects revision from another project", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23503",
+			"project_revision_files_revision_same_project",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_revision_files (
+						project_id,
+						revision_id,
+						project_file_id
+					)
+					VALUES ($1, $2, $3)`,
+					firstProject.ID,
+					secondRevisionID,
+					firstSharedFileID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects file from another project", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23503",
+			"project_revision_files_file_same_project",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_revision_files (
+						project_id,
+						revision_id,
+						project_file_id
+					)
+					VALUES ($1, $2, $3)`,
+					firstProject.ID,
+					firstRevisionID,
+					secondFileID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("rejects duplicate revision file reference", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23505",
+			"project_revision_files_primary_key",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`INSERT INTO project_revision_files (
+						project_id,
+						revision_id,
+						project_file_id
+					)
+					VALUES ($1, $2, $3)`,
+					firstProject.ID,
+					firstRevisionID,
+					firstFileID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("protects project file referenced by revision", func(t *testing.T) {
+		assertConstraintViolation(
+			t,
+			"23503",
+			"project_revision_files_file_same_project",
+			func(savepoint pgx.Tx) error {
+				_, err := savepoint.Exec(
+					ctx,
+					`DELETE FROM project_files
+					WHERE id = $1`,
+					firstFileID,
+				)
+				return err
+			},
+		)
+	})
+
+	t.Run("project deletion preserves global content objects", func(t *testing.T) {
+		savepoint, err := tx.Begin(ctx)
+		if err != nil {
+			t.Fatalf("begin project deletion savepoint: %v", err)
+		}
+
+		if _, err := savepoint.Exec(
+			ctx,
+			`DELETE FROM projects
+			WHERE id = $1`,
+			firstProject.ID,
+		); err != nil {
+			_ = savepoint.Rollback(ctx)
+			t.Fatalf("delete project with file references: %v", err)
+		}
+
+		var revisionCount int
+		if err := savepoint.QueryRow(
+			ctx,
+			`SELECT count(*)
+			FROM project_revisions
+			WHERE project_id = $1`,
+			firstProject.ID,
+		).Scan(&revisionCount); err != nil {
+			_ = savepoint.Rollback(ctx)
+			t.Fatalf("count revisions after project deletion: %v", err)
+		}
+
+		if revisionCount != 0 {
+			_ = savepoint.Rollback(ctx)
+			t.Fatalf(
+				"expected project revisions to be deleted, got %d",
+				revisionCount,
+			)
+		}
+
+		var projectFileCount int
+		if err := savepoint.QueryRow(
+			ctx,
+			`SELECT count(*)
+			FROM project_files
+			WHERE project_id = $1`,
+			firstProject.ID,
+		).Scan(&projectFileCount); err != nil {
+			_ = savepoint.Rollback(ctx)
+			t.Fatalf("count project files after deletion: %v", err)
+		}
+
+		if projectFileCount != 0 {
+			_ = savepoint.Rollback(ctx)
+			t.Fatalf(
+				"expected project files to be deleted, got %d",
+				projectFileCount,
+			)
+		}
+
+		var revisionFileCount int
+		if err := savepoint.QueryRow(
+			ctx,
+			`SELECT count(*)
+			FROM project_revision_files
+			WHERE project_id = $1`,
+			firstProject.ID,
+		).Scan(&revisionFileCount); err != nil {
+			_ = savepoint.Rollback(ctx)
+			t.Fatalf(
+				"count revision files after project deletion: %v",
+				err,
+			)
+		}
+
+		if revisionFileCount != 0 {
+			_ = savepoint.Rollback(ctx)
+			t.Fatalf(
+				"expected revision file references to be deleted, got %d",
+				revisionFileCount,
+			)
+		}
+
+		var orphanObjectCount int
+		if err := savepoint.QueryRow(
+			ctx,
+			`SELECT count(*)
+			FROM content_objects
+			WHERE sha256 = $1`,
+			firstOnlyHash,
+		).Scan(&orphanObjectCount); err != nil {
+			_ = savepoint.Rollback(ctx)
+			t.Fatalf("count orphan content object: %v", err)
+		}
+
+		if orphanObjectCount != 1 {
+			_ = savepoint.Rollback(ctx)
+			t.Fatalf(
+				"expected orphan content object to remain, got %d",
+				orphanObjectCount,
+			)
+		}
+
+		if err := savepoint.Rollback(ctx); err != nil {
+			t.Fatalf("rollback project deletion savepoint: %v", err)
+		}
 	})
 }
 
