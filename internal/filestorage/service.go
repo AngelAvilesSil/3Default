@@ -104,29 +104,10 @@ func (s *Service) Create(
 	ctx context.Context,
 	input CreateInput,
 ) (dbgen.ProjectFile, error) {
-	if input.OwnerUserID == uuid.Nil {
-		return dbgen.ProjectFile{}, ErrOwnerRequired
-	}
-
-	if input.ProjectID == uuid.Nil {
-		return dbgen.ProjectFile{}, ErrProjectIDRequired
-	}
-
-	contentSHA256, err := normalizeSHA256(input.ContentSHA256)
+	params, err := normalizeCreateInput(input)
 	if err != nil {
 		return dbgen.ProjectFile{}, err
 	}
-
-	if input.SizeBytes < 0 {
-		return dbgen.ProjectFile{}, ErrSizeBytesInvalid
-	}
-
-	originalFilename := strings.TrimSpace(input.OriginalFilename)
-	if originalFilename == "" {
-		return dbgen.ProjectFile{}, ErrOriginalFilenameRequired
-	}
-
-	mediaType := normalizeOptionalText(input.MediaType)
 
 	if err := s.requireProjectOwner(
 		ctx,
@@ -136,16 +117,51 @@ func (s *Service) Create(
 		return dbgen.ProjectFile{}, err
 	}
 
+	return s.createAuthorized(ctx, params)
+}
+
+func normalizeCreateInput(
+	input CreateInput,
+) (CreateProjectFileParams, error) {
+	if input.OwnerUserID == uuid.Nil {
+		return CreateProjectFileParams{}, ErrOwnerRequired
+	}
+
+	if input.ProjectID == uuid.Nil {
+		return CreateProjectFileParams{}, ErrProjectIDRequired
+	}
+
+	contentSHA256, err := normalizeSHA256(input.ContentSHA256)
+	if err != nil {
+		return CreateProjectFileParams{}, err
+	}
+
+	if input.SizeBytes < 0 {
+		return CreateProjectFileParams{}, ErrSizeBytesInvalid
+	}
+
+	originalFilename := strings.TrimSpace(input.OriginalFilename)
+	if originalFilename == "" {
+		return CreateProjectFileParams{}, ErrOriginalFilenameRequired
+	}
+
+	return CreateProjectFileParams{
+		ProjectID:        input.ProjectID,
+		UploadedByUserID: input.OwnerUserID,
+		ContentSHA256:    contentSHA256,
+		SizeBytes:        input.SizeBytes,
+		OriginalFilename: originalFilename,
+		MediaType:        normalizeOptionalText(input.MediaType),
+	}, nil
+}
+
+func (s *Service) createAuthorized(
+	ctx context.Context,
+	params CreateProjectFileParams,
+) (dbgen.ProjectFile, error) {
 	projectFile, err := s.files.CreateProjectFileWithContentObject(
 		ctx,
-		CreateProjectFileParams{
-			ProjectID:        input.ProjectID,
-			UploadedByUserID: input.OwnerUserID,
-			ContentSHA256:    contentSHA256,
-			SizeBytes:        input.SizeBytes,
-			OriginalFilename: originalFilename,
-			MediaType:        mediaType,
-		},
+		params,
 	)
 	if errors.Is(err, ErrContentObjectSizeConflict) {
 		return dbgen.ProjectFile{}, ErrContentObjectSizeConflict
