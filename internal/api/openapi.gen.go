@@ -10,12 +10,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"time"
 	"uuid"
 
 	"github.com/oapi-codegen/nullable"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // Defines values for HealthResponseStatus.
@@ -117,6 +119,17 @@ type ProjectBranchResponse struct {
 	UpdatedAt      time.Time  `json:"updatedAt"`
 }
 
+// ProjectFileResponse defines model for ProjectFileResponse.
+type ProjectFileResponse struct {
+	ContentSha256    string    `json:"contentSha256"`
+	CreatedAt        time.Time `json:"createdAt"`
+	Id               uuid.UUID `json:"id"`
+	MediaType        *string   `json:"mediaType"`
+	OriginalFilename string    `json:"originalFilename"`
+	ProjectId        uuid.UUID `json:"projectId"`
+	UploadedByUserId uuid.UUID `json:"uploadedByUserId"`
+}
+
 // ProjectResponse defines model for ProjectResponse.
 type ProjectResponse struct {
 	CreatedAt   time.Time                 `json:"createdAt"`
@@ -167,6 +180,11 @@ type UpdateProjectRequest struct {
 	Name        nullable.Nullable[string] `json:"name,omitempty"`
 }
 
+// UploadProjectFileRequest defines model for UploadProjectFileRequest.
+type UploadProjectFileRequest struct {
+	File openapi_types.File `json:"file"`
+}
+
 // UserResponse defines model for UserResponse.
 type UserResponse struct {
 	CreatedAt   time.Time `json:"createdAt"`
@@ -196,6 +214,9 @@ type RenameProjectBranchJSONRequestBody = RenameProjectBranchRequest
 
 // CreateProjectRevisionJSONRequestBody defines body for CreateProjectRevision for application/json ContentType.
 type CreateProjectRevisionJSONRequestBody = CreateProjectRevisionRequest
+
+// UploadProjectFileMultipartRequestBody defines body for UploadProjectFile for multipart/form-data ContentType.
+type UploadProjectFileMultipartRequestBody = UploadProjectFileRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -244,6 +265,15 @@ type ServerInterface interface {
 	// CreateProjectRevision Create a revision on a project branch
 	// (POST /api/projects/{projectId}/branches/{branchId}/revisions)
 	CreateProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, branchId uuid.UUID)
+	// ListProjectFiles List files for a project owned by the current user
+	// (GET /api/projects/{projectId}/files)
+	ListProjectFiles(w http.ResponseWriter, r *http.Request, projectId uuid.UUID)
+	// UploadProjectFile Upload a source file to a project owned by the current user
+	// (POST /api/projects/{projectId}/files)
+	UploadProjectFile(w http.ResponseWriter, r *http.Request, projectId uuid.UUID)
+	// GetProjectFile Get file metadata for a project owned by the current user
+	// (GET /api/projects/{projectId}/files/{projectFileId})
+	GetProjectFile(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID)
@@ -603,6 +633,93 @@ func (siw *ServerInterfaceWrapper) CreateProjectRevision(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// ListProjectFiles operation middleware
+func (siw *ServerInterfaceWrapper) ListProjectFiles(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjectFiles(w, r, projectId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UploadProjectFile operation middleware
+func (siw *ServerInterfaceWrapper) UploadProjectFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UploadProjectFile(w, r, projectId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProjectFile operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "projectFileId" -------------
+	var projectFileId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectFileId", r.PathValue("projectFileId"), &projectFileId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectFileId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectFile(w, r, projectId, projectFileId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetProjectRevision operation middleware
 func (siw *ServerInterfaceWrapper) GetProjectRevision(w http.ResponseWriter, r *http.Request) {
 
@@ -782,6 +899,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects", wrapper.CreateProject)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}", wrapper.GetProject)
 	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/api/projects/{projectId}", wrapper.UpdateProject)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files", wrapper.ListProjectFiles)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/files", wrapper.UploadProjectFile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}", wrapper.GetProjectFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.ListProjectBranches)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.CreateProjectBranch)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}", wrapper.DeleteProjectBranch)
@@ -1959,6 +2079,270 @@ func (response CreateProjectRevision500JSONResponse) VisitCreateProjectRevisionR
 	return err
 }
 
+type ListProjectFilesRequestObject struct {
+	ProjectId uuid.UUID `json:"projectId"`
+}
+
+type ListProjectFilesResponseObject interface {
+	VisitListProjectFilesResponse(w http.ResponseWriter) error
+}
+
+type ListProjectFiles200JSONResponse []ProjectFileResponse
+
+func (response ListProjectFiles200JSONResponse) VisitListProjectFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectFiles400JSONResponse ErrorResponse
+
+func (response ListProjectFiles400JSONResponse) VisitListProjectFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectFiles401JSONResponse ErrorResponse
+
+func (response ListProjectFiles401JSONResponse) VisitListProjectFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectFiles404JSONResponse ErrorResponse
+
+func (response ListProjectFiles404JSONResponse) VisitListProjectFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectFiles500JSONResponse ErrorResponse
+
+func (response ListProjectFiles500JSONResponse) VisitListProjectFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadProjectFileRequestObject struct {
+	ProjectId uuid.UUID `json:"projectId"`
+	Body      *multipart.Reader
+}
+
+type UploadProjectFileResponseObject interface {
+	VisitUploadProjectFileResponse(w http.ResponseWriter) error
+}
+
+type UploadProjectFile201JSONResponse ProjectFileResponse
+
+func (response UploadProjectFile201JSONResponse) VisitUploadProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadProjectFile400JSONResponse ErrorResponse
+
+func (response UploadProjectFile400JSONResponse) VisitUploadProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadProjectFile401JSONResponse ErrorResponse
+
+func (response UploadProjectFile401JSONResponse) VisitUploadProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadProjectFile403JSONResponse ErrorResponse
+
+func (response UploadProjectFile403JSONResponse) VisitUploadProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadProjectFile404JSONResponse ErrorResponse
+
+func (response UploadProjectFile404JSONResponse) VisitUploadProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadProjectFile409JSONResponse ErrorResponse
+
+func (response UploadProjectFile409JSONResponse) VisitUploadProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UploadProjectFile500JSONResponse ErrorResponse
+
+func (response UploadProjectFile500JSONResponse) VisitUploadProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFileRequestObject struct {
+	ProjectId     uuid.UUID `json:"projectId"`
+	ProjectFileId uuid.UUID `json:"projectFileId"`
+}
+
+type GetProjectFileResponseObject interface {
+	VisitGetProjectFileResponse(w http.ResponseWriter) error
+}
+
+type GetProjectFile200JSONResponse ProjectFileResponse
+
+func (response GetProjectFile200JSONResponse) VisitGetProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFile400JSONResponse ErrorResponse
+
+func (response GetProjectFile400JSONResponse) VisitGetProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFile401JSONResponse ErrorResponse
+
+func (response GetProjectFile401JSONResponse) VisitGetProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFile404JSONResponse ErrorResponse
+
+func (response GetProjectFile404JSONResponse) VisitGetProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFile500JSONResponse ErrorResponse
+
+func (response GetProjectFile500JSONResponse) VisitGetProjectFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetProjectRevisionRequestObject struct {
 	ProjectId  uuid.UUID `json:"projectId"`
 	RevisionId uuid.UUID `json:"revisionId"`
@@ -2120,6 +2504,15 @@ type StrictServerInterface interface {
 	// CreateProjectRevision Create a revision on a project branch
 	// (POST /api/projects/{projectId}/branches/{branchId}/revisions)
 	CreateProjectRevision(ctx context.Context, request CreateProjectRevisionRequestObject) (CreateProjectRevisionResponseObject, error)
+	// ListProjectFiles List files for a project owned by the current user
+	// (GET /api/projects/{projectId}/files)
+	ListProjectFiles(ctx context.Context, request ListProjectFilesRequestObject) (ListProjectFilesResponseObject, error)
+	// UploadProjectFile Upload a source file to a project owned by the current user
+	// (POST /api/projects/{projectId}/files)
+	UploadProjectFile(ctx context.Context, request UploadProjectFileRequestObject) (UploadProjectFileResponseObject, error)
+	// GetProjectFile Get file metadata for a project owned by the current user
+	// (GET /api/projects/{projectId}/files/{projectFileId})
+	GetProjectFile(ctx context.Context, request GetProjectFileRequestObject) (GetProjectFileResponseObject, error)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(ctx context.Context, request GetProjectRevisionRequestObject) (GetProjectRevisionResponseObject, error)
@@ -2589,6 +2982,92 @@ func (sh *strictHandler) CreateProjectRevision(w http.ResponseWriter, r *http.Re
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateProjectRevisionResponseObject); ok {
 		if err := validResponse.VisitCreateProjectRevisionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListProjectFiles operation middleware
+func (sh *strictHandler) ListProjectFiles(w http.ResponseWriter, r *http.Request, projectId uuid.UUID) {
+	var request ListProjectFilesRequestObject
+
+	request.ProjectId = projectId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListProjectFiles(ctx, request.(ListProjectFilesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListProjectFiles")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListProjectFilesResponseObject); ok {
+		if err := validResponse.VisitListProjectFilesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UploadProjectFile operation middleware
+func (sh *strictHandler) UploadProjectFile(w http.ResponseWriter, r *http.Request, projectId uuid.UUID) {
+	var request UploadProjectFileRequestObject
+
+	request.ProjectId = projectId
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UploadProjectFile(ctx, request.(UploadProjectFileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UploadProjectFile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UploadProjectFileResponseObject); ok {
+		if err := validResponse.VisitUploadProjectFileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetProjectFile operation middleware
+func (sh *strictHandler) GetProjectFile(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID) {
+	var request GetProjectFileRequestObject
+
+	request.ProjectId = projectId
+	request.ProjectFileId = projectFileId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProjectFile(ctx, request.(GetProjectFileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProjectFile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetProjectFileResponseObject); ok {
+		if err := validResponse.VisitGetProjectFileResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
