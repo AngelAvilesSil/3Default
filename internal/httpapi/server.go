@@ -3,12 +3,16 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"io"
+	"mime/multipart"
+	"strings"
 	"time"
 	"uuid"
 
 	api "github.com/AngelAvilesSil/3Default/internal/api"
 	"github.com/AngelAvilesSil/3Default/internal/auth"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
+	"github.com/AngelAvilesSil/3Default/internal/filestorage"
 	"github.com/AngelAvilesSil/3Default/internal/projects"
 	"github.com/AngelAvilesSil/3Default/internal/versioning"
 	googleuuid "github.com/google/uuid"
@@ -75,6 +79,27 @@ type VersioningService interface {
 	) (dbgen.ProjectRevision, error)
 }
 
+type ProjectFileService interface {
+	List(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+	) ([]dbgen.ProjectFile, error)
+	Get(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+		projectFileID googleuuid.UUID,
+	) (dbgen.ProjectFile, error)
+}
+
+type ProjectFileUploader interface {
+	Upload(
+		ctx context.Context,
+		input filestorage.UploadInput,
+	) (dbgen.ProjectFile, error)
+}
+
 type UserRegistrar interface {
 	Register(
 		ctx context.Context,
@@ -107,6 +132,8 @@ type Server struct {
 	database           DatabasePinger
 	projects           ProjectService
 	versioning         VersioningService
+	projectFiles       ProjectFileService
+	fileUploads        ProjectFileUploader
 	registrations      UserRegistrar
 	authentication     UserAuthenticator
 	sessionRevocations SessionRevoker
@@ -149,6 +176,33 @@ func NewServerWithVersioning(
 		currentUsers,
 	)
 	server.versioning = versioningService
+
+	return server
+}
+
+func NewServerWithVersioningAndFiles(
+	database DatabasePinger,
+	projects ProjectService,
+	versioningService VersioningService,
+	projectFiles ProjectFileService,
+	fileUploads ProjectFileUploader,
+	registrations UserRegistrar,
+	authentication UserAuthenticator,
+	sessionRevocations SessionRevoker,
+	currentUsers CurrentUserReader,
+) *Server {
+	server := NewServerWithVersioning(
+		database,
+		projects,
+		versioningService,
+		registrations,
+		authentication,
+		sessionRevocations,
+		currentUsers,
+	)
+
+	server.projectFiles = projectFiles
+	server.fileUploads = fileUploads
 
 	return server
 }
@@ -1223,6 +1277,312 @@ func (s *Server) GetProjectRevision(
 	}, nil
 }
 
+func (s *Server) ListProjectFiles(
+	ctx context.Context,
+	request api.ListProjectFilesRequestObject,
+) (api.ListProjectFilesResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.ListProjectFiles500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.ListProjectFiles401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.projectFiles == nil {
+		return api.ListProjectFiles500JSONResponse{
+			Error: "unable to list project files",
+		}, nil
+	}
+
+	projectFiles, err := s.projectFiles.List(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, filestorage.ErrProjectIDRequired):
+			return api.ListProjectFiles400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrProjectNotFound):
+			return api.ListProjectFiles404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		default:
+			return api.ListProjectFiles500JSONResponse{
+				Error: "unable to list project files",
+			}, nil
+		}
+	}
+
+	response := make(
+		api.ListProjectFiles200JSONResponse,
+		0,
+		len(projectFiles),
+	)
+
+	for _, projectFile := range projectFiles {
+		response = append(
+			response,
+			projectFileResponse(projectFile),
+		)
+	}
+
+	return response, nil
+}
+
+func (s *Server) GetProjectFile(
+	ctx context.Context,
+	request api.GetProjectFileRequestObject,
+) (api.GetProjectFileResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.GetProjectFile500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.GetProjectFile401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.projectFiles == nil {
+		return api.GetProjectFile500JSONResponse{
+			Error: "unable to get project file",
+		}, nil
+	}
+
+	projectFile, err := s.projectFiles.Get(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+		googleuuid.UUID(request.ProjectFileId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, filestorage.ErrProjectIDRequired):
+			return api.GetProjectFile400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrProjectFileIDRequired):
+			return api.GetProjectFile400JSONResponse{
+				Error: "project file ID is required",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrProjectNotFound):
+			return api.GetProjectFile404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrProjectFileNotFound):
+			return api.GetProjectFile404JSONResponse{
+				Error: "project file not found",
+			}, nil
+
+		default:
+			return api.GetProjectFile500JSONResponse{
+				Error: "unable to get project file",
+			}, nil
+		}
+	}
+
+	return api.GetProjectFile200JSONResponse(
+		projectFileResponse(projectFile),
+	), nil
+}
+
+var errInvalidMultipartUpload = errors.New(
+	"invalid multipart upload",
+)
+
+type singleMultipartFileReader struct {
+	part      *multipart.Part
+	body      *multipart.Reader
+	exhausted bool
+}
+
+func (r *singleMultipartFileReader) Read(
+	buffer []byte,
+) (int, error) {
+	if r.exhausted {
+		return 0, io.EOF
+	}
+
+	n, err := r.part.Read(buffer)
+	if err == nil {
+		return n, nil
+	}
+
+	if !errors.Is(err, io.EOF) {
+		return n, errInvalidMultipartUpload
+	}
+
+	nextPart, nextErr := r.body.NextPart()
+	switch {
+	case errors.Is(nextErr, io.EOF):
+		r.exhausted = true
+
+		return n, io.EOF
+
+	case nextErr != nil:
+		return n, errInvalidMultipartUpload
+
+	default:
+		_ = nextPart.Close()
+
+		return n, errInvalidMultipartUpload
+	}
+}
+
+func (s *Server) UploadProjectFile(
+	ctx context.Context,
+	request api.UploadProjectFileRequestObject,
+) (api.UploadProjectFileResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.UploadProjectFile500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.UploadProjectFile401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.fileUploads == nil {
+		return api.UploadProjectFile500JSONResponse{
+			Error: "unable to upload project file",
+		}, nil
+	}
+
+	if request.Body == nil {
+		return api.UploadProjectFile400JSONResponse{
+			Error: "request body is required",
+		}, nil
+	}
+
+	part, err := request.Body.NextPart()
+	if errors.Is(err, io.EOF) {
+		return api.UploadProjectFile400JSONResponse{
+			Error: "file is required",
+		}, nil
+	}
+	if err != nil {
+		return api.UploadProjectFile400JSONResponse{
+			Error: "invalid multipart upload",
+		}, nil
+	}
+	defer part.Close()
+
+	if part.FormName() != "file" {
+		return api.UploadProjectFile400JSONResponse{
+			Error: "file part is required",
+		}, nil
+	}
+
+	originalFilename := strings.TrimSpace(part.FileName())
+	if originalFilename == "" {
+		return api.UploadProjectFile400JSONResponse{
+			Error: "file name is required",
+		}, nil
+	}
+
+	var mediaType *string
+
+	if value := strings.TrimSpace(
+		part.Header.Get("Content-Type"),
+	); value != "" {
+		mediaType = &value
+	}
+
+	projectFile, err := s.fileUploads.Upload(
+		ctx,
+		filestorage.UploadInput{
+			OwnerUserID:      session.UserID,
+			ProjectID:        googleuuid.UUID(request.ProjectId),
+			OriginalFilename: originalFilename,
+			MediaType:        mediaType,
+			Source: &singleMultipartFileReader{
+				part: part,
+				body: request.Body,
+			},
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, filestorage.ErrProjectIDRequired):
+			return api.UploadProjectFile400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrOriginalFilenameRequired):
+			return api.UploadProjectFile400JSONResponse{
+				Error: "file name is required",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrUploadSourceRequired):
+			return api.UploadProjectFile400JSONResponse{
+				Error: "file is required",
+			}, nil
+
+		case errors.Is(err, errInvalidMultipartUpload):
+			return api.UploadProjectFile400JSONResponse{
+				Error: "invalid multipart upload",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrProjectNotFound):
+			return api.UploadProjectFile404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(
+			err,
+			filestorage.ErrContentObjectSizeConflict,
+		):
+			return api.UploadProjectFile409JSONResponse{
+				Error: "stored content metadata conflict",
+			}, nil
+
+		default:
+			return api.UploadProjectFile500JSONResponse{
+				Error: "unable to upload project file",
+			}, nil
+		}
+	}
+
+	return api.UploadProjectFile201JSONResponse(
+		projectFileResponse(projectFile),
+	), nil
+}
+
+func projectFileResponse(
+	projectFile dbgen.ProjectFile,
+) api.ProjectFileResponse {
+	return api.ProjectFileResponse{
+		Id:               uuid.UUID(projectFile.ID),
+		ProjectId:        uuid.UUID(projectFile.ProjectID),
+		UploadedByUserId: uuid.UUID(projectFile.UploadedByUserID),
+		ContentSha256:    projectFile.ContentSha256,
+		OriginalFilename: projectFile.OriginalFilename,
+		MediaType:        projectFile.MediaType,
+		CreatedAt:        projectFile.CreatedAt,
+	}
+}
+
 func apiUUIDFromPGUUID(value pgtype.UUID) *uuid.UUID {
 	if !value.Valid {
 		return nil
@@ -1235,6 +1595,8 @@ func apiUUIDFromPGUUID(value pgtype.UUID) *uuid.UUID {
 
 var _ ProjectService = (*projects.Service)(nil)
 var _ VersioningService = (*versioning.Service)(nil)
+var _ ProjectFileService = (*filestorage.Service)(nil)
+var _ ProjectFileUploader = (*filestorage.UploadService)(nil)
 var _ UserRegistrar = (*auth.RegistrationService)(nil)
 var _ UserAuthenticator = (*auth.LoginService)(nil)
 var _ SessionRevoker = (*auth.SessionService)(nil)

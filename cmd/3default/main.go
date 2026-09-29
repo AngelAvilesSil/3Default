@@ -10,8 +10,10 @@ import (
 	"github.com/AngelAvilesSil/3Default/internal/config"
 	"github.com/AngelAvilesSil/3Default/internal/database"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
+	"github.com/AngelAvilesSil/3Default/internal/filestorage"
 	"github.com/AngelAvilesSil/3Default/internal/httpapi"
 	"github.com/AngelAvilesSil/3Default/internal/projects"
+	"github.com/AngelAvilesSil/3Default/internal/storage"
 	"github.com/AngelAvilesSil/3Default/internal/versioning"
 )
 
@@ -38,11 +40,33 @@ func main() {
 	defer db.Close()
 
 	queries := dbgen.New(db)
+
 	projectStore := database.NewProjectStore(db)
 	projectService := projects.NewService(projectStore)
 	versioningService := versioning.NewService(
 		projectStore,
 		projectStore,
+	)
+
+	fileStore := database.NewFileStore(db)
+	fileService := filestorage.NewService(
+		projectStore,
+		fileStore,
+	)
+
+	contentStore, err := storage.NewFilesystemStore(
+		cfg.StorageRoot,
+	)
+	if err != nil {
+		log.Fatalf(
+			"initialize content storage: %v",
+			err,
+		)
+	}
+
+	fileUploadService := filestorage.NewUploadService(
+		fileService,
+		contentStore,
 	)
 
 	registrationStore := database.NewRegistrationStore(db)
@@ -90,10 +114,12 @@ func main() {
 	}
 
 	handler := httpapi.NewHandler(
-		httpapi.NewServerWithVersioning(
+		httpapi.NewServerWithVersioningAndFiles(
 			db,
 			projectService,
 			versioningService,
+			fileService,
+			fileUploadService,
 			registrationService,
 			loginService,
 			sessionService,

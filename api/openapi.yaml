@@ -343,6 +343,160 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/projects/{projectId}/files:
+    get:
+      operationId: listProjectFiles
+      summary: List files for a project owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Project files listed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectFileResponse"
+        "400":
+          description: Invalid project ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      operationId: uploadProjectFile
+      summary: Upload a source file to a project owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/UploadProjectFileRequest"
+      responses:
+        "201":
+          description: Project file uploaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectFileResponse"
+        "400":
+          description: Invalid file upload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Cross-origin request rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Stored content metadata conflict
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/projects/{projectId}/files/{projectFileId}:
+    get:
+      operationId: getProjectFile
+      summary: Get file metadata for a project owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: projectFileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Project file found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectFileResponse"
+        "400":
+          description: Invalid project or project file ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project or project file not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/projects/{projectId}/branches:
     get:
       operationId: listProjectBranches
@@ -856,6 +1010,50 @@ components:
           type: string
           format: date-time
         updatedAt:
+          type: string
+          format: date-time
+
+    UploadProjectFileRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - file
+      properties:
+        file:
+          type: string
+          format: binary
+
+    ProjectFileResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - uploadedByUserId
+        - contentSha256
+        - originalFilename
+        - mediaType
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        uploadedByUserId:
+          type: string
+          format: uuid
+        contentSha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        originalFilename:
+          type: string
+        mediaType:
+          type:
+            - string
+            - "null"
+        createdAt:
           type: string
           format: date-time
 
