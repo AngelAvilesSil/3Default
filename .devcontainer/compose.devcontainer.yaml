@@ -7,10 +7,12 @@ services:
       - .:/workspace
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/root/.cache/go-build
+      - storage-data:/var/lib/3default/storage
     environment:
       GOMODCACHE: /go/pkg/mod
       GOCACHE: /root/.cache/go-build
       DATABASE_URL: postgres://three_default:three_default_dev@db:5432/three_default?sslmode=disable
+      STORAGE_ROOT: /var/lib/3default/storage
     depends_on:
       db:
         condition: service_healthy
