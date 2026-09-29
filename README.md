@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: project versioning and authenticated project APIs**
+**Current phase: project versioning and authenticated file-storage APIs**
 
 Implemented foundations include:
 
@@ -25,6 +25,11 @@ Implemented foundations include:
 * project revision and branch persistence with automatic `main` branch creation
 * atomic revision creation with optimistic branch-head updates
 * authenticated branch creation, rename, and deletion, branch listing and history traversal, revision reads, and revision creation
+* immutable SHA-256 content-addressed filesystem storage with physical deduplication
+* PostgreSQL project-file metadata and revision-file reference persistence foundations
+* authenticated multipart source-file upload with project ownership checked before physical storage
+* authenticated project-file metadata listing and detail reads
+* persistent Docker storage configured through `STORAGE_ROOT`
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
 * Argon2id password hashing
@@ -35,7 +40,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication milestone and basic authenticated project operations are complete. The backend now includes the first project-versioning API surface: branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, and branch-head history traversal. Immutable-history hardening and cycle prevention, storage integration, and CAD workflows remain future work.
+The authentication, core project-versioning, and file-storage foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, and owner-scoped project-file upload and metadata reads. Revision-to-file attachment workflows, physical file download/open APIs, immutable-history hardening, CAD conversion, preview generation, visualization, and user-facing merge/conflict-resolution workflows remain future work.
 
 ---
 
@@ -79,10 +84,15 @@ Go HTTP server
    ├── OpenAPI transport
    ├── authentication/session handling
    ├── application services
-   └── sqlc data access
+   ├── sqlc data access
+   │      │
+   │      ▼
+   │  PostgreSQL
+   │
+   └── immutable content storage
           │
           ▼
-      PostgreSQL
+      STORAGE_ROOT filesystem
 ```
 
 During development, Vite proxies `/api/*` requests to the Go service.
@@ -95,10 +105,10 @@ Browser
    ▼
 Go application
    ├── serves built Vue assets
-   └── serves /api/*
-          │
-          ▼
-      PostgreSQL
+   ├── serves /api/*
+   ├── persists application metadata in PostgreSQL
+   └── stores immutable source content through the
+       configured content-storage implementation
 ```
 
 This keeps the frontend and API on the same origin and avoids unnecessary CORS complexity.
@@ -161,8 +171,10 @@ Go is intentionally **not required on the Windows host**. Go tooling, `gopls`, b
 │   ├── auth/
 │   ├── config/
 │   ├── database/
+│   ├── filestorage/
 │   ├── httpapi/
 │   ├── projects/
+│   ├── storage/
 │   └── versioning/
 ├── web/
 ├── compose.yaml
@@ -284,6 +296,10 @@ GET   /api/projects/{projectId}
 POST  /api/projects
 PATCH /api/projects/{projectId}
 
+GET  /api/projects/{projectId}/files
+POST /api/projects/{projectId}/files
+GET  /api/projects/{projectId}/files/{projectFileId}
+
 GET    /api/projects/{projectId}/branches
 POST   /api/projects/{projectId}/branches
 PATCH  /api/projects/{projectId}/branches/{branchId}
@@ -367,7 +383,87 @@ History results use a deterministic presentation order of `createdAt` descending
 
 Historical revisions are treated as append-only by the application: there are no revision update or delete operations in the current service or HTTP API. The database schema enforces same-project parent references and several parent constraints, but it does **not** currently prevent arbitrary direct SQL updates to revision rows or fully enforce cycle prevention. Stronger immutable-history enforcement and graph validation remain future work.
 
-Immutable-history hardening and cycle prevention, broader branch management, CAD/file references, storage, conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
+Immutable-history hardening and cycle prevention, broader branch management, revision-to-file attachment behavior, CAD conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
+
+---
+
+## File Storage Model and API
+
+Uploaded source files are stored as immutable content-addressed objects. The original uploaded source file is authoritative engineering data; converted formats and previews will remain disposable derived artifacts when those later workflows are implemented.
+
+Physical objects are addressed by the SHA-256 hash of their complete contents:
+
+```text
+STORAGE_ROOT/
+└── objects/
+    └── sha256/
+        └── <first 2 hex characters>/
+            └── <next 2 hex characters>/
+                └── <full SHA-256 hash>
+```
+
+The filesystem store streams each upload into a temporary file while calculating its SHA-256 hash and byte size. A successfully read object is published immutably at its content-addressed path. Uploading identical bytes reuses the same physical object rather than creating another copy. Existing objects are checked for expected size and hash integrity before reuse.
+
+PostgreSQL stores the application metadata separately:
+
+* `content_objects` records the global SHA-256 identity and size of stored content.
+* `project_files` records project-scoped metadata including the uploader, content hash, original filename, optional media type, and creation time.
+* `project_revision_files` provides the persistence foundation for connecting exact project-file records to exact revisions.
+
+The revision-file relation currently exists only at the persistence layer. Application-service and HTTP workflows for attaching files to revisions are not implemented yet.
+
+Authenticated upload is exposed through:
+
+```text
+POST /api/projects/{projectId}/files
+```
+
+The endpoint accepts `multipart/form-data` with exactly one `file` part. The authenticated user is derived from the server-side session. Project ownership is verified before physical content is written, so an unauthorized or nonexistent project does not create stored bytes.
+
+The upload path remains streaming rather than buffering the complete CAD/source file in application memory:
+
+```text
+authenticated request
+        │
+        ├── verify project ownership
+        │
+        ▼
+multipart file stream
+        │
+        ▼
+immutable filesystem store
+        │
+        ├── calculate SHA-256
+        ├── calculate byte size
+        └── publish content-addressed object
+                │
+                ▼
+PostgreSQL metadata transaction
+        │
+        ├── ensure matching content_objects row
+        └── create project_files row
+```
+
+Content-object metadata and project-file metadata are persisted atomically in PostgreSQL. If physical storage fails, no metadata is created. If physical storage succeeds but later metadata persistence fails, the immutable physical object may remain unreferenced; no compensating delete is attempted because the same content may already be shared by another project or concurrent upload. Eventual orphan garbage collection can be added later.
+
+Project-file metadata can be read through:
+
+```text
+GET /api/projects/{projectId}/files
+GET /api/projects/{projectId}/files/{projectFileId}
+```
+
+Both operations are owner-scoped. A project owned by another user is treated the same as a nonexistent project.
+
+The current HTTP API exposes file **metadata** but does not yet expose physical file download/open, revision-file attachment, CAD conversion, preview generation, or derived-file retrieval.
+
+The filesystem root is supplied through the required `STORAGE_ROOT` environment variable. The Docker development configuration uses:
+
+```text
+STORAGE_ROOT=/var/lib/3default/storage
+```
+
+and persists that path with the `storage-data` named Docker volume, keeping uploaded engineering data outside the Git working tree.
 
 ---
 
@@ -388,7 +484,9 @@ Open the repository in VS Code and run:
 Dev Containers: Reopen in Container
 ```
 
-The development container provides Go 1.27.1, `gopls`, Linux Go tooling, shared Go caches, PostgreSQL access, and the repository mounted at `/workspace`.
+The development container provides Go 1.27.1, `gopls`, Linux Go tooling, shared Go caches, PostgreSQL access, the repository mounted at `/workspace`, and persistent application storage mounted at `/var/lib/3default/storage`.
+
+The application requires both `DATABASE_URL` and `STORAGE_ROOT`. Docker Compose and the Dev Container configure these automatically for local development.
 
 Verify:
 
@@ -417,10 +515,14 @@ Development services:
 
 * Go API: `http://localhost:8080`
 * Vue/Vite: `http://localhost:5173`
+* PostgreSQL data: persistent `postgres-data` Docker volume
+* uploaded source content: persistent `storage-data` Docker volume mounted at `/var/lib/3default/storage`
 
 For browser development, open [http://localhost:5173](http://localhost:5173).
 
 Vite proxies `/api/*` requests to the Go API service.
+
+Uploaded source content is intentionally stored outside the repository checkout. Removing or recreating the application container does not remove the named storage volume unless the volume itself is explicitly deleted.
 
 ---
 
@@ -490,7 +592,7 @@ Run PostgreSQL integration tests:
 go test -count=1 -tags=integration -v ./internal/database
 ```
 
-Current integration coverage includes user and project persistence, session lifecycle behavior, password credential persistence, database constraints, transaction rollback, and atomic user + credential creation.
+Current integration coverage includes user and project persistence, session lifecycle behavior, password credential persistence, versioning transactions and constraints, content-object and project-file persistence, cross-project content reuse, storage metadata conflicts, transaction rollback, and atomic multi-row persistence paths.
 
 Before committing:
 
@@ -530,7 +632,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 
 * **Original engineering data is authoritative.** Native CAD files are the source of truth; generated previews are derived artifacts.
 * **History should be immutable.** Historical revisions should not be rewritten.
-* **Persistence should be atomic where correctness requires it.** Partial account creation should never remain after registration failure.
+* **Persistence should be atomic where correctness requires it.** Related database state is committed together or rolled back together.
+* **Immutable content should not be destructively compensated.** A failed metadata write must not delete a content-addressed object that may be shared by another reference or concurrent upload.
 * **Identity comes from authentication.** Clients should not declare ownership of authenticated resources.
 * **Infrastructure stays simple until complexity is justified.** PostgreSQL and a modular monolith are preferred over premature distributed services.
 * **Development should resemble production.** The development architecture intentionally follows the expected production shape.
@@ -584,9 +687,13 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] branch-head DAG traversal and history API
 * [ ] immutable-history hardening and cycle prevention
 * [ ] merge and conflict-resolution workflow
-* [ ] content-addressed storage
-* [ ] project and revision file references
-* [ ] source CAD upload
+* [x] content-addressed storage
+* [x] project-file metadata and content references
+* [x] revision-file reference persistence foundation
+* [ ] revision-file attachment application/API workflow
+* [x] authenticated source-file upload
+* [x] authenticated project-file metadata listing and detail API
+* [ ] physical file download/open API
 * [ ] conversion jobs
 * [ ] GLB/glTF preview pipeline
 * [ ] Three.js browser viewer
@@ -614,7 +721,7 @@ The rebuild is intentionally incremental rather than attempting to recreate the 
 
 ## Portfolio and Product Direction
 
-As a portfolio project, 3Default demonstrates practical engineering across Go, PostgreSQL, SQL and schema design, REST APIs, authentication, Docker, generated code workflows, integration testing, Git, and product-oriented architecture.
+As a portfolio project, 3Default demonstrates practical engineering across Go, PostgreSQL, SQL and schema design, REST APIs, authentication, Docker, generated code workflows, integration testing, content-addressed storage, streaming file uploads, Git, and product-oriented architecture.
 
 As a potential product, the goal is to preserve a foundation that can evolve into a usable engineering collaboration platform without discarding the portfolio implementation and starting over.
 
