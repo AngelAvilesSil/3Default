@@ -65,6 +65,38 @@ func (q *Queries) CreateProjectFile(ctx context.Context, arg CreateProjectFilePa
 	return i, err
 }
 
+const createProjectRevisionFile = `-- name: CreateProjectRevisionFile :one
+INSERT INTO project_revision_files (
+    project_id,
+    revision_id,
+    project_file_id
+)
+SELECT
+    $1,
+    $2,
+    project_file.id
+FROM project_files AS project_file
+WHERE project_file.project_id = $1
+  AND project_file.id = $3
+RETURNING
+    project_id,
+    revision_id,
+    project_file_id
+`
+
+type CreateProjectRevisionFileParams struct {
+	ProjectID     uuid.UUID
+	RevisionID    uuid.UUID
+	ProjectFileID uuid.UUID
+}
+
+func (q *Queries) CreateProjectRevisionFile(ctx context.Context, arg CreateProjectRevisionFileParams) (ProjectRevisionFile, error) {
+	row := q.db.QueryRow(ctx, createProjectRevisionFile, arg.ProjectID, arg.RevisionID, arg.ProjectFileID)
+	var i ProjectRevisionFile
+	err := row.Scan(&i.ProjectID, &i.RevisionID, &i.ProjectFileID)
+	return i, err
+}
+
 const ensureContentObject = `-- name: EnsureContentObject :one
 INSERT INTO content_objects (
     sha256,
@@ -162,6 +194,59 @@ ORDER BY created_at DESC, id DESC
 
 func (q *Queries) ListProjectFilesByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectFile, error) {
 	rows, err := q.db.Query(ctx, listProjectFilesByProject, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProjectFile
+	for rows.Next() {
+		var i ProjectFile
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.UploadedByUserID,
+			&i.ContentSha256,
+			&i.OriginalFilename,
+			&i.MediaType,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectFilesByRevision = `-- name: ListProjectFilesByRevision :many
+SELECT
+    project_file.id,
+    project_file.project_id,
+    project_file.uploaded_by_user_id,
+    project_file.content_sha256,
+    project_file.original_filename,
+    project_file.media_type,
+    project_file.created_at
+FROM project_revision_files AS revision_file
+JOIN project_files AS project_file
+  ON project_file.project_id = revision_file.project_id
+ AND project_file.id = revision_file.project_file_id
+WHERE revision_file.project_id = $1
+  AND revision_file.revision_id = $2
+ORDER BY
+    project_file.created_at ASC,
+    project_file.id ASC
+`
+
+type ListProjectFilesByRevisionParams struct {
+	ProjectID  uuid.UUID
+	RevisionID uuid.UUID
+}
+
+func (q *Queries) ListProjectFilesByRevision(ctx context.Context, arg ListProjectFilesByRevisionParams) ([]ProjectFile, error) {
+	rows, err := q.db.Query(ctx, listProjectFilesByRevision, arg.ProjectID, arg.RevisionID)
 	if err != nil {
 		return nil, err
 	}

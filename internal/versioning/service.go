@@ -51,6 +51,12 @@ var (
 	ErrRevisionNotFound = errors.New(
 		"project revision not found",
 	)
+	ErrProjectFileNotFound = errors.New(
+		"project file not found",
+	)
+	ErrDuplicateProjectFileID = errors.New(
+		"duplicate project file ID",
+	)
 )
 
 type ProjectReader interface {
