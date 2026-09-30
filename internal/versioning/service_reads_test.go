@@ -490,6 +490,255 @@ func TestGetRevisionWrapsStoreError(t *testing.T) {
 	}
 }
 
+func TestListRevisionFilesReturnsFilesForOwnedRevision(
+	t *testing.T,
+) {
+	ownerID := uuid.New()
+	projectID := uuid.New()
+	revisionID := uuid.New()
+	firstFileID := uuid.New()
+	secondFileID := uuid.New()
+
+	expected := []dbgen.ProjectFile{
+		{
+			ID:        firstFileID,
+			ProjectID: projectID,
+		},
+		{
+			ID:        secondFileID,
+			ProjectID: projectID,
+		},
+	}
+
+	projects := &fakeProjectReader{}
+	revisions := &fakeRevisionStore{
+		getRevision: dbgen.ProjectRevision{
+			ID:        revisionID,
+			ProjectID: projectID,
+		},
+		revisionFiles: expected,
+	}
+
+	service := NewService(projects, revisions)
+
+	files, err := service.ListRevisionFiles(
+		context.Background(),
+		ownerID,
+		projectID,
+		revisionID,
+	)
+	if err != nil {
+		t.Fatalf("list revision files: %v", err)
+	}
+
+	if !projects.called {
+		t.Fatal("expected project ownership lookup")
+	}
+
+	if !revisions.getCalled {
+		t.Fatal("expected revision existence lookup")
+	}
+
+	if !revisions.revisionFilesCalled {
+		t.Fatal("expected revision-file lookup")
+	}
+
+	if revisions.revisionFilesParams.ProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			revisions.revisionFilesParams.ProjectID,
+		)
+	}
+
+	if revisions.revisionFilesParams.RevisionID != revisionID {
+		t.Fatalf(
+			"expected revision ID %s, got %s",
+			revisionID,
+			revisions.revisionFilesParams.RevisionID,
+		)
+	}
+
+	if len(files) != 2 {
+		t.Fatalf(
+			"expected 2 revision files, got %d",
+			len(files),
+		)
+	}
+
+	if files[0].ID != firstFileID ||
+		files[1].ID != secondFileID {
+		t.Fatalf(
+			"unexpected revision file IDs: %s, %s",
+			files[0].ID,
+			files[1].ID,
+		)
+	}
+}
+
+func TestListRevisionFilesReturnsEmptyArray(
+	t *testing.T,
+) {
+	projectID := uuid.New()
+	revisionID := uuid.New()
+
+	service := NewService(
+		&fakeProjectReader{},
+		&fakeRevisionStore{
+			getRevision: dbgen.ProjectRevision{
+				ID:        revisionID,
+				ProjectID: projectID,
+			},
+			revisionFiles: nil,
+		},
+	)
+
+	files, err := service.ListRevisionFiles(
+		context.Background(),
+		uuid.New(),
+		projectID,
+		revisionID,
+	)
+	if err != nil {
+		t.Fatalf("list revision files: %v", err)
+	}
+
+	if files == nil {
+		t.Fatal("expected non-nil empty revision-file list")
+	}
+
+	if len(files) != 0 {
+		t.Fatalf(
+			"expected 0 revision files, got %d",
+			len(files),
+		)
+	}
+}
+
+func TestListRevisionFilesRejectsInvalidInputBeforeFileLookup(
+	t *testing.T,
+) {
+	tests := []struct {
+		name       string
+		ownerID    uuid.UUID
+		projectID  uuid.UUID
+		revisionID uuid.UUID
+		want       error
+	}{
+		{
+			name:       "missing owner",
+			projectID:  uuid.New(),
+			revisionID: uuid.New(),
+			want:       ErrOwnerRequired,
+		},
+		{
+			name:       "missing project",
+			ownerID:    uuid.New(),
+			revisionID: uuid.New(),
+			want:       ErrProjectIDRequired,
+		},
+		{
+			name:      "missing revision",
+			ownerID:   uuid.New(),
+			projectID: uuid.New(),
+			want:      ErrRevisionIDRequired,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projects := &fakeProjectReader{}
+			revisions := &fakeRevisionStore{}
+
+			service := NewService(projects, revisions)
+
+			_, err := service.ListRevisionFiles(
+				context.Background(),
+				test.ownerID,
+				test.projectID,
+				test.revisionID,
+			)
+			if !errors.Is(err, test.want) {
+				t.Fatalf(
+					"expected %v, got %v",
+					test.want,
+					err,
+				)
+			}
+
+			if revisions.revisionFilesCalled {
+				t.Fatal(
+					"expected revision-file lookup not to run",
+				)
+			}
+		})
+	}
+}
+
+func TestListRevisionFilesDoesNotListMissingRevision(
+	t *testing.T,
+) {
+	revisions := &fakeRevisionStore{
+		getErr: pgx.ErrNoRows,
+	}
+
+	service := NewService(
+		&fakeProjectReader{},
+		revisions,
+	)
+
+	_, err := service.ListRevisionFiles(
+		context.Background(),
+		uuid.New(),
+		uuid.New(),
+		uuid.New(),
+	)
+	if !errors.Is(err, ErrRevisionNotFound) {
+		t.Fatalf(
+			"expected ErrRevisionNotFound, got %v",
+			err,
+		)
+	}
+
+	if revisions.revisionFilesCalled {
+		t.Fatal(
+			"expected revision-file lookup not to run for missing revision",
+		)
+	}
+}
+
+func TestListRevisionFilesWrapsStoreError(
+	t *testing.T,
+) {
+	databaseErr := errors.New("database unavailable")
+	projectID := uuid.New()
+	revisionID := uuid.New()
+
+	service := NewService(
+		&fakeProjectReader{},
+		&fakeRevisionStore{
+			getRevision: dbgen.ProjectRevision{
+				ID:        revisionID,
+				ProjectID: projectID,
+			},
+			revisionFilesErr: databaseErr,
+		},
+	)
+
+	_, err := service.ListRevisionFiles(
+		context.Background(),
+		uuid.New(),
+		projectID,
+		revisionID,
+	)
+	if !errors.Is(err, databaseErr) {
+		t.Fatalf(
+			"expected wrapped database error, got %v",
+			err,
+		)
+	}
+}
+
 func TestListBranchHistoryReturnsReachableRevisionsForOwnedBranch(
 	t *testing.T,
 ) {

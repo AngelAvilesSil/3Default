@@ -51,6 +51,9 @@ var (
 	ErrRevisionNotFound = errors.New(
 		"project revision not found",
 	)
+	ErrProjectFileIDInvalid = errors.New(
+		"project file ID is invalid",
+	)
 	ErrProjectFileNotFound = errors.New(
 		"project file not found",
 	)
@@ -99,6 +102,7 @@ type CreateRevisionInput struct {
 
 	ExpectedHeadRevisionID *uuid.UUID
 	MergeParentRevisionID  *uuid.UUID
+	ProjectFileIDs         []uuid.UUID
 }
 
 func NewService(
@@ -489,6 +493,75 @@ func (s *Service) GetRevision(
 	return revision, nil
 }
 
+func (s *Service) ListRevisionFiles(
+	ctx context.Context,
+	ownerUserID uuid.UUID,
+	projectID uuid.UUID,
+	revisionID uuid.UUID,
+) ([]dbgen.ProjectFile, error) {
+	_, err := s.GetRevision(
+		ctx,
+		ownerUserID,
+		projectID,
+		revisionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	projectFiles, err := s.revisions.ListProjectFilesByRevision(
+		ctx,
+		dbgen.ListProjectFilesByRevisionParams{
+			ProjectID:  projectID,
+			RevisionID: revisionID,
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"list project revision files: %w",
+			err,
+		)
+	}
+
+	if projectFiles == nil {
+		return []dbgen.ProjectFile{}, nil
+	}
+
+	return projectFiles, nil
+}
+
+func normalizeProjectFileIDs(
+	projectFileIDs []uuid.UUID,
+) ([]uuid.UUID, error) {
+	normalized := make(
+		[]uuid.UUID,
+		0,
+		len(projectFileIDs),
+	)
+	seen := make(
+		map[uuid.UUID]struct{},
+		len(projectFileIDs),
+	)
+
+	for _, projectFileID := range projectFileIDs {
+		if projectFileID == uuid.Nil {
+			return nil, ErrProjectFileIDInvalid
+		}
+
+		if _, exists := seen[projectFileID]; exists {
+			return nil, ErrDuplicateProjectFileID
+		}
+
+		seen[projectFileID] = struct{}{}
+		normalized = append(
+			normalized,
+			projectFileID,
+		)
+	}
+
+	return normalized, nil
+}
+
 func (s *Service) CreateRevision(
 	ctx context.Context,
 	input CreateRevisionInput,
@@ -536,7 +609,14 @@ func (s *Service) CreateRevision(
 			ErrRevisionParentsMustDiffer
 	}
 
-	_, err := s.projects.GetProjectByIDAndOwner(
+	projectFileIDs, err := normalizeProjectFileIDs(
+		input.ProjectFileIDs,
+	)
+	if err != nil {
+		return dbgen.ProjectRevision{}, err
+	}
+
+	_, err = s.projects.GetProjectByIDAndOwner(
 		ctx,
 		dbgen.GetProjectByIDAndOwnerParams{
 			ProjectID:   input.ProjectID,
@@ -562,6 +642,7 @@ func (s *Service) CreateRevision(
 			Message:                message,
 			ExpectedHeadRevisionID: input.ExpectedHeadRevisionID,
 			MergeParentRevisionID:  input.MergeParentRevisionID,
+			ProjectFileIDs:         projectFileIDs,
 		},
 	)
 	if errors.Is(err, ErrBranchNotFound) {
@@ -569,6 +650,12 @@ func (s *Service) CreateRevision(
 	}
 	if errors.Is(err, ErrBranchHeadConflict) {
 		return dbgen.ProjectRevision{}, ErrBranchHeadConflict
+	}
+	if errors.Is(err, ErrProjectFileNotFound) {
+		return dbgen.ProjectRevision{}, ErrProjectFileNotFound
+	}
+	if errors.Is(err, ErrDuplicateProjectFileID) {
+		return dbgen.ProjectRevision{}, ErrDuplicateProjectFileID
 	}
 	if err != nil {
 		return dbgen.ProjectRevision{}, fmt.Errorf(
