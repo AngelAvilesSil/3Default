@@ -77,6 +77,12 @@ type VersioningService interface {
 		projectID googleuuid.UUID,
 		revisionID googleuuid.UUID,
 	) (dbgen.ProjectRevision, error)
+	ListRevisionFiles(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+		revisionID googleuuid.UUID,
+	) ([]dbgen.ProjectFile, error)
 }
 
 type ProjectFileService interface {
@@ -1097,10 +1103,24 @@ func (s *Server) CreateProjectRevision(
 		}, nil
 	}
 
+	if request.Body.ProjectFileIds == nil {
+		return api.CreateProjectRevision400JSONResponse{
+			Error: "project file IDs are required",
+		}, nil
+	}
+
 	if !request.Body.ExpectedHeadRevisionId.IsSpecified() {
 		return api.CreateProjectRevision400JSONResponse{
 			Error: "expected head revision ID is required",
 		}, nil
+	}
+
+	projectFileIDs := make(
+		[]googleuuid.UUID,
+		len(request.Body.ProjectFileIds),
+	)
+	for index, projectFileID := range request.Body.ProjectFileIds {
+		projectFileIDs[index] = googleuuid.UUID(projectFileID)
 	}
 
 	var expectedHeadRevisionID *googleuuid.UUID
@@ -1127,6 +1147,7 @@ func (s *Server) CreateProjectRevision(
 			Message:                request.Body.Message,
 			ExpectedHeadRevisionID: expectedHeadRevisionID,
 			MergeParentRevisionID:  mergeParentRevisionID,
+			ProjectFileIDs:         projectFileIDs,
 		},
 	)
 	if err != nil {
@@ -1175,6 +1196,16 @@ func (s *Server) CreateProjectRevision(
 				Error: "revision parents must differ",
 			}, nil
 
+		case errors.Is(err, versioning.ErrProjectFileIDInvalid):
+			return api.CreateProjectRevision400JSONResponse{
+				Error: "project file ID is invalid",
+			}, nil
+
+		case errors.Is(err, versioning.ErrDuplicateProjectFileID):
+			return api.CreateProjectRevision400JSONResponse{
+				Error: "duplicate project file ID",
+			}, nil
+
 		case errors.Is(err, versioning.ErrProjectNotFound):
 			return api.CreateProjectRevision404JSONResponse{
 				Error: "project not found",
@@ -1183,6 +1214,11 @@ func (s *Server) CreateProjectRevision(
 		case errors.Is(err, versioning.ErrBranchNotFound):
 			return api.CreateProjectRevision404JSONResponse{
 				Error: "branch not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrProjectFileNotFound):
+			return api.CreateProjectRevision404JSONResponse{
+				Error: "project file not found",
 			}, nil
 
 		case errors.Is(err, versioning.ErrBranchHeadConflict):
@@ -1275,6 +1311,80 @@ func (s *Server) GetProjectRevision(
 		MergeParentRevisionId: apiUUIDFromPGUUID(revision.MergeParentRevisionID),
 		CreatedAt:             revision.CreatedAt,
 	}, nil
+}
+
+func (s *Server) ListProjectRevisionFiles(
+	ctx context.Context,
+	request api.ListProjectRevisionFilesRequestObject,
+) (api.ListProjectRevisionFilesResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.ListProjectRevisionFiles500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.ListProjectRevisionFiles401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.versioning == nil {
+		return api.ListProjectRevisionFiles500JSONResponse{
+			Error: "unable to list project revision files",
+		}, nil
+	}
+
+	projectFiles, err := s.versioning.ListRevisionFiles(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+		googleuuid.UUID(request.RevisionId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, versioning.ErrProjectIDRequired):
+			return api.ListProjectRevisionFiles400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrRevisionIDRequired):
+			return api.ListProjectRevisionFiles400JSONResponse{
+				Error: "revision ID is required",
+			}, nil
+
+		case errors.Is(err, versioning.ErrProjectNotFound):
+			return api.ListProjectRevisionFiles404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(err, versioning.ErrRevisionNotFound):
+			return api.ListProjectRevisionFiles404JSONResponse{
+				Error: "revision not found",
+			}, nil
+
+		default:
+			return api.ListProjectRevisionFiles500JSONResponse{
+				Error: "unable to list project revision files",
+			}, nil
+		}
+	}
+
+	response := make(
+		api.ListProjectRevisionFiles200JSONResponse,
+		0,
+		len(projectFiles),
+	)
+
+	for _, projectFile := range projectFiles {
+		response = append(
+			response,
+			projectFileResponse(projectFile),
+		)
+	}
+
+	return response, nil
 }
 
 func (s *Server) ListProjectFiles(
