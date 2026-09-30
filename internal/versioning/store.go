@@ -45,6 +45,7 @@ type CreateRevisionOnBranchParams struct {
 
 	ExpectedHeadRevisionID *uuid.UUID
 	MergeParentRevisionID  *uuid.UUID
+	ProjectFileIDs         []uuid.UUID
 }
 
 type RevisionStore interface {

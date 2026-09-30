@@ -141,6 +141,36 @@ func (s *ProjectStore) CreateRevisionOnBranch(
 		)
 	}
 
+	for _, projectFileID := range arg.ProjectFileIDs {
+		_, err := queries.CreateProjectRevisionFile(
+			ctx,
+			dbgen.CreateProjectRevisionFileParams{
+				ProjectID:     arg.ProjectID,
+				RevisionID:    revision.ID,
+				ProjectFileID: projectFileID,
+			},
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return dbgen.ProjectRevision{},
+				versioning.ErrProjectFileNotFound
+		}
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) &&
+				pgErr.Code == "23505" &&
+				pgErr.ConstraintName ==
+					"project_revision_files_primary_key" {
+				return dbgen.ProjectRevision{},
+					versioning.ErrDuplicateProjectFileID
+			}
+
+			return dbgen.ProjectRevision{}, fmt.Errorf(
+				"create project revision file reference: %w",
+				err,
+			)
+		}
+	}
+
 	_, err = queries.AdvanceProjectBranchHead(
 		ctx,
 		dbgen.AdvanceProjectBranchHeadParams{

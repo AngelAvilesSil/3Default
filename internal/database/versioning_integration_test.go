@@ -4,6 +4,8 @@ package database_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"testing"
@@ -1498,6 +1500,652 @@ func TestListReachableProjectRevisionsFromRevisionTraversesMergeDAG(
 		t.Fatalf(
 			"expected cross-project start to return 0 revisions, got %d",
 			len(crossProjectStart),
+		)
+	}
+}
+
+func TestProjectStoreCreatesRevisionWithExactProjectFileSnapshot(
+	t *testing.T,
+) {
+	ctx, pool, store, queries, userID, projectID, branchID :=
+		setupVersioningStoreTest(t)
+
+	firstFile := createVersioningProjectFile(
+		t,
+		ctx,
+		pool,
+		queries,
+		userID,
+		projectID,
+		"first-source",
+	)
+	secondFile := createVersioningProjectFile(
+		t,
+		ctx,
+		pool,
+		queries,
+		userID,
+		projectID,
+		"second-source",
+	)
+
+	revision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     branchID,
+			AuthorUserID: userID,
+			Message:      "Revision with exact file snapshot",
+			ProjectFileIDs: []uuid.UUID{
+				secondFile.ID,
+				firstFile.ID,
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("create revision with project files: %v", err)
+	}
+
+	files, err := queries.ListProjectFilesByRevision(
+		ctx,
+		dbgen.ListProjectFilesByRevisionParams{
+			ProjectID:  projectID,
+			RevisionID: revision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list project files by revision: %v", err)
+	}
+
+	if len(files) != 2 {
+		t.Fatalf(
+			"expected 2 revision files, got %d",
+			len(files),
+		)
+	}
+
+	expectedIDs := map[uuid.UUID]bool{
+		firstFile.ID:  true,
+		secondFile.ID: true,
+	}
+	seenIDs := make(map[uuid.UUID]bool, len(files))
+
+	for index, projectFile := range files {
+		if projectFile.ProjectID != projectID {
+			t.Fatalf(
+				"expected project file %s to belong to project %s, got %s",
+				projectFile.ID,
+				projectID,
+				projectFile.ProjectID,
+			)
+		}
+
+		if !expectedIDs[projectFile.ID] {
+			t.Fatalf(
+				"unexpected project file %s in revision snapshot",
+				projectFile.ID,
+			)
+		}
+
+		if seenIDs[projectFile.ID] {
+			t.Fatalf(
+				"project file %s returned more than once",
+				projectFile.ID,
+			)
+		}
+
+		seenIDs[projectFile.ID] = true
+
+		if index == 0 {
+			continue
+		}
+
+		previous := files[index-1]
+
+		if previous.CreatedAt.After(projectFile.CreatedAt) {
+			t.Fatalf(
+				"revision files are not ordered by created_at ascending: "+
+					"%s precedes %s",
+				previous.ID,
+				projectFile.ID,
+			)
+		}
+
+		if previous.CreatedAt.Equal(projectFile.CreatedAt) &&
+			previous.ID.String() > projectFile.ID.String() {
+			t.Fatalf(
+				"equal-time revision files are not ordered by ID ascending: "+
+					"%s precedes %s",
+				previous.ID,
+				projectFile.ID,
+			)
+		}
+	}
+
+	scopedOut, err := queries.ListProjectFilesByRevision(
+		ctx,
+		dbgen.ListProjectFilesByRevisionParams{
+			ProjectID:  uuid.New(),
+			RevisionID: revision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"list revision files through wrong project scope: %v",
+			err,
+		)
+	}
+
+	if len(scopedOut) != 0 {
+		t.Fatalf(
+			"expected wrong-project revision-file lookup to return 0 files, got %d",
+			len(scopedOut),
+		)
+	}
+
+	assertBranchHead(
+		t,
+		ctx,
+		queries,
+		projectID,
+		branchID,
+		revision.ID,
+	)
+}
+
+func TestProjectStoreCreatesRevisionWithEmptyProjectFileSnapshot(
+	t *testing.T,
+) {
+	ctx, _, store, queries, userID, projectID, branchID :=
+		setupVersioningStoreTest(t)
+
+	revision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:      projectID,
+			BranchID:       branchID,
+			AuthorUserID:   userID,
+			Message:        "Revision with empty file snapshot",
+			ProjectFileIDs: []uuid.UUID{},
+		},
+	)
+	if err != nil {
+		t.Fatalf("create revision with empty file snapshot: %v", err)
+	}
+
+	files, err := queries.ListProjectFilesByRevision(
+		ctx,
+		dbgen.ListProjectFilesByRevisionParams{
+			ProjectID:  projectID,
+			RevisionID: revision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("list empty revision file snapshot: %v", err)
+	}
+
+	if len(files) != 0 {
+		t.Fatalf(
+			"expected empty revision file snapshot, got %d files",
+			len(files),
+		)
+	}
+
+	assertBranchHead(
+		t,
+		ctx,
+		queries,
+		projectID,
+		branchID,
+		revision.ID,
+	)
+}
+
+func TestProjectStoreRollsBackRevisionForMissingOrWrongProjectFile(
+	t *testing.T,
+) {
+	t.Run("missing project file", func(t *testing.T) {
+		ctx, pool, store, queries, userID, projectID, branchID :=
+			setupVersioningStoreTest(t)
+
+		_, err := store.CreateRevisionOnBranch(
+			ctx,
+			versioning.CreateRevisionOnBranchParams{
+				ProjectID:    projectID,
+				BranchID:     branchID,
+				AuthorUserID: userID,
+				Message:      "Revision with missing project file",
+				ProjectFileIDs: []uuid.UUID{
+					uuid.New(),
+				},
+			},
+		)
+		if !errors.Is(err, versioning.ErrProjectFileNotFound) {
+			t.Fatalf(
+				"expected ErrProjectFileNotFound, got %v",
+				err,
+			)
+		}
+
+		assertEmptyRevisionCreationState(
+			t,
+			ctx,
+			pool,
+			queries,
+			projectID,
+			branchID,
+		)
+	})
+
+	t.Run("wrong project file", func(t *testing.T) {
+		ctx, pool, store, queries, userID, projectID, branchID :=
+			setupVersioningStoreTest(t)
+
+		otherProject, err := store.CreateProject(
+			ctx,
+			dbgen.CreateProjectParams{
+				OwnerUserID: userID,
+				Name:        "Other Revision File Project",
+				Description: nil,
+			},
+		)
+		if err != nil {
+			t.Fatalf("create other project: %v", err)
+		}
+
+		t.Cleanup(func() {
+			_, err := pool.Exec(
+				context.Background(),
+				"DELETE FROM projects WHERE id = $1",
+				otherProject.ID,
+			)
+			if err != nil {
+				t.Errorf(
+					"delete other revision-file project: %v",
+					err,
+				)
+			}
+		})
+
+		otherProjectFile := createVersioningProjectFile(
+			t,
+			ctx,
+			pool,
+			queries,
+			userID,
+			otherProject.ID,
+			"wrong-project-source",
+		)
+
+		_, err = store.CreateRevisionOnBranch(
+			ctx,
+			versioning.CreateRevisionOnBranchParams{
+				ProjectID:    projectID,
+				BranchID:     branchID,
+				AuthorUserID: userID,
+				Message:      "Revision with cross-project file",
+				ProjectFileIDs: []uuid.UUID{
+					otherProjectFile.ID,
+				},
+			},
+		)
+		if !errors.Is(err, versioning.ErrProjectFileNotFound) {
+			t.Fatalf(
+				"expected ErrProjectFileNotFound, got %v",
+				err,
+			)
+		}
+
+		assertEmptyRevisionCreationState(
+			t,
+			ctx,
+			pool,
+			queries,
+			projectID,
+			branchID,
+		)
+	})
+}
+
+func TestProjectStoreRollsBackRevisionForDuplicateProjectFileID(
+	t *testing.T,
+) {
+	ctx, pool, store, queries, userID, projectID, branchID :=
+		setupVersioningStoreTest(t)
+
+	projectFile := createVersioningProjectFile(
+		t,
+		ctx,
+		pool,
+		queries,
+		userID,
+		projectID,
+		"duplicate-source",
+	)
+
+	_, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     branchID,
+			AuthorUserID: userID,
+			Message:      "Revision with duplicate project file",
+			ProjectFileIDs: []uuid.UUID{
+				projectFile.ID,
+				projectFile.ID,
+			},
+		},
+	)
+	if !errors.Is(err, versioning.ErrDuplicateProjectFileID) {
+		t.Fatalf(
+			"expected ErrDuplicateProjectFileID, got %v",
+			err,
+		)
+	}
+
+	assertEmptyRevisionCreationState(
+		t,
+		ctx,
+		pool,
+		queries,
+		projectID,
+		branchID,
+	)
+}
+
+func TestProjectStoreRollsBackRevisionFilesOnBranchHeadConflict(
+	t *testing.T,
+) {
+	ctx, pool, store, queries, userID, projectID, branchID :=
+		setupVersioningStoreTest(t)
+
+	rootRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:    projectID,
+			BranchID:     branchID,
+			AuthorUserID: userID,
+			Message:      "Root revision",
+		},
+	)
+	if err != nil {
+		t.Fatalf("create root revision: %v", err)
+	}
+
+	currentRevision, err := store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:              projectID,
+			BranchID:               branchID,
+			AuthorUserID:           userID,
+			Message:                "Current revision",
+			ExpectedHeadRevisionID: &rootRevision.ID,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create current revision: %v", err)
+	}
+
+	projectFile := createVersioningProjectFile(
+		t,
+		ctx,
+		pool,
+		queries,
+		userID,
+		projectID,
+		"stale-candidate-source",
+	)
+
+	_, err = store.CreateRevisionOnBranch(
+		ctx,
+		versioning.CreateRevisionOnBranchParams{
+			ProjectID:              projectID,
+			BranchID:               branchID,
+			AuthorUserID:           userID,
+			Message:                "Stale candidate revision",
+			ExpectedHeadRevisionID: &rootRevision.ID,
+			ProjectFileIDs: []uuid.UUID{
+				projectFile.ID,
+			},
+		},
+	)
+	if !errors.Is(err, versioning.ErrBranchHeadConflict) {
+		t.Fatalf(
+			"expected ErrBranchHeadConflict, got %v",
+			err,
+		)
+	}
+
+	var revisionCount int
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT count(*)
+		 FROM project_revisions
+		 WHERE project_id = $1`,
+		projectID,
+	).Scan(&revisionCount); err != nil {
+		t.Fatalf(
+			"count revisions after branch-head conflict: %v",
+			err,
+		)
+	}
+
+	if revisionCount != 2 {
+		t.Fatalf(
+			"expected 2 committed revisions after conflict, got %d",
+			revisionCount,
+		)
+	}
+
+	var referenceCount int
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT count(*)
+		 FROM project_revision_files
+		 WHERE project_id = $1
+		   AND project_file_id = $2`,
+		projectID,
+		projectFile.ID,
+	).Scan(&referenceCount); err != nil {
+		t.Fatalf(
+			"count revision-file references after branch-head conflict: %v",
+			err,
+		)
+	}
+
+	if referenceCount != 0 {
+		t.Fatalf(
+			"expected branch-head conflict to roll back revision-file references, got %d",
+			referenceCount,
+		)
+	}
+
+	assertBranchHead(
+		t,
+		ctx,
+		queries,
+		projectID,
+		branchID,
+		currentRevision.ID,
+	)
+}
+
+func createVersioningProjectFile(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	queries *dbgen.Queries,
+	userID uuid.UUID,
+	projectID uuid.UUID,
+	label string,
+) dbgen.ProjectFile {
+	t.Helper()
+
+	contentSHA256 := newVersioningProjectFileSHA256(label)
+
+	_, err := queries.EnsureContentObject(
+		ctx,
+		dbgen.EnsureContentObjectParams{
+			Sha256:    contentSHA256,
+			SizeBytes: int64(len(label)),
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"ensure content object for %q: %v",
+			label,
+			err,
+		)
+	}
+
+	projectFile, err := queries.CreateProjectFile(
+		ctx,
+		dbgen.CreateProjectFileParams{
+			ProjectID:        projectID,
+			UploadedByUserID: userID,
+			ContentSha256:    contentSHA256,
+			OriginalFilename: label + ".step",
+			MediaType:        nil,
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"create project file for %q: %v",
+			label,
+			err,
+		)
+	}
+
+	t.Cleanup(func() {
+		_, err := pool.Exec(
+			context.Background(),
+			`DELETE FROM project_revision_files
+			 WHERE project_id = $1
+			   AND project_file_id = $2`,
+			projectID,
+			projectFile.ID,
+		)
+		if err != nil {
+			t.Errorf(
+				"delete revision-file references for %s: %v",
+				projectFile.ID,
+				err,
+			)
+		}
+
+		_, err = pool.Exec(
+			context.Background(),
+			`DELETE FROM project_files
+			 WHERE project_id = $1
+			   AND id = $2`,
+			projectID,
+			projectFile.ID,
+		)
+		if err != nil {
+			t.Errorf(
+				"delete versioning project file %s: %v",
+				projectFile.ID,
+				err,
+			)
+		}
+
+		_, err = pool.Exec(
+			context.Background(),
+			"DELETE FROM content_objects WHERE sha256 = $1",
+			contentSHA256,
+		)
+		if err != nil {
+			t.Errorf(
+				"delete versioning content object %q: %v",
+				contentSHA256,
+				err,
+			)
+		}
+	})
+
+	return projectFile
+}
+
+func newVersioningProjectFileSHA256(
+	label string,
+) string {
+	digest := sha256.Sum256(
+		[]byte(label + ":" + uuid.New().String()),
+	)
+
+	return hex.EncodeToString(digest[:])
+}
+
+func assertEmptyRevisionCreationState(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	queries *dbgen.Queries,
+	projectID uuid.UUID,
+	branchID uuid.UUID,
+) {
+	t.Helper()
+
+	var revisionCount int
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT count(*)
+		 FROM project_revisions
+		 WHERE project_id = $1`,
+		projectID,
+	).Scan(&revisionCount); err != nil {
+		t.Fatalf(
+			"count project revisions after rollback: %v",
+			err,
+		)
+	}
+
+	if revisionCount != 0 {
+		t.Fatalf(
+			"expected rollback to leave 0 revisions, got %d",
+			revisionCount,
+		)
+	}
+
+	var referenceCount int
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT count(*)
+		 FROM project_revision_files
+		 WHERE project_id = $1`,
+		projectID,
+	).Scan(&referenceCount); err != nil {
+		t.Fatalf(
+			"count revision-file references after rollback: %v",
+			err,
+		)
+	}
+
+	if referenceCount != 0 {
+		t.Fatalf(
+			"expected rollback to leave 0 revision-file references, got %d",
+			referenceCount,
+		)
+	}
+
+	branch, err := queries.GetProjectBranchByIDAndProject(
+		ctx,
+		dbgen.GetProjectBranchByIDAndProjectParams{
+			BranchID:  branchID,
+			ProjectID: projectID,
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"get project branch after revision rollback: %v",
+			err,
+		)
+	}
+
+	if branch.HeadRevisionID.Valid {
+		t.Fatalf(
+			"expected rollback to preserve empty branch head, got %s",
+			uuid.UUID(branch.HeadRevisionID.Bytes),
 		)
 	}
 }

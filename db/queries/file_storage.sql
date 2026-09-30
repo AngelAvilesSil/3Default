@@ -73,3 +73,40 @@ SELECT
 FROM project_files
 WHERE project_id = sqlc.arg(project_id)
 ORDER BY created_at DESC, id DESC;
+
+-- name: CreateProjectRevisionFile :one
+INSERT INTO project_revision_files (
+    project_id,
+    revision_id,
+    project_file_id
+)
+SELECT
+    sqlc.arg(project_id),
+    sqlc.arg(revision_id),
+    project_file.id
+FROM project_files AS project_file
+WHERE project_file.project_id = sqlc.arg(project_id)
+  AND project_file.id = sqlc.arg(project_file_id)
+RETURNING
+    project_id,
+    revision_id,
+    project_file_id;
+
+-- name: ListProjectFilesByRevision :many
+SELECT
+    project_file.id,
+    project_file.project_id,
+    project_file.uploaded_by_user_id,
+    project_file.content_sha256,
+    project_file.original_filename,
+    project_file.media_type,
+    project_file.created_at
+FROM project_revision_files AS revision_file
+JOIN project_files AS project_file
+  ON project_file.project_id = revision_file.project_id
+ AND project_file.id = revision_file.project_file_id
+WHERE revision_file.project_id = sqlc.arg(project_id)
+  AND revision_file.revision_id = sqlc.arg(revision_id)
+ORDER BY
+    project_file.created_at ASC,
+    project_file.id ASC;
