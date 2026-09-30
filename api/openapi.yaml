@@ -819,7 +819,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
-          description: Project or branch not found
+          description: Project, branch, or project file not found
           content:
             application/json:
               schema:
@@ -861,6 +861,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ProjectRevisionResponse"
+        "400":
+          description: Invalid project or revision ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project or revision not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/projects/{projectId}/revisions/{revisionId}/files:
+    get:
+      operationId: listProjectRevisionFiles
+      summary: List the exact project files referenced by a revision
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: revisionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Revision project files listed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProjectFileResponse"
         "400":
           description: Invalid project or revision ID
           content:
@@ -1063,9 +1114,15 @@ components:
       required:
         - message
         - expectedHeadRevisionId
+        - projectFileIds
       properties:
         message:
           type: string
+        projectFileIds:
+          type: array
+          items:
+            type: string
+            format: uuid
         expectedHeadRevisionId:
           type:
             - string

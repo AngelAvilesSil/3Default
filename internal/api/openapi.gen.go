@@ -88,6 +88,7 @@ type CreateProjectRevisionRequest struct {
 	ExpectedHeadRevisionId nullable.Nullable[uuid.UUID] `json:"expectedHeadRevisionId"`
 	MergeParentRevisionId  *uuid.UUID                   `json:"mergeParentRevisionId,omitempty"`
 	Message                string                       `json:"message"`
+	ProjectFileIds         []uuid.UUID                  `json:"projectFileIds"`
 }
 
 // ErrorResponse defines model for ErrorResponse.
@@ -277,6 +278,9 @@ type ServerInterface interface {
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID)
+	// ListProjectRevisionFiles List the exact project files referenced by a revision
+	// (GET /api/projects/{projectId}/revisions/{revisionId}/files)
+	ListProjectRevisionFiles(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID)
 	// GetReady Check application readiness
 	// (GET /api/ready)
 	GetReady(w http.ResponseWriter, r *http.Request)
@@ -755,6 +759,41 @@ func (siw *ServerInterfaceWrapper) GetProjectRevision(w http.ResponseWriter, r *
 	handler.ServeHTTP(w, r)
 }
 
+// ListProjectRevisionFiles operation middleware
+func (siw *ServerInterfaceWrapper) ListProjectRevisionFiles(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "revisionId" -------------
+	var revisionId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "revisionId", r.PathValue("revisionId"), &revisionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revisionId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjectRevisionFiles(w, r, projectId, revisionId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetReady operation middleware
 func (siw *ServerInterfaceWrapper) GetReady(w http.ResponseWriter, r *http.Request) {
 
@@ -909,6 +948,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}/history", wrapper.ListProjectBranchHistory)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}/revisions", wrapper.CreateProjectRevision)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/revisions/{revisionId}", wrapper.GetProjectRevision)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/revisions/{revisionId}/files", wrapper.ListProjectRevisionFiles)
 
 	return m
 }
@@ -2422,6 +2462,85 @@ func (response GetProjectRevision500JSONResponse) VisitGetProjectRevisionRespons
 	return err
 }
 
+type ListProjectRevisionFilesRequestObject struct {
+	ProjectId  uuid.UUID `json:"projectId"`
+	RevisionId uuid.UUID `json:"revisionId"`
+}
+
+type ListProjectRevisionFilesResponseObject interface {
+	VisitListProjectRevisionFilesResponse(w http.ResponseWriter) error
+}
+
+type ListProjectRevisionFiles200JSONResponse []ProjectFileResponse
+
+func (response ListProjectRevisionFiles200JSONResponse) VisitListProjectRevisionFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectRevisionFiles400JSONResponse ErrorResponse
+
+func (response ListProjectRevisionFiles400JSONResponse) VisitListProjectRevisionFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectRevisionFiles401JSONResponse ErrorResponse
+
+func (response ListProjectRevisionFiles401JSONResponse) VisitListProjectRevisionFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectRevisionFiles404JSONResponse ErrorResponse
+
+func (response ListProjectRevisionFiles404JSONResponse) VisitListProjectRevisionFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectRevisionFiles500JSONResponse ErrorResponse
+
+func (response ListProjectRevisionFiles500JSONResponse) VisitListProjectRevisionFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetReadyRequestObject struct {
 }
 
@@ -2516,6 +2635,9 @@ type StrictServerInterface interface {
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(ctx context.Context, request GetProjectRevisionRequestObject) (GetProjectRevisionResponseObject, error)
+	// ListProjectRevisionFiles List the exact project files referenced by a revision
+	// (GET /api/projects/{projectId}/revisions/{revisionId}/files)
+	ListProjectRevisionFiles(ctx context.Context, request ListProjectRevisionFilesRequestObject) (ListProjectRevisionFilesResponseObject, error)
 	// GetReady Check application readiness
 	// (GET /api/ready)
 	GetReady(ctx context.Context, request GetReadyRequestObject) (GetReadyResponseObject, error)
@@ -3095,6 +3217,33 @@ func (sh *strictHandler) GetProjectRevision(w http.ResponseWriter, r *http.Reque
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetProjectRevisionResponseObject); ok {
 		if err := validResponse.VisitGetProjectRevisionResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListProjectRevisionFiles operation middleware
+func (sh *strictHandler) ListProjectRevisionFiles(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID) {
+	var request ListProjectRevisionFilesRequestObject
+
+	request.ProjectId = projectId
+	request.RevisionId = revisionId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListProjectRevisionFiles(ctx, request.(ListProjectRevisionFilesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListProjectRevisionFiles")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListProjectRevisionFilesResponseObject); ok {
+		if err := validResponse.VisitListProjectRevisionFilesResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

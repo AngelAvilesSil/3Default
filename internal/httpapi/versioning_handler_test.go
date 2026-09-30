@@ -56,6 +56,13 @@ type fakeVersioningService struct {
 	getRevisionID  uuid.UUID
 	revision       dbgen.ProjectRevision
 	getErr         error
+
+	revisionFilesCalled      bool
+	revisionFilesOwnerUserID uuid.UUID
+	revisionFilesProjectID   uuid.UUID
+	revisionFilesRevisionID  uuid.UUID
+	revisionFiles            []dbgen.ProjectFile
+	revisionFilesErr         error
 }
 
 func (f *fakeVersioningService) CreateBranch(
@@ -136,6 +143,20 @@ func (f *fakeVersioningService) GetRevision(
 	f.getRevisionID = revisionID
 
 	return f.revision, f.getErr
+}
+
+func (f *fakeVersioningService) ListRevisionFiles(
+	_ context.Context,
+	ownerUserID uuid.UUID,
+	projectID uuid.UUID,
+	revisionID uuid.UUID,
+) ([]dbgen.ProjectFile, error) {
+	f.revisionFilesCalled = true
+	f.revisionFilesOwnerUserID = ownerUserID
+	f.revisionFilesProjectID = projectID
+	f.revisionFilesRevisionID = revisionID
+
+	return f.revisionFiles, f.revisionFilesErr
 }
 
 func newVersioningHandler(
@@ -2776,6 +2797,416 @@ func TestDeleteProjectBranchReturnsNoContent(
 	}
 }
 
+func TestListProjectRevisionFilesRequiresAuthentication(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/revisions/"+
+			uuid.New().String()+
+			"/files",
+		nil,
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusUnauthorized,
+			response.Code,
+		)
+	}
+
+	if service.revisionFilesCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "authentication required" {
+		t.Fatalf(
+			"expected authentication error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestListProjectRevisionFilesRejectsSessionResolutionFailure(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/revisions/"+
+			uuid.New().String()+
+			"/files",
+		nil,
+	)
+	request = requestWithSessionResolutionError(
+		request,
+		errors.New("database unavailable"),
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	if service.revisionFilesCalled {
+		t.Fatal(
+			"expected versioning service not to be called",
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to authenticate request" {
+		t.Fatalf(
+			"expected authentication failure error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestListProjectRevisionFilesRejectsMissingVersioningDependency(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/revisions/"+
+			uuid.New().String()+
+			"/files",
+		nil,
+	)
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to list project revision files" {
+		t.Fatalf(
+			"expected missing dependency error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestListProjectRevisionFilesReturnsFiles(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	revisionID := uuid.New()
+	projectFileID := uuid.New()
+	uploadedByUserID := uuid.New()
+	createdAt := time.Date(
+		2026,
+		time.September,
+		29,
+		22,
+		30,
+		0,
+		0,
+		time.UTC,
+	)
+
+	service := &fakeVersioningService{
+		revisionFiles: []dbgen.ProjectFile{
+			{
+				ID:               projectFileID,
+				ProjectID:        projectID,
+				UploadedByUserID: uploadedByUserID,
+				ContentSha256:    strings.Repeat("a", 64),
+				OriginalFilename: "gripper.step",
+				MediaType:        nil,
+				CreatedAt:        createdAt,
+			},
+		},
+	}
+
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			projectID.String()+
+			"/revisions/"+
+			revisionID.String()+
+			"/files",
+		nil,
+	)
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !service.revisionFilesCalled {
+		t.Fatal("expected versioning service to be called")
+	}
+
+	if service.revisionFilesOwnerUserID != userID {
+		t.Fatalf(
+			"expected owner ID %s, got %s",
+			userID,
+			service.revisionFilesOwnerUserID,
+		)
+	}
+
+	if service.revisionFilesProjectID != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			service.revisionFilesProjectID,
+		)
+	}
+
+	if service.revisionFilesRevisionID != revisionID {
+		t.Fatalf(
+			"expected revision ID %s, got %s",
+			revisionID,
+			service.revisionFilesRevisionID,
+		)
+	}
+
+	var body []api.ProjectFileResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode revision files response: %v", err)
+	}
+
+	if len(body) != 1 {
+		t.Fatalf(
+			"expected 1 project file, got %d",
+			len(body),
+		)
+	}
+
+	if uuid.UUID(body[0].Id) != projectFileID {
+		t.Fatalf(
+			"expected project file ID %s, got %s",
+			projectFileID,
+			body[0].Id,
+		)
+	}
+
+	if uuid.UUID(body[0].ProjectId) != projectID {
+		t.Fatalf(
+			"expected project ID %s, got %s",
+			projectID,
+			body[0].ProjectId,
+		)
+	}
+
+	if uuid.UUID(body[0].UploadedByUserId) != uploadedByUserID {
+		t.Fatalf(
+			"expected uploader ID %s, got %s",
+			uploadedByUserID,
+			body[0].UploadedByUserId,
+		)
+	}
+
+	if body[0].OriginalFilename != "gripper.step" {
+		t.Fatalf(
+			"expected original filename %q, got %q",
+			"gripper.step",
+			body[0].OriginalFilename,
+		)
+	}
+
+	if !body[0].CreatedAt.Equal(createdAt) {
+		t.Fatalf(
+			"expected created time %s, got %s",
+			createdAt,
+			body[0].CreatedAt,
+		)
+	}
+}
+
+func TestListProjectRevisionFilesReturnsEmptyArray(
+	t *testing.T,
+) {
+	service := &fakeVersioningService{
+		revisionFiles: []dbgen.ProjectFile{},
+	}
+	handler := newVersioningHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/revisions/"+
+			uuid.New().String()+
+			"/files",
+		nil,
+	)
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	var body []api.ProjectFileResponse
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode empty revision files response: %v", err)
+	}
+
+	if body == nil {
+		t.Fatal("expected JSON empty array, got null")
+	}
+
+	if len(body) != 0 {
+		t.Fatalf(
+			"expected 0 project files, got %d",
+			len(body),
+		)
+	}
+}
+
+func TestListProjectRevisionFilesMapsServiceErrors(
+	t *testing.T,
+) {
+	tests := []struct {
+		name        string
+		serviceErr  error
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "missing project ID",
+			serviceErr:  versioning.ErrProjectIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "project ID is required",
+		},
+		{
+			name:        "missing revision ID",
+			serviceErr:  versioning.ErrRevisionIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "revision ID is required",
+		},
+		{
+			name:        "project not found",
+			serviceErr:  versioning.ErrProjectNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "project not found",
+		},
+		{
+			name:        "revision not found",
+			serviceErr:  versioning.ErrRevisionNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "revision not found",
+		},
+		{
+			name:        "unexpected service error",
+			serviceErr:  errors.New("database unavailable"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "unable to list project revision files",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeVersioningService{
+				revisionFilesErr: test.serviceErr,
+			}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodGet,
+				"/api/projects/"+
+					uuid.New().String()+
+					"/revisions/"+
+					uuid.New().String()+
+					"/files",
+				nil,
+			)
+			request = requestWithSession(
+				request,
+				uuid.New(),
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d",
+					test.wantStatus,
+					response.Code,
+				)
+			}
+
+			if !service.revisionFilesCalled {
+				t.Fatal(
+					"expected versioning service to be called",
+				)
+			}
+
+			body := decodeErrorResponse(t, response)
+			if body.Error != test.wantMessage {
+				t.Fatalf(
+					"expected error %q, got %q",
+					test.wantMessage,
+					body.Error,
+				)
+			}
+		})
+	}
+}
+
 func TestCreateProjectRevisionRequiresAuthentication(t *testing.T) {
 	service := &fakeVersioningService{}
 	handler := newVersioningHandler(service)
@@ -2791,7 +3222,7 @@ func TestCreateProjectRevisionRequiresAuthentication(t *testing.T) {
 			branchID.String()+
 			"/revisions",
 		strings.NewReader(
-			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+			`{"message":"Initial revision","expectedHeadRevisionId":null,"projectFileIds":[]}`,
 		),
 	)
 	request.Header.Set("Content-Type", "application/json")
@@ -2834,7 +3265,7 @@ func TestCreateProjectRevisionRejectsSessionResolutionFailure(
 			uuid.New().String()+
 			"/revisions",
 		strings.NewReader(
-			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+			`{"message":"Initial revision","expectedHeadRevisionId":null,"projectFileIds":[]}`,
 		),
 	)
 	request.Header.Set("Content-Type", "application/json")
@@ -2881,7 +3312,7 @@ func TestCreateProjectRevisionRejectsCrossOriginBrowserRequest(
 			uuid.New().String()+
 			"/revisions",
 		strings.NewReader(
-			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+			`{"message":"Initial revision","expectedHeadRevisionId":null,"projectFileIds":[]}`,
 		),
 	)
 	request.Header.Set("Content-Type", "application/json")
@@ -2935,7 +3366,7 @@ func TestCreateProjectRevisionRejectsMalformedPathIDs(t *testing.T) {
 					test.branchID+
 					"/revisions",
 				strings.NewReader(
-					`{"message":"Revision","expectedHeadRevisionId":null}`,
+					`{"message":"Revision","expectedHeadRevisionId":null,"projectFileIds":[]}`,
 				),
 			)
 			request.Header.Set(
@@ -3012,7 +3443,7 @@ func TestCreateProjectRevisionRequiresExpectedHeadField(
 			"/branches/"+
 			uuid.New().String()+
 			"/revisions",
-		strings.NewReader(`{"message":"Initial revision"}`),
+		strings.NewReader(`{"message":"Initial revision","projectFileIds":[]}`),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	request = requestWithSession(request, uuid.New())
@@ -3067,7 +3498,7 @@ func TestCreateProjectRevisionRejectsMissingVersioningDependency(
 			branchID.String()+
 			"/revisions",
 		strings.NewReader(
-			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+			`{"message":"Initial revision","expectedHeadRevisionId":null,"projectFileIds":[]}`,
 		),
 	)
 	request.Header.Set("Content-Type", "application/json")
@@ -3208,7 +3639,7 @@ func TestCreateProjectRevisionMapsServiceErrors(t *testing.T) {
 					test.branchID.String()+
 					"/revisions",
 				strings.NewReader(
-					`{"message":"Revision","expectedHeadRevisionId":null}`,
+					`{"message":"Revision","expectedHeadRevisionId":null,"projectFileIds":[]}`,
 				),
 			)
 			request.Header.Set(
@@ -3268,6 +3699,165 @@ func TestCreateProjectRevisionMapsServiceErrors(t *testing.T) {
 	}
 }
 
+func TestCreateProjectRevisionRequiresProjectFileIDsField(
+	t *testing.T,
+) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "missing project file IDs",
+			body: `{
+				"message":"Initial revision",
+				"expectedHeadRevisionId":null
+			}`,
+		},
+		{
+			name: "null project file IDs",
+			body: `{
+				"message":"Initial revision",
+				"expectedHeadRevisionId":null,
+				"projectFileIds":null
+			}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeVersioningService{}
+			handler := newVersioningHandler(service)
+
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/api/projects/"+
+					uuid.New().String()+
+					"/branches/"+
+					uuid.New().String()+
+					"/revisions",
+				strings.NewReader(test.body),
+			)
+			request.Header.Set(
+				"Content-Type",
+				"application/json",
+			)
+			request = requestWithSession(
+				request,
+				uuid.New(),
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusBadRequest,
+					response.Code,
+				)
+			}
+
+			if service.createCalled {
+				t.Fatal(
+					"expected versioning service not to be called",
+				)
+			}
+
+			body := decodeErrorResponse(t, response)
+			if body.Error != "project file IDs are required" {
+				t.Fatalf(
+					"expected missing project-file IDs error, got %q",
+					body.Error,
+				)
+			}
+		})
+	}
+}
+
+func TestCreateProjectRevisionForwardsProjectFileIDs(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	branchID := uuid.New()
+	firstFileID := uuid.New()
+	secondFileID := uuid.New()
+
+	service := &fakeVersioningService{
+		createResult: dbgen.ProjectRevision{
+			ID:           uuid.New(),
+			ProjectID:    projectID,
+			AuthorUserID: userID,
+			Message:      "Revision",
+			CreatedAt:    time.Now().UTC(),
+		},
+	}
+
+	handler := newVersioningHandler(service)
+
+	requestBody := `{
+		"message":"Revision",
+		"expectedHeadRevisionId":null,
+		"projectFileIds":[
+			"` + firstFileID.String() + `",
+			"` + secondFileID.String() + `"
+		]
+	}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects/"+
+			projectID.String()+
+			"/branches/"+
+			branchID.String()+
+			"/revisions",
+		strings.NewReader(requestBody),
+	)
+	request.Header.Set(
+		"Content-Type",
+		"application/json",
+	)
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusCreated,
+			response.Code,
+		)
+	}
+
+	if !service.createCalled {
+		t.Fatal("expected versioning service to be called")
+	}
+
+	if len(service.createInput.ProjectFileIDs) != 2 {
+		t.Fatalf(
+			"expected 2 project file IDs, got %d",
+			len(service.createInput.ProjectFileIDs),
+		)
+	}
+
+	if service.createInput.ProjectFileIDs[0] != firstFileID {
+		t.Fatalf(
+			"expected first project file ID %s, got %s",
+			firstFileID,
+			service.createInput.ProjectFileIDs[0],
+		)
+	}
+
+	if service.createInput.ProjectFileIDs[1] != secondFileID {
+		t.Fatalf(
+			"expected second project file ID %s, got %s",
+			secondFileID,
+			service.createInput.ProjectFileIDs[1],
+		)
+	}
+}
+
 func TestCreateProjectRevisionAcceptsExplicitNullExpectedHead(
 	t *testing.T,
 ) {
@@ -3307,7 +3897,7 @@ func TestCreateProjectRevisionAcceptsExplicitNullExpectedHead(
 			branchID.String()+
 			"/revisions",
 		strings.NewReader(
-			`{"message":"Initial revision","expectedHeadRevisionId":null}`,
+			`{"message":"Initial revision","expectedHeadRevisionId":null,"projectFileIds":[]}`,
 		),
 	)
 	request.Header.Set("Content-Type", "application/json")
@@ -3481,7 +4071,7 @@ func TestCreateProjectRevisionForwardsExpectedHeadAndMergeParent(
 			expectedHeadID.String() +
 			`","mergeParentRevisionId":"` +
 			mergeParentID.String() +
-			`"}`
+			`","projectFileIds":[]}`
 
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -3573,7 +4163,8 @@ func TestCreateProjectRevisionRejectsMalformedBodyUUIDs(t *testing.T) {
 			name: "malformed expected head revision ID",
 			body: `{
 				"message":"Revision",
-				"expectedHeadRevisionId":"not-a-uuid"
+				"expectedHeadRevisionId":"not-a-uuid",
+                                "projectFileIds":[]
 			}`,
 		},
 		{
@@ -3581,7 +4172,8 @@ func TestCreateProjectRevisionRejectsMalformedBodyUUIDs(t *testing.T) {
 			body: `{
 				"message":"Merge revision",
 				"expectedHeadRevisionId":null,
-				"mergeParentRevisionId":"not-a-uuid"
+				"mergeParentRevisionId":"not-a-uuid",
+                                "projectFileIds":[]
 			}`,
 		},
 	}
