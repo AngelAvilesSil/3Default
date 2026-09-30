@@ -26,9 +26,10 @@ Implemented foundations include:
 * atomic revision creation with optimistic branch-head updates
 * authenticated branch creation, rename, and deletion, branch listing and history traversal, revision reads, and revision creation
 * immutable SHA-256 content-addressed filesystem storage with physical deduplication
-* PostgreSQL project-file metadata and revision-file reference persistence foundations
+* PostgreSQL project-file metadata and exact revision-file snapshot persistence
 * authenticated multipart source-file upload with project ownership checked before physical storage
 * authenticated project-file metadata listing and detail reads
+* authenticated exact revision-file snapshot creation and listing
 * persistent Docker storage configured through `STORAGE_ROOT`
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
@@ -40,7 +41,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication, core project-versioning, and file-storage foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, and owner-scoped project-file upload and metadata reads. Revision-to-file attachment workflows, physical file download/open APIs, immutable-history hardening, CAD conversion, preview generation, visualization, and user-facing merge/conflict-resolution workflows remain future work.
+The authentication, core project-versioning, and file-storage foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload and metadata reads, exact revision-file snapshots supplied during revision creation, and authenticated revision-file snapshot reads. Physical file download/open APIs, immutable-history hardening, CAD conversion, preview generation, visualization, and user-facing merge/conflict-resolution workflows remain future work.
 
 ---
 
@@ -306,6 +307,7 @@ PATCH  /api/projects/{projectId}/branches/{branchId}
 DELETE /api/projects/{projectId}/branches/{branchId}
 GET    /api/projects/{projectId}/branches/{branchId}/history
 GET    /api/projects/{projectId}/revisions/{revisionId}
+GET    /api/projects/{projectId}/revisions/{revisionId}/files
 POST   /api/projects/{projectId}/branches/{branchId}/revisions
 ```
 
@@ -333,11 +335,22 @@ Merge revision
 
 For a merge revision, both parents must belong to the same project, the merge parent must differ from the primary parent, and a merge parent cannot be supplied when the target branch has no expected head. The current merge model records revision ancestry only; 3Default does not yet perform automatic CAD-content merging or conflict resolution.
 
-Revision creation and target-branch advancement happen atomically in one database transaction. The client must provide `expectedHeadRevisionId` as an optimistic-concurrency precondition:
+Revision creation, exact revision-file references, and target-branch advancement happen atomically in one database transaction. The client must provide `expectedHeadRevisionId` as an optimistic-concurrency precondition:
 
 * `null` means the caller explicitly observed an empty branch.
 * a UUID means the caller observed that revision as the branch head.
 * omitting the field is invalid.
+
+Revision creation also requires `projectFileIds`, which represents the complete project-file snapshot for the new revision:
+
+* `[]` means the caller explicitly creates an empty file snapshot.
+* a list of UUIDs means exactly those project files belong to the revision snapshot.
+* omitting `projectFileIds` or supplying `null` is invalid at the HTTP API.
+* duplicate IDs and the nil UUID are invalid, and every referenced file must exist in the same project.
+
+The snapshot is not a delta from the primary parent and no files are inherited implicitly. There are no mutable attach or detach endpoints; after creation, the application and HTTP API treat the revision-file snapshot as immutable.
+
+`GET /api/projects/{projectId}/revisions/{revisionId}/files` returns the project-file metadata referenced by that exact revision. The read is owner-scoped and verifies that the revision exists before listing its files, so a missing revision is distinguishable from a valid revision with an empty snapshot. Results use a deterministic presentation order of file creation time ascending and file ID ascending; that order has no semantic meaning within the snapshot.
 
 The branch head is advanced only if it still matches the caller's expected value. If another revision has already moved the branch head, the candidate revision is rolled back and the API returns `409 Conflict`.
 
@@ -354,6 +367,7 @@ PATCH  /api/projects/{projectId}/branches/{branchId}
 DELETE /api/projects/{projectId}/branches/{branchId}
 GET    /api/projects/{projectId}/branches/{branchId}/history
 GET    /api/projects/{projectId}/revisions/{revisionId}
+GET    /api/projects/{projectId}/revisions/{revisionId}/files
 POST   /api/projects/{projectId}/branches/{branchId}/revisions
 ```
 
@@ -383,7 +397,7 @@ History results use a deterministic presentation order of `createdAt` descending
 
 Historical revisions are treated as append-only by the application: there are no revision update or delete operations in the current service or HTTP API. The database schema enforces same-project parent references and several parent constraints, but it does **not** currently prevent arbitrary direct SQL updates to revision rows or fully enforce cycle prevention. Stronger immutable-history enforcement and graph validation remain future work.
 
-Immutable-history hardening and cycle prevention, broader branch management, revision-to-file attachment behavior, CAD conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
+Immutable-history hardening and cycle prevention, broader branch management, CAD conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
 
 ---
 
@@ -408,9 +422,9 @@ PostgreSQL stores the application metadata separately:
 
 * `content_objects` records the global SHA-256 identity and size of stored content.
 * `project_files` records project-scoped metadata including the uploader, content hash, original filename, optional media type, and creation time.
-* `project_revision_files` provides the persistence foundation for connecting exact project-file records to exact revisions.
+* `project_revision_files` stores the exact project-file references that form each revision snapshot.
 
-The revision-file relation currently exists only at the persistence layer. Application-service and HTTP workflows for attaching files to revisions are not implemented yet.
+The revision-file relation is now part of revision creation. The revision row, its exact project-file references, and the target branch-head update are persisted in one transaction. A missing or wrong-project file, a duplicate file ID, or a branch-head conflict rolls back the candidate revision and its file references.
 
 Authenticated upload is exposed through:
 
@@ -455,7 +469,7 @@ GET /api/projects/{projectId}/files/{projectFileId}
 
 Both operations are owner-scoped. A project owned by another user is treated the same as a nonexistent project.
 
-The current HTTP API exposes file **metadata** but does not yet expose physical file download/open, revision-file attachment, CAD conversion, preview generation, or derived-file retrieval.
+The current HTTP API exposes project-file **metadata** and exact revision-file snapshot metadata, but does not yet expose physical file download/open, CAD conversion, preview generation, or derived-file retrieval.
 
 The filesystem root is supplied through the required `STORAGE_ROOT` environment variable. The Docker development configuration uses:
 
@@ -689,8 +703,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [ ] merge and conflict-resolution workflow
 * [x] content-addressed storage
 * [x] project-file metadata and content references
-* [x] revision-file reference persistence foundation
-* [ ] revision-file attachment application/API workflow
+* [x] exact revision-file snapshot persistence
+* [x] authenticated revision-file snapshot creation and listing API
 * [x] authenticated source-file upload
 * [x] authenticated project-file metadata listing and detail API
 * [ ] physical file download/open API
