@@ -77,6 +77,10 @@ type RevisionStore interface {
 		ctx context.Context,
 		projectID uuid.UUID,
 	) ([]dbgen.ProjectBranch, error)
+	ListProjectFilesByRevision(
+		ctx context.Context,
+		arg dbgen.ListProjectFilesByRevisionParams,
+	) ([]dbgen.ProjectFile, error)
 	ListReachableProjectRevisionsFromRevision(
 		ctx context.Context,
 		arg dbgen.ListReachableProjectRevisionsFromRevisionParams,

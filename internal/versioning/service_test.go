@@ -66,6 +66,11 @@ type fakeRevisionStore struct {
 	historyParams dbgen.ListReachableProjectRevisionsFromRevisionParams
 	history       []dbgen.ProjectRevision
 	historyErr    error
+
+	revisionFilesCalled bool
+	revisionFilesParams dbgen.ListProjectFilesByRevisionParams
+	revisionFiles       []dbgen.ProjectFile
+	revisionFilesErr    error
 }
 
 func (f *fakeRevisionStore) CreateBranch(
@@ -126,6 +131,16 @@ func (f *fakeRevisionStore) GetProjectBranchByIDAndProject(
 	f.getBranchParams = arg
 
 	return f.getBranch, f.getBranchErr
+}
+
+func (f *fakeRevisionStore) ListProjectFilesByRevision(
+	_ context.Context,
+	arg dbgen.ListProjectFilesByRevisionParams,
+) ([]dbgen.ProjectFile, error) {
+	f.revisionFilesCalled = true
+	f.revisionFilesParams = arg
+
+	return f.revisionFiles, f.revisionFilesErr
 }
 
 func (f *fakeRevisionStore) ListReachableProjectRevisionsFromRevision(
@@ -1495,6 +1510,164 @@ func TestCreateRevisionWrapsRevisionStoreError(t *testing.T) {
 			"expected wrapped database error, got %v",
 			err,
 		)
+	}
+}
+
+func TestCreateRevisionForwardsExactProjectFileSnapshot(
+	t *testing.T,
+) {
+	firstFileID := uuid.New()
+	secondFileID := uuid.New()
+
+	projects := &fakeProjectReader{}
+	revisions := &fakeRevisionStore{}
+
+	service := NewService(projects, revisions)
+
+	_, err := service.CreateRevision(
+		context.Background(),
+		CreateRevisionInput{
+			OwnerUserID: uuid.New(),
+			ProjectID:   uuid.New(),
+			BranchID:    uuid.New(),
+			Message:     "Revision with source files",
+			ProjectFileIDs: []uuid.UUID{
+				firstFileID,
+				secondFileID,
+			},
+		},
+	)
+	if err != nil {
+		t.Fatalf("create revision: %v", err)
+	}
+
+	if !revisions.called {
+		t.Fatal("expected revision store to be called")
+	}
+
+	if len(revisions.params.ProjectFileIDs) != 2 {
+		t.Fatalf(
+			"expected 2 project file IDs, got %d",
+			len(revisions.params.ProjectFileIDs),
+		)
+	}
+
+	if revisions.params.ProjectFileIDs[0] != firstFileID {
+		t.Fatalf(
+			"expected first project file ID %s, got %s",
+			firstFileID,
+			revisions.params.ProjectFileIDs[0],
+		)
+	}
+
+	if revisions.params.ProjectFileIDs[1] != secondFileID {
+		t.Fatalf(
+			"expected second project file ID %s, got %s",
+			secondFileID,
+			revisions.params.ProjectFileIDs[1],
+		)
+	}
+}
+
+func TestCreateRevisionNormalizesNilProjectFileSnapshotToEmpty(
+	t *testing.T,
+) {
+	projects := &fakeProjectReader{}
+	revisions := &fakeRevisionStore{}
+
+	service := NewService(projects, revisions)
+
+	input := validCreateRevisionInput()
+	input.ProjectFileIDs = nil
+
+	_, err := service.CreateRevision(
+		context.Background(),
+		input,
+	)
+	if err != nil {
+		t.Fatalf("create revision: %v", err)
+	}
+
+	if !revisions.called {
+		t.Fatal("expected revision store to be called")
+	}
+
+	if revisions.params.ProjectFileIDs == nil {
+		t.Fatal(
+			"expected nil project-file snapshot to normalize to non-nil empty slice",
+		)
+	}
+
+	if len(revisions.params.ProjectFileIDs) != 0 {
+		t.Fatalf(
+			"expected empty project-file snapshot, got %d IDs",
+			len(revisions.params.ProjectFileIDs),
+		)
+	}
+}
+
+func TestCreateRevisionRejectsInvalidProjectFileSnapshot(
+	t *testing.T,
+) {
+	duplicateID := uuid.New()
+
+	tests := []struct {
+		name           string
+		projectFileIDs []uuid.UUID
+		want           error
+	}{
+		{
+			name: "zero project file ID",
+			projectFileIDs: []uuid.UUID{
+				uuid.New(),
+				uuid.Nil,
+			},
+			want: ErrProjectFileIDInvalid,
+		},
+		{
+			name: "duplicate project file ID",
+			projectFileIDs: []uuid.UUID{
+				duplicateID,
+				duplicateID,
+			},
+			want: ErrDuplicateProjectFileID,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			projects := &fakeProjectReader{}
+			revisions := &fakeRevisionStore{}
+
+			service := NewService(projects, revisions)
+
+			input := validCreateRevisionInput()
+			input.ProjectFileIDs = test.projectFileIDs
+
+			_, err := service.CreateRevision(
+				context.Background(),
+				input,
+			)
+			if !errors.Is(err, test.want) {
+				t.Fatalf(
+					"expected %v, got %v",
+					test.want,
+					err,
+				)
+			}
+
+			if projects.called {
+				t.Fatal(
+					"expected project ownership lookup not to run for invalid snapshot",
+				)
+			}
+
+			if revisions.called {
+				t.Fatal(
+					"expected revision store not to run for invalid snapshot",
+				)
+			}
+		})
 	}
 }
 
