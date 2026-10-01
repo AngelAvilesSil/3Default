@@ -10,12 +10,16 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var (
-	ErrRootRequired     = errors.New("storage root is required")
-	ErrSourceRequired   = errors.New("content source is required")
-	ErrContentIntegrity = errors.New("stored content object failed integrity check")
+	ErrRootRequired          = errors.New("storage root is required")
+	ErrSourceRequired        = errors.New("content source is required")
+	ErrContentSHA256Required = errors.New("content SHA-256 is required")
+	ErrContentSHA256Invalid  = errors.New("content SHA-256 is invalid")
+	ErrContentNotFound       = errors.New("stored content object not found")
+	ErrContentIntegrity      = errors.New("stored content object failed integrity check")
 )
 
 type PutResult struct {
@@ -159,6 +163,131 @@ func (s *FilesystemStore) Put(
 	}
 
 	return result, nil
+}
+
+func (s *FilesystemStore) Open(
+	ctx context.Context,
+	contentSHA256 string,
+) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	normalizedSHA256, err := normalizeContentSHA256(
+		contentSHA256,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	path := filepath.Join(
+		s.root,
+		"objects",
+		"sha256",
+		normalizedSHA256[:2],
+		normalizedSHA256[2:4],
+		normalizedSHA256,
+	)
+
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrContentNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf(
+			"inspect stored content object: %w",
+			err,
+		)
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf(
+			"%w: stored object is not a regular file",
+			ErrContentIntegrity,
+		)
+	}
+
+	file, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrContentNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf(
+			"open stored content object: %w",
+			err,
+		)
+	}
+
+	hasher := sha256.New()
+
+	_, err = io.Copy(
+		hasher,
+		contextReader{
+			ctx:    ctx,
+			reader: file,
+		},
+	)
+	if err != nil {
+		_ = file.Close()
+
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
+		}
+
+		return nil, fmt.Errorf(
+			"%w: hash stored content object: %v",
+			ErrContentIntegrity,
+			err,
+		)
+	}
+
+	actualSHA256 := hex.EncodeToString(hasher.Sum(nil))
+	if actualSHA256 != normalizedSHA256 {
+		_ = file.Close()
+
+		return nil, fmt.Errorf(
+			"%w: expected SHA-256 %s, got %s",
+			ErrContentIntegrity,
+			normalizedSHA256,
+			actualSHA256,
+		)
+	}
+
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		_ = file.Close()
+
+		return nil, fmt.Errorf(
+			"rewind stored content object: %w",
+			err,
+		)
+	}
+
+	if err := ctx.Err(); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+
+	return file, nil
+}
+
+func normalizeContentSHA256(
+	value string,
+) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return "", ErrContentSHA256Required
+	}
+
+	if len(normalized) != 64 {
+		return "", ErrContentSHA256Invalid
+	}
+
+	decoded, err := hex.DecodeString(normalized)
+	if err != nil || len(decoded) != sha256.Size {
+		return "", ErrContentSHA256Invalid
+	}
+
+	return normalized, nil
 }
 
 func validateExistingObject(
