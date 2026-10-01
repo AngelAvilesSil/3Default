@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -502,6 +503,243 @@ func TestFilesystemStorePutCleansUpAfterReaderFailure(
 	}
 
 	assertTemporaryDirectoryEmpty(t, root)
+}
+
+func TestFilesystemStoreOpenReturnsVerifiedContent(
+	t *testing.T,
+) {
+	root := t.TempDir()
+
+	store, err := NewFilesystemStore(root)
+	if err != nil {
+		t.Fatalf("create filesystem store: %v", err)
+	}
+
+	content := []byte("authoritative CAD content for reading")
+
+	stored, err := store.Put(
+		context.Background(),
+		bytes.NewReader(content),
+	)
+	if err != nil {
+		t.Fatalf("put content: %v", err)
+	}
+
+	reader, err := store.Open(
+		context.Background(),
+		"  "+strings.ToUpper(stored.SHA256)+"  ",
+	)
+	if err != nil {
+		t.Fatalf("open content: %v", err)
+	}
+	defer reader.Close()
+
+	actual, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read opened content: %v", err)
+	}
+
+	if !bytes.Equal(actual, content) {
+		t.Fatalf(
+			"expected opened content %q, got %q",
+			content,
+			actual,
+		)
+	}
+}
+
+func TestFilesystemStoreOpenRejectsInvalidSHA256(
+	t *testing.T,
+) {
+	tests := []struct {
+		name   string
+		sha256 string
+		want   error
+	}{
+		{
+			name:   "missing",
+			sha256: "   ",
+			want:   ErrContentSHA256Required,
+		},
+		{
+			name:   "short",
+			sha256: strings.Repeat("a", 63),
+			want:   ErrContentSHA256Invalid,
+		},
+		{
+			name:   "nonhex",
+			sha256: strings.Repeat("g", 64),
+			want:   ErrContentSHA256Invalid,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := NewFilesystemStore(t.TempDir())
+			if err != nil {
+				t.Fatalf("create filesystem store: %v", err)
+			}
+
+			reader, err := store.Open(
+				context.Background(),
+				test.sha256,
+			)
+			if reader != nil {
+				_ = reader.Close()
+				t.Fatal("expected no reader")
+			}
+
+			if !errors.Is(err, test.want) {
+				t.Fatalf(
+					"expected %v, got %v",
+					test.want,
+					err,
+				)
+			}
+		})
+	}
+}
+
+func TestFilesystemStoreOpenReturnsNotFoundForMissingObject(
+	t *testing.T,
+) {
+	store, err := NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create filesystem store: %v", err)
+	}
+
+	digest := sha256.Sum256([]byte("missing content"))
+	sha256Hex := hex.EncodeToString(digest[:])
+
+	reader, err := store.Open(
+		context.Background(),
+		sha256Hex,
+	)
+	if reader != nil {
+		_ = reader.Close()
+		t.Fatal("expected no reader")
+	}
+
+	if !errors.Is(err, ErrContentNotFound) {
+		t.Fatalf(
+			"expected ErrContentNotFound, got %v",
+			err,
+		)
+	}
+}
+
+func TestFilesystemStoreOpenRejectsCorruptObject(
+	t *testing.T,
+) {
+	root := t.TempDir()
+
+	store, err := NewFilesystemStore(root)
+	if err != nil {
+		t.Fatalf("create filesystem store: %v", err)
+	}
+
+	expected := []byte("expected immutable content")
+
+	digest := sha256.Sum256(expected)
+	sha256Hex := hex.EncodeToString(digest[:])
+	path := objectPath(root, sha256Hex)
+
+	if err := os.MkdirAll(
+		filepath.Dir(path),
+		0o750,
+	); err != nil {
+		t.Fatalf("create object directory: %v", err)
+	}
+
+	corrupt := append([]byte(nil), expected...)
+	corrupt[0] ^= 0xff
+
+	if err := os.WriteFile(
+		path,
+		corrupt,
+		0o600,
+	); err != nil {
+		t.Fatalf("write corrupt object: %v", err)
+	}
+
+	reader, err := store.Open(
+		context.Background(),
+		sha256Hex,
+	)
+	if reader != nil {
+		_ = reader.Close()
+		t.Fatal("expected no reader")
+	}
+
+	if !errors.Is(err, ErrContentIntegrity) {
+		t.Fatalf(
+			"expected ErrContentIntegrity, got %v",
+			err,
+		)
+	}
+}
+
+func TestFilesystemStoreOpenRejectsNonRegularObject(
+	t *testing.T,
+) {
+	root := t.TempDir()
+
+	store, err := NewFilesystemStore(root)
+	if err != nil {
+		t.Fatalf("create filesystem store: %v", err)
+	}
+
+	digest := sha256.Sum256([]byte("directory object"))
+	sha256Hex := hex.EncodeToString(digest[:])
+	path := objectPath(root, sha256Hex)
+
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		t.Fatalf("create non-regular object: %v", err)
+	}
+
+	reader, err := store.Open(
+		context.Background(),
+		sha256Hex,
+	)
+	if reader != nil {
+		_ = reader.Close()
+		t.Fatal("expected no reader")
+	}
+
+	if !errors.Is(err, ErrContentIntegrity) {
+		t.Fatalf(
+			"expected ErrContentIntegrity, got %v",
+			err,
+		)
+	}
+}
+
+func TestFilesystemStoreOpenHonorsCanceledContext(
+	t *testing.T,
+) {
+	store, err := NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create filesystem store: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	reader, err := store.Open(
+		ctx,
+		strings.Repeat("a", 64),
+	)
+	if reader != nil {
+		_ = reader.Close()
+		t.Fatal("expected no reader")
+	}
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf(
+			"expected context.Canceled, got %v",
+			err,
+		)
+	}
 }
 
 func objectPath(root, sha256Hex string) string {
