@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"mime/multipart"
 	"strings"
 	"time"
@@ -106,6 +107,15 @@ type ProjectFileUploader interface {
 	) (dbgen.ProjectFile, error)
 }
 
+type ProjectFileDownloader interface {
+	Download(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+		projectFileID googleuuid.UUID,
+	) (filestorage.DownloadResult, error)
+}
+
 type UserRegistrar interface {
 	Register(
 		ctx context.Context,
@@ -140,6 +150,7 @@ type Server struct {
 	versioning         VersioningService
 	projectFiles       ProjectFileService
 	fileUploads        ProjectFileUploader
+	fileDownloads      ProjectFileDownloader
 	registrations      UserRegistrar
 	authentication     UserAuthenticator
 	sessionRevocations SessionRevoker
@@ -192,6 +203,7 @@ func NewServerWithVersioningAndFiles(
 	versioningService VersioningService,
 	projectFiles ProjectFileService,
 	fileUploads ProjectFileUploader,
+	fileDownloads ProjectFileDownloader,
 	registrations UserRegistrar,
 	authentication UserAuthenticator,
 	sessionRevocations SessionRevoker,
@@ -209,6 +221,7 @@ func NewServerWithVersioningAndFiles(
 
 	server.projectFiles = projectFiles
 	server.fileUploads = fileUploads
+	server.fileDownloads = fileDownloads
 
 	return server
 }
@@ -1513,6 +1526,92 @@ func (s *Server) GetProjectFile(
 	), nil
 }
 
+func (s *Server) DownloadProjectFileContent(
+	ctx context.Context,
+	request api.DownloadProjectFileContentRequestObject,
+) (api.DownloadProjectFileContentResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.DownloadProjectFileContent500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.DownloadProjectFileContent401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.fileDownloads == nil {
+		return api.DownloadProjectFileContent500JSONResponse{
+			Error: "unable to download project file",
+		}, nil
+	}
+
+	result, err := s.fileDownloads.Download(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+		googleuuid.UUID(request.ProjectFileId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, filestorage.ErrProjectIDRequired):
+			return api.DownloadProjectFileContent400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrProjectFileIDRequired):
+			return api.DownloadProjectFileContent400JSONResponse{
+				Error: "project file ID is required",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrProjectNotFound):
+			return api.DownloadProjectFileContent404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(err, filestorage.ErrProjectFileNotFound):
+			return api.DownloadProjectFileContent404JSONResponse{
+				Error: "project file not found",
+			}, nil
+
+		default:
+			return api.DownloadProjectFileContent500JSONResponse{
+				Error: "unable to download project file",
+			}, nil
+		}
+	}
+
+	if result.Content == nil {
+		return api.DownloadProjectFileContent500JSONResponse{
+			Error: "unable to download project file",
+		}, nil
+	}
+
+	contentDisposition := mime.FormatMediaType(
+		"attachment",
+		map[string]string{
+			"filename": result.ProjectFile.OriginalFilename,
+		},
+	)
+	if contentDisposition == "" {
+		_ = result.Content.Close()
+
+		return api.DownloadProjectFileContent500JSONResponse{
+			Error: "unable to download project file",
+		}, nil
+	}
+
+	return api.DownloadProjectFileContent200ApplicationoctetStreamResponse{
+		Body: result.Content,
+		Headers: api.DownloadProjectFileContent200ResponseHeaders{
+			ContentDisposition: &contentDisposition,
+		},
+	}, nil
+}
+
 var errInvalidMultipartUpload = errors.New(
 	"invalid multipart upload",
 )
@@ -1707,6 +1806,7 @@ var _ ProjectService = (*projects.Service)(nil)
 var _ VersioningService = (*versioning.Service)(nil)
 var _ ProjectFileService = (*filestorage.Service)(nil)
 var _ ProjectFileUploader = (*filestorage.UploadService)(nil)
+var _ ProjectFileDownloader = (*filestorage.DownloadService)(nil)
 var _ UserRegistrar = (*auth.RegistrationService)(nil)
 var _ UserAuthenticator = (*auth.LoginService)(nil)
 var _ SessionRevoker = (*auth.SessionService)(nil)

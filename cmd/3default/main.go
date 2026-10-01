@@ -69,6 +69,11 @@ func main() {
 		contentStore,
 	)
 
+	fileDownloadService := filestorage.NewDownloadService(
+		fileService,
+		contentStore,
+	)
+
 	registrationStore := database.NewRegistrationStore(db)
 
 	passwordBlocklist := auth.NewLocalPasswordBlocklist(
@@ -120,6 +125,7 @@ func main() {
 			versioningService,
 			fileService,
 			fileUploadService,
+			fileDownloadService,
 			registrationService,
 			loginService,
 			sessionService,
