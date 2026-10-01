@@ -29,6 +29,7 @@ Implemented foundations include:
 * PostgreSQL project-file metadata and exact revision-file snapshot persistence
 * authenticated multipart source-file upload with project ownership checked before physical storage
 * authenticated project-file metadata listing and detail reads
+* authenticated streaming source-file download with integrity verification
 * authenticated exact revision-file snapshot creation and listing
 * persistent Docker storage configured through `STORAGE_ROOT`
 * atomic user registration and password-credential creation
@@ -41,7 +42,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication, core project-versioning, and file-storage foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload and metadata reads, exact revision-file snapshots supplied during revision creation, and authenticated revision-file snapshot reads. Physical file download/open APIs, immutable-history hardening, CAD conversion, preview generation, visualization, and user-facing merge/conflict-resolution workflows remain future work.
+The authentication, core project-versioning, and file-storage foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, and streaming source-file download, exact revision-file snapshots supplied during revision creation, and authenticated revision-file snapshot reads. Immutable-history hardening, CAD conversion, preview generation, visualization, and user-facing merge/conflict-resolution workflows remain future work.
 
 ---
 
@@ -300,6 +301,7 @@ PATCH /api/projects/{projectId}
 GET  /api/projects/{projectId}/files
 POST /api/projects/{projectId}/files
 GET  /api/projects/{projectId}/files/{projectFileId}
+GET  /api/projects/{projectId}/files/{projectFileId}/content
 
 GET    /api/projects/{projectId}/branches
 POST   /api/projects/{projectId}/branches
@@ -467,9 +469,23 @@ GET /api/projects/{projectId}/files
 GET /api/projects/{projectId}/files/{projectFileId}
 ```
 
-Both operations are owner-scoped. A project owned by another user is treated the same as a nonexistent project.
+Both metadata operations are owner-scoped. A project owned by another user is treated the same as a nonexistent project.
 
-The current HTTP API exposes project-file **metadata** and exact revision-file snapshot metadata, but does not yet expose physical file download/open, CAD conversion, preview generation, or derived-file retrieval.
+The authoritative source bytes for a project file can be downloaded through:
+
+```text
+GET /api/projects/{projectId}/files/{projectFileId}/content
+```
+
+The download is authenticated and owner-scoped through the same project-file metadata lookup used by the detail API. After the metadata record is resolved, its persisted SHA-256 identifies the immutable physical content object in `STORAGE_ROOT`.
+
+Before a content stream is returned, the filesystem store validates the requested SHA-256, requires the stored object to be a regular file, hashes the complete object, and verifies that the resulting digest matches its content-addressed identity. The verified file is then rewound and streamed to the HTTP response rather than buffered completely in application memory.
+
+Successful downloads return `application/octet-stream`. `Content-Disposition` is generated safely from the original uploaded filename and uses an attachment disposition.
+
+A missing or wrong-project metadata record remains a normal owner-scoped `404`. If project-file metadata exists but its physical content object is missing, non-regular, unreadable, or hash-corrupt, the condition is treated as an internal storage inconsistency and the download endpoint returns `500` rather than pretending that the project-file metadata does not exist.
+
+The current HTTP API therefore exposes project-file metadata, exact revision-file snapshot metadata, and authoritative physical source-file download. CAD conversion, preview generation, derived-file retrieval, HTTP range requests, conditional caching/ETags, and browser visualization remain future work.
 
 The filesystem root is supplied through the required `STORAGE_ROOT` environment variable. The Docker development configuration uses:
 
@@ -707,7 +723,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] authenticated revision-file snapshot creation and listing API
 * [x] authenticated source-file upload
 * [x] authenticated project-file metadata listing and detail API
-* [ ] physical file download/open API
+* [x] physical file download/open API
 * [ ] conversion jobs
 * [ ] GLB/glTF preview pipeline
 * [ ] Three.js browser viewer
@@ -735,7 +751,7 @@ The rebuild is intentionally incremental rather than attempting to recreate the 
 
 ## Portfolio and Product Direction
 
-As a portfolio project, 3Default demonstrates practical engineering across Go, PostgreSQL, SQL and schema design, REST APIs, authentication, Docker, generated code workflows, integration testing, content-addressed storage, streaming file uploads, Git, and product-oriented architecture.
+As a portfolio project, 3Default demonstrates practical engineering across Go, PostgreSQL, SQL and schema design, REST APIs, authentication, Docker, generated code workflows, integration testing, content-addressed storage, streaming file uploads and downloads, Git, and product-oriented architecture.
 
 As a potential product, the goal is to preserve a foundation that can evolve into a usable engineering collaboration platform without discarding the portfolio implementation and starting over.
 
