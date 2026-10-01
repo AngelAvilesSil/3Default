@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"time"
@@ -275,6 +276,9 @@ type ServerInterface interface {
 	// GetProjectFile Get file metadata for a project owned by the current user
 	// (GET /api/projects/{projectId}/files/{projectFileId})
 	GetProjectFile(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID)
+	// DownloadProjectFileContent Download source file content for a project owned by the current user
+	// (GET /api/projects/{projectId}/files/{projectFileId}/content)
+	DownloadProjectFileContent(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID)
@@ -724,6 +728,41 @@ func (siw *ServerInterfaceWrapper) GetProjectFile(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// DownloadProjectFileContent operation middleware
+func (siw *ServerInterfaceWrapper) DownloadProjectFileContent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "projectFileId" -------------
+	var projectFileId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectFileId", r.PathValue("projectFileId"), &projectFileId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectFileId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DownloadProjectFileContent(w, r, projectId, projectFileId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetProjectRevision operation middleware
 func (siw *ServerInterfaceWrapper) GetProjectRevision(w http.ResponseWriter, r *http.Request) {
 
@@ -941,6 +980,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files", wrapper.ListProjectFiles)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/files", wrapper.UploadProjectFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}", wrapper.GetProjectFile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}/content", wrapper.DownloadProjectFileContent)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.ListProjectBranches)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.CreateProjectBranch)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}", wrapper.DeleteProjectBranch)
@@ -2383,6 +2423,99 @@ func (response GetProjectFile500JSONResponse) VisitGetProjectFileResponse(w http
 	return err
 }
 
+type DownloadProjectFileContentRequestObject struct {
+	ProjectId     uuid.UUID `json:"projectId"`
+	ProjectFileId uuid.UUID `json:"projectFileId"`
+}
+
+type DownloadProjectFileContentResponseObject interface {
+	VisitDownloadProjectFileContentResponse(w http.ResponseWriter) error
+}
+
+type DownloadProjectFileContent200ResponseHeaders struct {
+	ContentDisposition *string
+}
+
+type DownloadProjectFileContent200ApplicationoctetStreamResponse struct {
+	Body          io.Reader
+	Headers       DownloadProjectFileContent200ResponseHeaders
+	ContentLength int64
+}
+
+func (response DownloadProjectFileContent200ApplicationoctetStreamResponse) VisitDownloadProjectFileContentResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	if response.Headers.ContentDisposition != nil {
+		w.Header().Set("Content-Disposition", fmt.Sprint(*response.Headers.ContentDisposition))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type DownloadProjectFileContent400JSONResponse ErrorResponse
+
+func (response DownloadProjectFileContent400JSONResponse) VisitDownloadProjectFileContentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadProjectFileContent401JSONResponse ErrorResponse
+
+func (response DownloadProjectFileContent401JSONResponse) VisitDownloadProjectFileContentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadProjectFileContent404JSONResponse ErrorResponse
+
+func (response DownloadProjectFileContent404JSONResponse) VisitDownloadProjectFileContentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DownloadProjectFileContent500JSONResponse ErrorResponse
+
+func (response DownloadProjectFileContent500JSONResponse) VisitDownloadProjectFileContentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetProjectRevisionRequestObject struct {
 	ProjectId  uuid.UUID `json:"projectId"`
 	RevisionId uuid.UUID `json:"revisionId"`
@@ -2632,6 +2765,9 @@ type StrictServerInterface interface {
 	// GetProjectFile Get file metadata for a project owned by the current user
 	// (GET /api/projects/{projectId}/files/{projectFileId})
 	GetProjectFile(ctx context.Context, request GetProjectFileRequestObject) (GetProjectFileResponseObject, error)
+	// DownloadProjectFileContent Download source file content for a project owned by the current user
+	// (GET /api/projects/{projectId}/files/{projectFileId}/content)
+	DownloadProjectFileContent(ctx context.Context, request DownloadProjectFileContentRequestObject) (DownloadProjectFileContentResponseObject, error)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(ctx context.Context, request GetProjectRevisionRequestObject) (GetProjectRevisionResponseObject, error)
@@ -3190,6 +3326,33 @@ func (sh *strictHandler) GetProjectFile(w http.ResponseWriter, r *http.Request, 
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetProjectFileResponseObject); ok {
 		if err := validResponse.VisitGetProjectFileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DownloadProjectFileContent operation middleware
+func (sh *strictHandler) DownloadProjectFileContent(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID) {
+	var request DownloadProjectFileContentRequestObject
+
+	request.ProjectId = projectId
+	request.ProjectFileId = projectFileId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DownloadProjectFileContent(ctx, request.(DownloadProjectFileContentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DownloadProjectFileContent")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DownloadProjectFileContentResponseObject); ok {
+		if err := validResponse.VisitDownloadProjectFileContentResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

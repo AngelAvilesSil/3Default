@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	api "github.com/AngelAvilesSil/3Default/internal/api"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/filestorage"
+	"github.com/AngelAvilesSil/3Default/internal/storage"
 	"github.com/google/uuid"
 )
 
@@ -88,6 +90,39 @@ func (f *fakeProjectFileUploader) Upload(
 	return f.projectFile, f.err
 }
 
+type fakeProjectFileDownloader struct {
+	called        bool
+	ownerUserID   uuid.UUID
+	projectID     uuid.UUID
+	projectFileID uuid.UUID
+	result        filestorage.DownloadResult
+	err           error
+}
+
+func (f *fakeProjectFileDownloader) Download(
+	_ context.Context,
+	ownerUserID uuid.UUID,
+	projectID uuid.UUID,
+	projectFileID uuid.UUID,
+) (filestorage.DownloadResult, error) {
+	f.called = true
+	f.ownerUserID = ownerUserID
+	f.projectID = projectID
+	f.projectFileID = projectFileID
+
+	return f.result, f.err
+}
+
+type trackingReadCloser struct {
+	io.Reader
+	closed bool
+}
+
+func (r *trackingReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
 func newProjectFileHandler(
 	files ProjectFileService,
 	uploads ProjectFileUploader,
@@ -99,6 +134,27 @@ func newProjectFileHandler(
 			nil,
 			files,
 			uploads,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+}
+
+func newProjectFileDownloadHandler(
+	downloads ProjectFileDownloader,
+) http.Handler {
+	return NewHandler(
+		NewServerWithVersioningAndFiles(
+			fakeDatabase{},
+			nil,
+			nil,
+			nil,
+			nil,
+			downloads,
 			nil,
 			nil,
 			nil,
@@ -645,6 +701,332 @@ func TestGetProjectFileReturnsFile(t *testing.T) {
 		*body.MediaType != mediaType ||
 		!body.CreatedAt.Equal(createdAt) {
 		t.Fatalf("unexpected project file response: %+v", body)
+	}
+}
+
+func TestDownloadProjectFileContentRequiresAuthentication(
+	t *testing.T,
+) {
+	downloads := &fakeProjectFileDownloader{}
+	handler := newProjectFileDownloadHandler(downloads)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/files/"+
+			uuid.New().String()+
+			"/content",
+		nil,
+	)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusUnauthorized,
+			response.Code,
+		)
+	}
+
+	if downloads.called {
+		t.Fatal("expected download service not to be called")
+	}
+}
+
+func TestDownloadProjectFileContentRequiresDependency(
+	t *testing.T,
+) {
+	handler := newProjectFileDownloadHandler(nil)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			uuid.New().String()+
+			"/files/"+
+			uuid.New().String()+
+			"/content",
+		nil,
+	)
+	request = requestWithSession(request, uuid.New())
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusInternalServerError,
+			response.Code,
+		)
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "unable to download project file" {
+		t.Fatalf(
+			"expected download dependency error, got %q",
+			body.Error,
+		)
+	}
+}
+
+func TestDownloadProjectFileContentRejectsMalformedIDs(
+	t *testing.T,
+) {
+	tests := []string{
+		"/api/projects/not-a-uuid/files/" +
+			uuid.New().String() +
+			"/content",
+		"/api/projects/" +
+			uuid.New().String() +
+			"/files/not-a-uuid/content",
+	}
+
+	for _, path := range tests {
+		t.Run(path, func(t *testing.T) {
+			downloads := &fakeProjectFileDownloader{}
+			handler := newProjectFileDownloadHandler(downloads)
+
+			request := httptest.NewRequest(
+				http.MethodGet,
+				path,
+				nil,
+			)
+			request = requestWithSession(
+				request,
+				uuid.New(),
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusBadRequest,
+					response.Code,
+				)
+			}
+
+			if downloads.called {
+				t.Fatal(
+					"expected download service not to be called",
+				)
+			}
+		})
+	}
+}
+
+func TestDownloadProjectFileContentMapsServiceErrors(
+	t *testing.T,
+) {
+	tests := []struct {
+		name        string
+		serviceErr  error
+		wantStatus  int
+		wantMessage string
+	}{
+		{
+			name:        "missing project ID",
+			serviceErr:  filestorage.ErrProjectIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "project ID is required",
+		},
+		{
+			name:        "missing project file ID",
+			serviceErr:  filestorage.ErrProjectFileIDRequired,
+			wantStatus:  http.StatusBadRequest,
+			wantMessage: "project file ID is required",
+		},
+		{
+			name:        "project not found",
+			serviceErr:  filestorage.ErrProjectNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "project not found",
+		},
+		{
+			name:        "project file not found",
+			serviceErr:  filestorage.ErrProjectFileNotFound,
+			wantStatus:  http.StatusNotFound,
+			wantMessage: "project file not found",
+		},
+		{
+			name:        "physical object missing",
+			serviceErr:  storage.ErrContentNotFound,
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "unable to download project file",
+		},
+		{
+			name:        "physical object corrupt",
+			serviceErr:  storage.ErrContentIntegrity,
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "unable to download project file",
+		},
+		{
+			name:        "unexpected service error",
+			serviceErr:  errors.New("storage unavailable"),
+			wantStatus:  http.StatusInternalServerError,
+			wantMessage: "unable to download project file",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			downloads := &fakeProjectFileDownloader{
+				err: test.serviceErr,
+			}
+			handler := newProjectFileDownloadHandler(downloads)
+
+			request := httptest.NewRequest(
+				http.MethodGet,
+				"/api/projects/"+
+					uuid.New().String()+
+					"/files/"+
+					uuid.New().String()+
+					"/content",
+				nil,
+			)
+			request = requestWithSession(
+				request,
+				uuid.New(),
+			)
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != test.wantStatus {
+				t.Fatalf(
+					"expected status %d, got %d",
+					test.wantStatus,
+					response.Code,
+				)
+			}
+
+			body := decodeErrorResponse(t, response)
+			if body.Error != test.wantMessage {
+				t.Fatalf(
+					"expected error %q, got %q",
+					test.wantMessage,
+					body.Error,
+				)
+			}
+		})
+	}
+}
+
+func TestDownloadProjectFileContentStreamsSourceFile(
+	t *testing.T,
+) {
+	userID := uuid.New()
+	projectID := uuid.New()
+	projectFileID := uuid.New()
+	filename := `gripper "final".step`
+	expectedContent := []byte(
+		"authoritative CAD source file bytes",
+	)
+
+	content := &trackingReadCloser{
+		Reader: bytes.NewReader(expectedContent),
+	}
+
+	downloads := &fakeProjectFileDownloader{
+		result: filestorage.DownloadResult{
+			ProjectFile: dbgen.ProjectFile{
+				ID:               projectFileID,
+				ProjectID:        projectID,
+				UploadedByUserID: userID,
+				ContentSha256:    strings.Repeat("a", 64),
+				OriginalFilename: filename,
+			},
+			Content: content,
+		},
+	}
+	handler := newProjectFileDownloadHandler(downloads)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/projects/"+
+			projectID.String()+
+			"/files/"+
+			projectFileID.String()+
+			"/content",
+		nil,
+	)
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf(
+			"expected status %d, got %d",
+			http.StatusOK,
+			response.Code,
+		)
+	}
+
+	if !downloads.called {
+		t.Fatal("expected download service call")
+	}
+
+	if downloads.ownerUserID != userID ||
+		downloads.projectID != projectID ||
+		downloads.projectFileID != projectFileID {
+		t.Fatalf(
+			"unexpected download arguments: owner=%s project=%s file=%s",
+			downloads.ownerUserID,
+			downloads.projectID,
+			downloads.projectFileID,
+		)
+	}
+
+	if response.Header().Get("Content-Type") !=
+		"application/octet-stream" {
+		t.Fatalf(
+			"expected application/octet-stream, got %q",
+			response.Header().Get("Content-Type"),
+		)
+	}
+
+	disposition := response.Header().Get(
+		"Content-Disposition",
+	)
+	mediaType, params, err := mime.ParseMediaType(disposition)
+	if err != nil {
+		t.Fatalf(
+			"parse Content-Disposition %q: %v",
+			disposition,
+			err,
+		)
+	}
+
+	if mediaType != "attachment" {
+		t.Fatalf(
+			"expected attachment disposition, got %q",
+			mediaType,
+		)
+	}
+
+	if params["filename"] != filename {
+		t.Fatalf(
+			"expected filename %q, got %q",
+			filename,
+			params["filename"],
+		)
+	}
+
+	if !bytes.Equal(response.Body.Bytes(), expectedContent) {
+		t.Fatalf(
+			"expected response content %q, got %q",
+			expectedContent,
+			response.Body.Bytes(),
+		)
+	}
+
+	if !content.closed {
+		t.Fatal("expected streamed content to be closed")
 	}
 }
 
