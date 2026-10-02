@@ -12,6 +12,8 @@ import (
 
 type Querier interface {
 	AdvanceProjectBranchHead(ctx context.Context, arg AdvanceProjectBranchHeadParams) (ProjectBranch, error)
+	ClaimNextPendingConversionJob(ctx context.Context) (ConversionJob, error)
+	CreateConversionJob(ctx context.Context, arg CreateConversionJobParams) (ConversionJob, error)
 	CreatePasswordCredential(ctx context.Context, arg CreatePasswordCredentialParams) (PasswordCredential, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateProjectBranch(ctx context.Context, arg CreateProjectBranchParams) (ProjectBranch, error)
@@ -27,6 +29,7 @@ type Querier interface {
 	EnsureContentObject(ctx context.Context, arg EnsureContentObjectParams) (ContentObject, error)
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveSessionByTokenHashRow, error)
 	GetContentObjectBySHA256(ctx context.Context, sha256 string) (ContentObject, error)
+	GetConversionJobByIDAndProject(ctx context.Context, arg GetConversionJobByIDAndProjectParams) (ConversionJob, error)
 	GetLoginCredentialByEmail(ctx context.Context, email string) (GetLoginCredentialByEmailRow, error)
 	GetPasswordCredentialByUserID(ctx context.Context, userID uuid.UUID) (PasswordCredential, error)
 	GetProjectBranchByIDAndProject(ctx context.Context, arg GetProjectBranchByIDAndProjectParams) (ProjectBranch, error)
@@ -35,11 +38,14 @@ type Querier interface {
 	GetProjectRevisionByIDAndProject(ctx context.Context, arg GetProjectRevisionByIDAndProjectParams) (ProjectRevision, error)
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	ListConversionJobsByProjectFile(ctx context.Context, arg ListConversionJobsByProjectFileParams) ([]ConversionJob, error)
 	ListProjectBranchesByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectBranch, error)
 	ListProjectFilesByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectFile, error)
 	ListProjectFilesByRevision(ctx context.Context, arg ListProjectFilesByRevisionParams) ([]ProjectFile, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 	ListReachableProjectRevisionsFromRevision(ctx context.Context, arg ListReachableProjectRevisionsFromRevisionParams) ([]ProjectRevision, error)
+	MarkConversionJobFailed(ctx context.Context, arg MarkConversionJobFailedParams) (ConversionJob, error)
+	MarkConversionJobSucceeded(ctx context.Context, conversionJobID uuid.UUID) (ConversionJob, error)
 	RenameProjectBranch(ctx context.Context, arg RenameProjectBranchParams) (ProjectBranch, error)
 	UpdateProjectMetadataByIDAndOwner(ctx context.Context, arg UpdateProjectMetadataByIDAndOwnerParams) (Project, error)
 }

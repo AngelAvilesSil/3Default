@@ -17,6 +17,19 @@ type ContentObject struct {
 	CreatedAt time.Time
 }
 
+type ConversionJob struct {
+	ID            uuid.UUID
+	ProjectID     uuid.UUID
+	ProjectFileID uuid.UUID
+	Status        string
+	AttemptCount  int32
+	LastError     *string
+	CreatedAt     time.Time
+	StartedAt     pgtype.Timestamptz
+	FinishedAt    pgtype.Timestamptz
+	UpdatedAt     time.Time
+}
+
 type PasswordCredential struct {
 	UserID       uuid.UUID
 	PasswordHash string
