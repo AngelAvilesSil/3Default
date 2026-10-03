@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: project versioning and authenticated file-storage APIs**
+**Current phase: project versioning, authenticated file storage, and durable conversion-job orchestration**
 
 Implemented foundations include:
 
@@ -31,6 +31,10 @@ Implemented foundations include:
 * authenticated project-file metadata listing and detail reads
 * authenticated streaming source-file download with integrity verification
 * authenticated exact revision-file snapshot creation and listing
+* durable PostgreSQL-backed CAD conversion jobs with `pending`, `running`, `succeeded`, and `failed` states
+* authenticated conversion-job creation, project-file job history, and project-scoped job detail APIs
+* embedded conversion worker with PostgreSQL-backed claiming, at-least-once execution semantics, graceful requeue, and startup recovery
+* replaceable converter adapter boundary for the future CAD-to-preview pipeline
 * persistent Docker storage configured through `STORAGE_ROOT`
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
@@ -42,7 +46,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication, core project-versioning, and file-storage foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, and streaming source-file download, exact revision-file snapshots supplied during revision creation, and authenticated revision-file snapshot reads. Immutable-history hardening, CAD conversion, preview generation, visualization, and user-facing merge/conflict-resolution workflows remain future work.
+The authentication, core project-versioning, file-storage, and durable conversion-job foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, and an embedded worker that claims and executes persisted jobs. The current conversion layer deliberately records job lifecycle only: it does not yet persist derived GLB/glTF artifacts or start a production converter from `main`. Immutable-history hardening, preview generation, visualization, and user-facing merge/conflict-resolution workflows remain future work.
 
 ---
 
@@ -86,6 +90,9 @@ Go HTTP server
    ├── OpenAPI transport
    ├── authentication/session handling
    ├── application services
+   ├── embedded conversion worker implementation
+   │      │    (startup deferred to preview pipeline)
+   │      └── replaceable converter adapter
    ├── sqlc data access
    │      │
    │      ▼
@@ -108,7 +115,8 @@ Browser
 Go application
    ├── serves built Vue assets
    ├── serves /api/*
-   ├── persists application metadata in PostgreSQL
+   ├── persists application metadata and durable jobs in PostgreSQL
+   ├── runs an embedded conversion worker when a real converter/output pipeline is configured
    └── stores immutable source content through the
        configured content-storage implementation
 ```
@@ -172,6 +180,7 @@ Go is intentionally **not required on the Windows host**. Go tooling, `gopls`, b
 │   ├── api/
 │   ├── auth/
 │   ├── config/
+│   ├── conversionjobs/
 │   ├── database/
 │   ├── filestorage/
 │   ├── httpapi/
@@ -302,6 +311,9 @@ GET  /api/projects/{projectId}/files
 POST /api/projects/{projectId}/files
 GET  /api/projects/{projectId}/files/{projectFileId}
 GET  /api/projects/{projectId}/files/{projectFileId}/content
+GET  /api/projects/{projectId}/files/{projectFileId}/conversion-jobs
+POST /api/projects/{projectId}/files/{projectFileId}/conversion-jobs
+GET  /api/projects/{projectId}/conversion-jobs/{conversionJobId}
 
 GET    /api/projects/{projectId}/branches
 POST   /api/projects/{projectId}/branches
@@ -485,7 +497,7 @@ Successful downloads return `application/octet-stream`. `Content-Disposition` is
 
 A missing or wrong-project metadata record remains a normal owner-scoped `404`. If project-file metadata exists but its physical content object is missing, non-regular, unreadable, or hash-corrupt, the condition is treated as an internal storage inconsistency and the download endpoint returns `500` rather than pretending that the project-file metadata does not exist.
 
-The current HTTP API therefore exposes project-file metadata, exact revision-file snapshot metadata, and authoritative physical source-file download. CAD conversion, preview generation, derived-file retrieval, HTTP range requests, conditional caching/ETags, and browser visualization remain future work.
+The current HTTP API therefore exposes project-file metadata, exact revision-file snapshot metadata, authoritative physical source-file download, and durable conversion-job orchestration. Actual derived-file persistence and retrieval, GLB/glTF preview generation, HTTP range requests, conditional caching/ETags, and browser visualization remain future work.
 
 The filesystem root is supplied through the required `STORAGE_ROOT` environment variable. The Docker development configuration uses:
 
@@ -494,6 +506,65 @@ STORAGE_ROOT=/var/lib/3default/storage
 ```
 
 and persists that path with the `storage-data` named Docker volume, keeping uploaded engineering data outside the Git working tree.
+
+---
+
+## Conversion Job Model and API
+
+Conversion jobs provide the durable orchestration layer between authoritative source files and the future derived-preview pipeline.
+
+A job belongs to exactly one project file and therefore to exactly one project. PostgreSQL stores the job lifecycle independently from the future converted artifact so that job execution can be retried or recovered without changing the source file.
+
+Current states are:
+
+```text
+pending
+   │
+   │ worker claim
+   ▼
+running
+   ├── converter succeeds ──► succeeded
+   ├── converter fails ─────► failed
+   ├── graceful shutdown ───► pending
+   └── process crash ───────► recovered to pending on startup
+```
+
+The schema enforces the state/timestamp relationships, keeps `attempt_count`, stores a trimmed `last_error` only for failed jobs, and retains completed jobs as history. At most one `pending` or `running` job may exist for the same project file at a time. After a job reaches `succeeded` or `failed`, a later conversion request may create another job for that file.
+
+The embedded worker claims the oldest pending job with PostgreSQL row locking and `FOR UPDATE SKIP LOCKED`, increments its attempt count, and transitions it to `running`. Execution is intentionally **at least once** rather than exactly once. A converter must therefore tolerate the possibility that a previously started job is executed again after process failure and startup recovery.
+
+Graceful cancellation requeues the currently running job instead of marking it failed. Startup recovery also requeues rows left in `running` by an earlier process. This recovery model is correct for the current single-process, single-worker deployment shape. A future multi-process or distributed worker topology would require a lease or heartbeat mechanism rather than globally requeueing all running jobs.
+
+The converter itself is behind a replaceable adapter boundary. The current worker invokes that interface and records success or failure, but the milestone intentionally does **not** define a derived-output record, GLB/glTF storage contract, preview URL, or browser-viewer integration. Those responsibilities belong to the next preview-pipeline milestone.
+
+Conversion jobs are exposed through authenticated, owner-scoped endpoints:
+
+```text
+POST /api/projects/{projectId}/files/{projectFileId}/conversion-jobs
+GET  /api/projects/{projectId}/files/{projectFileId}/conversion-jobs
+GET  /api/projects/{projectId}/conversion-jobs/{conversionJobId}
+```
+
+`POST` creates a durable `pending` job and returns `201 Created`. If the same project file already has a `pending` or `running` job, the request returns `409 Conflict`.
+
+The project-file history endpoint returns retained jobs newest first. The project-scoped detail endpoint returns one job by ID. Missing projects, non-owned projects, missing files, wrong-project files, missing jobs, and wrong-project jobs remain owner-scoped `404` cases rather than exposing another user's resources.
+
+The HTTP response includes:
+
+* job ID
+* project ID
+* project-file ID
+* status
+* attempt count
+* nullable last error
+* creation time
+* nullable start time
+* nullable finish time
+* update time
+
+All nested project routes participate in the same PostgreSQL-backed session resolution as the project collection and project-detail APIs. Unsafe cross-origin browser requests to the conversion-job creation endpoint are rejected by the shared request protection.
+
+The conversion service is wired into the HTTP application in `main`, but the production worker is deliberately **not started there yet**. Starting the worker before a real converter and derived-output pipeline exist could allow jobs to be marked successful without a persisted preview artifact. Worker startup, converted-artifact persistence, and preview retrieval are therefore deferred to the GLB/glTF preview-pipeline milestone.
 
 ---
 
@@ -622,7 +693,7 @@ Run PostgreSQL integration tests:
 go test -count=1 -tags=integration -v ./internal/database
 ```
 
-Current integration coverage includes user and project persistence, session lifecycle behavior, password credential persistence, versioning transactions and constraints, content-object and project-file persistence, cross-project content reuse, storage metadata conflicts, transaction rollback, and atomic multi-row persistence paths.
+Current integration coverage includes user and project persistence, session lifecycle behavior, password credential persistence, versioning transactions and constraints, content-object and project-file persistence, cross-project content reuse, storage metadata conflicts, conversion-job creation and lifecycle transitions, concurrent-safe pending-job claiming, startup recovery, transaction rollback, and atomic multi-row persistence paths.
 
 Before committing:
 
@@ -650,6 +721,7 @@ Development follows a milestone-based Git workflow.
 milestone/authentication
 milestone/project-versioning
 milestone/file-storage
+milestone/conversion-jobs
 ```
 
 Within each milestone, work remains divided into small logical commits. Completed milestones are merged into `main` through pull requests.
@@ -666,6 +738,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * **Immutable content should not be destructively compensated.** A failed metadata write must not delete a content-addressed object that may be shared by another reference or concurrent upload.
 * **Identity comes from authentication.** Clients should not declare ownership of authenticated resources.
 * **Infrastructure stays simple until complexity is justified.** PostgreSQL and a modular monolith are preferred over premature distributed services.
+* **Durable background work belongs in durable state.** Conversion jobs are persisted before execution and recovered explicitly rather than relying on in-memory queues.
+* **Derived artifacts remain replaceable.** Conversion and preview outputs must be reproducible from authoritative source files and should not become the source of truth.
 * **Development should resemble production.** The development architecture intentionally follows the expected production shape.
 
 ---
@@ -724,7 +798,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] authenticated source-file upload
 * [x] authenticated project-file metadata listing and detail API
 * [x] physical file download/open API
-* [ ] conversion jobs
+* [x] conversion jobs
 * [ ] GLB/glTF preview pipeline
 * [ ] Three.js browser viewer
 * [ ] assembly/revision relationships
@@ -751,7 +825,7 @@ The rebuild is intentionally incremental rather than attempting to recreate the 
 
 ## Portfolio and Product Direction
 
-As a portfolio project, 3Default demonstrates practical engineering across Go, PostgreSQL, SQL and schema design, REST APIs, authentication, Docker, generated code workflows, integration testing, content-addressed storage, streaming file uploads and downloads, Git, and product-oriented architecture.
+As a portfolio project, 3Default demonstrates practical engineering across Go, PostgreSQL, SQL and schema design, REST APIs, authentication, Docker, generated code workflows, integration testing, content-addressed storage, streaming file uploads and downloads, durable background-job orchestration, concurrency-safe PostgreSQL work claiming, Git, and product-oriented architecture.
 
 As a potential product, the goal is to preserve a foundation that can evolve into a usable engineering collaboration platform without discarding the portfolio implementation and starting over.
 
