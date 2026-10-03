@@ -130,3 +130,35 @@ RETURNING
     started_at,
     finished_at,
     updated_at;
+
+-- name: RequeueConversionJob :one
+UPDATE conversion_jobs
+SET
+    status = 'pending',
+    started_at = NULL,
+    finished_at = NULL,
+    last_error = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg(conversion_job_id)
+  AND status = 'running'
+RETURNING
+    id,
+    project_id,
+    project_file_id,
+    status,
+    attempt_count,
+    last_error,
+    created_at,
+    started_at,
+    finished_at,
+    updated_at;
+
+-- name: RequeueRunningConversionJobs :exec
+UPDATE conversion_jobs
+SET
+    status = 'pending',
+    started_at = NULL,
+    finished_at = NULL,
+    last_error = NULL,
+    updated_at = now()
+WHERE status = 'running';
