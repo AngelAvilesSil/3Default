@@ -8,6 +8,7 @@ import (
 
 	"github.com/AngelAvilesSil/3Default/internal/auth"
 	"github.com/AngelAvilesSil/3Default/internal/config"
+	"github.com/AngelAvilesSil/3Default/internal/conversionjobs"
 	"github.com/AngelAvilesSil/3Default/internal/database"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/filestorage"
@@ -74,6 +75,13 @@ func main() {
 		contentStore,
 	)
 
+	conversionJobStore := database.NewConversionJobStore(db)
+	conversionJobService := conversionjobs.NewService(
+		projectStore,
+		fileStore,
+		conversionJobStore,
+	)
+
 	registrationStore := database.NewRegistrationStore(db)
 
 	passwordBlocklist := auth.NewLocalPasswordBlocklist(
@@ -119,13 +127,14 @@ func main() {
 	}
 
 	handler := httpapi.NewHandler(
-		httpapi.NewServerWithVersioningAndFiles(
+		httpapi.NewServerWithConversionJobs(
 			db,
 			projectService,
 			versioningService,
 			fileService,
 			fileUploadService,
 			fileDownloadService,
+			conversionJobService,
 			registrationService,
 			loginService,
 			sessionService,
