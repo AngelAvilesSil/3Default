@@ -12,6 +12,7 @@ import (
 
 	api "github.com/AngelAvilesSil/3Default/internal/api"
 	"github.com/AngelAvilesSil/3Default/internal/auth"
+	"github.com/AngelAvilesSil/3Default/internal/conversionjobs"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/filestorage"
 	"github.com/AngelAvilesSil/3Default/internal/projects"
@@ -116,6 +117,25 @@ type ProjectFileDownloader interface {
 	) (filestorage.DownloadResult, error)
 }
 
+type ConversionJobService interface {
+	Create(
+		ctx context.Context,
+		input conversionjobs.CreateInput,
+	) (dbgen.ConversionJob, error)
+	Get(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+		conversionJobID googleuuid.UUID,
+	) (dbgen.ConversionJob, error)
+	ListForProjectFile(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+		projectFileID googleuuid.UUID,
+	) ([]dbgen.ConversionJob, error)
+}
+
 type UserRegistrar interface {
 	Register(
 		ctx context.Context,
@@ -151,6 +171,7 @@ type Server struct {
 	projectFiles       ProjectFileService
 	fileUploads        ProjectFileUploader
 	fileDownloads      ProjectFileDownloader
+	conversionJobs     ConversionJobService
 	registrations      UserRegistrar
 	authentication     UserAuthenticator
 	sessionRevocations SessionRevoker
@@ -222,6 +243,37 @@ func NewServerWithVersioningAndFiles(
 	server.projectFiles = projectFiles
 	server.fileUploads = fileUploads
 	server.fileDownloads = fileDownloads
+
+	return server
+}
+
+func NewServerWithConversionJobs(
+	database DatabasePinger,
+	projects ProjectService,
+	versioningService VersioningService,
+	projectFiles ProjectFileService,
+	fileUploads ProjectFileUploader,
+	fileDownloads ProjectFileDownloader,
+	conversionJobs ConversionJobService,
+	registrations UserRegistrar,
+	authentication UserAuthenticator,
+	sessionRevocations SessionRevoker,
+	currentUsers CurrentUserReader,
+) *Server {
+	server := NewServerWithVersioningAndFiles(
+		database,
+		projects,
+		versioningService,
+		projectFiles,
+		fileUploads,
+		fileDownloads,
+		registrations,
+		authentication,
+		sessionRevocations,
+		currentUsers,
+	)
+
+	server.conversionJobs = conversionJobs
 
 	return server
 }
@@ -1802,11 +1854,271 @@ func apiUUIDFromPGUUID(value pgtype.UUID) *uuid.UUID {
 	return &converted
 }
 
+func (s *Server) CreateProjectFileConversionJob(
+	ctx context.Context,
+	request api.CreateProjectFileConversionJobRequestObject,
+) (api.CreateProjectFileConversionJobResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.CreateProjectFileConversionJob500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.CreateProjectFileConversionJob401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.conversionJobs == nil {
+		return api.CreateProjectFileConversionJob500JSONResponse{
+			Error: "unable to create conversion job",
+		}, nil
+	}
+
+	job, err := s.conversionJobs.Create(
+		ctx,
+		conversionjobs.CreateInput{
+			OwnerUserID:   session.UserID,
+			ProjectID:     googleuuid.UUID(request.ProjectId),
+			ProjectFileID: googleuuid.UUID(request.ProjectFileId),
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, conversionjobs.ErrProjectIDRequired):
+			return api.CreateProjectFileConversionJob400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrProjectFileIDRequired,
+		):
+			return api.CreateProjectFileConversionJob400JSONResponse{
+				Error: "project file ID is required",
+			}, nil
+
+		case errors.Is(err, conversionjobs.ErrProjectNotFound):
+			return api.CreateProjectFileConversionJob404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrProjectFileNotFound,
+		):
+			return api.CreateProjectFileConversionJob404JSONResponse{
+				Error: "project file not found",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrActiveConversionJobExists,
+		):
+			return api.CreateProjectFileConversionJob409JSONResponse{
+				Error: "active conversion job already exists",
+			}, nil
+
+		default:
+			return api.CreateProjectFileConversionJob500JSONResponse{
+				Error: "unable to create conversion job",
+			}, nil
+		}
+	}
+
+	return api.CreateProjectFileConversionJob201JSONResponse(
+		conversionJobResponse(job),
+	), nil
+}
+
+func (s *Server) GetProjectConversionJob(
+	ctx context.Context,
+	request api.GetProjectConversionJobRequestObject,
+) (api.GetProjectConversionJobResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.GetProjectConversionJob500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.GetProjectConversionJob401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.conversionJobs == nil {
+		return api.GetProjectConversionJob500JSONResponse{
+			Error: "unable to get conversion job",
+		}, nil
+	}
+
+	job, err := s.conversionJobs.Get(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+		googleuuid.UUID(request.ConversionJobId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, conversionjobs.ErrProjectIDRequired):
+			return api.GetProjectConversionJob400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrConversionJobIDRequired,
+		):
+			return api.GetProjectConversionJob400JSONResponse{
+				Error: "conversion job ID is required",
+			}, nil
+
+		case errors.Is(err, conversionjobs.ErrProjectNotFound):
+			return api.GetProjectConversionJob404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrConversionJobNotFound,
+		):
+			return api.GetProjectConversionJob404JSONResponse{
+				Error: "conversion job not found",
+			}, nil
+
+		default:
+			return api.GetProjectConversionJob500JSONResponse{
+				Error: "unable to get conversion job",
+			}, nil
+		}
+	}
+
+	return api.GetProjectConversionJob200JSONResponse(
+		conversionJobResponse(job),
+	), nil
+}
+
+func (s *Server) ListProjectFileConversionJobs(
+	ctx context.Context,
+	request api.ListProjectFileConversionJobsRequestObject,
+) (api.ListProjectFileConversionJobsResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.ListProjectFileConversionJobs500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.ListProjectFileConversionJobs401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.conversionJobs == nil {
+		return api.ListProjectFileConversionJobs500JSONResponse{
+			Error: "unable to list conversion jobs",
+		}, nil
+	}
+
+	jobs, err := s.conversionJobs.ListForProjectFile(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+		googleuuid.UUID(request.ProjectFileId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, conversionjobs.ErrProjectIDRequired):
+			return api.ListProjectFileConversionJobs400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrProjectFileIDRequired,
+		):
+			return api.ListProjectFileConversionJobs400JSONResponse{
+				Error: "project file ID is required",
+			}, nil
+
+		case errors.Is(err, conversionjobs.ErrProjectNotFound):
+			return api.ListProjectFileConversionJobs404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrProjectFileNotFound,
+		):
+			return api.ListProjectFileConversionJobs404JSONResponse{
+				Error: "project file not found",
+			}, nil
+
+		default:
+			return api.ListProjectFileConversionJobs500JSONResponse{
+				Error: "unable to list conversion jobs",
+			}, nil
+		}
+	}
+
+	response := make(
+		api.ListProjectFileConversionJobs200JSONResponse,
+		0,
+		len(jobs),
+	)
+
+	for _, job := range jobs {
+		response = append(
+			response,
+			conversionJobResponse(job),
+		)
+	}
+
+	return response, nil
+}
+
+func conversionJobResponse(
+	job dbgen.ConversionJob,
+) api.ConversionJobResponse {
+	return api.ConversionJobResponse{
+		Id:            uuid.UUID(job.ID),
+		ProjectId:     uuid.UUID(job.ProjectID),
+		ProjectFileId: uuid.UUID(job.ProjectFileID),
+		Status: api.ConversionJobResponseStatus(
+			job.Status,
+		),
+		AttemptCount: job.AttemptCount,
+		LastError:    job.LastError,
+		CreatedAt:    job.CreatedAt,
+		StartedAt:    apiTimeFromPGTimestamptz(job.StartedAt),
+		FinishedAt:   apiTimeFromPGTimestamptz(job.FinishedAt),
+		UpdatedAt:    job.UpdatedAt,
+	}
+}
+
+func apiTimeFromPGTimestamptz(
+	value pgtype.Timestamptz,
+) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+
+	converted := value.Time
+
+	return &converted
+}
+
 var _ ProjectService = (*projects.Service)(nil)
 var _ VersioningService = (*versioning.Service)(nil)
 var _ ProjectFileService = (*filestorage.Service)(nil)
 var _ ProjectFileUploader = (*filestorage.UploadService)(nil)
 var _ ProjectFileDownloader = (*filestorage.DownloadService)(nil)
+var _ ConversionJobService = (*conversionjobs.Service)(nil)
 var _ UserRegistrar = (*auth.RegistrationService)(nil)
 var _ UserAuthenticator = (*auth.LoginService)(nil)
 var _ SessionRevoker = (*auth.SessionService)(nil)

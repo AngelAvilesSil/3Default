@@ -552,6 +552,166 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/projects/{projectId}/files/{projectFileId}/conversion-jobs:
+    get:
+      operationId: listProjectFileConversionJobs
+      summary: List conversion jobs for a project file owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: projectFileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Conversion jobs listed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ConversionJobResponse"
+        "400":
+          description: Invalid project or project file ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project or project file not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      operationId: createProjectFileConversionJob
+      summary: Request conversion of a project file owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: projectFileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "201":
+          description: Conversion job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversionJobResponse"
+        "400":
+          description: Invalid project or project file ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Cross-origin request rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project or project file not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Active conversion job already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/projects/{projectId}/conversion-jobs/{conversionJobId}:
+    get:
+      operationId: getProjectConversionJob
+      summary: Get a conversion job for a project owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: conversionJobId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Conversion job found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversionJobResponse"
+        "400":
+          description: Invalid project or conversion job ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project or conversion job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/projects/{projectId}/branches:
     get:
       operationId: listProjectBranches
@@ -1160,6 +1320,62 @@ components:
             - string
             - "null"
         createdAt:
+          type: string
+          format: date-time
+
+    ConversionJobResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - projectId
+        - projectFileId
+        - status
+        - attemptCount
+        - lastError
+        - createdAt
+        - startedAt
+        - finishedAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        projectFileId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - pending
+            - running
+            - succeeded
+            - failed
+        attemptCount:
+          type: integer
+          format: int32
+          minimum: 0
+        lastError:
+          type:
+            - string
+            - "null"
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        finishedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        updatedAt:
           type: string
           format: date-time
 

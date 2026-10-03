@@ -21,6 +21,30 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for ConversionJobResponseStatus.
+const (
+	Failed    ConversionJobResponseStatus = "failed"
+	Pending   ConversionJobResponseStatus = "pending"
+	Running   ConversionJobResponseStatus = "running"
+	Succeeded ConversionJobResponseStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the ConversionJobResponseStatus enum.
+func (e ConversionJobResponseStatus) Valid() bool {
+	switch e {
+	case Failed:
+		return true
+	case Pending:
+		return true
+	case Running:
+		return true
+	case Succeeded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HealthResponseStatus.
 const (
 	Ok HealthResponseStatus = "ok"
@@ -71,6 +95,23 @@ func (e ReadyResponseStatus) Valid() bool {
 		return false
 	}
 }
+
+// ConversionJobResponse defines model for ConversionJobResponse.
+type ConversionJobResponse struct {
+	AttemptCount  int32                       `json:"attemptCount"`
+	CreatedAt     time.Time                   `json:"createdAt"`
+	FinishedAt    *time.Time                  `json:"finishedAt"`
+	Id            uuid.UUID                   `json:"id"`
+	LastError     *string                     `json:"lastError"`
+	ProjectFileId uuid.UUID                   `json:"projectFileId"`
+	ProjectId     uuid.UUID                   `json:"projectId"`
+	StartedAt     *time.Time                  `json:"startedAt"`
+	Status        ConversionJobResponseStatus `json:"status"`
+	UpdatedAt     time.Time                   `json:"updatedAt"`
+}
+
+// ConversionJobResponseStatus defines model for ConversionJobResponse.Status.
+type ConversionJobResponseStatus string
 
 // CreateProjectBranchRequest defines model for CreateProjectBranchRequest.
 type CreateProjectBranchRequest struct {
@@ -267,6 +308,9 @@ type ServerInterface interface {
 	// CreateProjectRevision Create a revision on a project branch
 	// (POST /api/projects/{projectId}/branches/{branchId}/revisions)
 	CreateProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, branchId uuid.UUID)
+	// GetProjectConversionJob Get a conversion job for a project owned by the current user
+	// (GET /api/projects/{projectId}/conversion-jobs/{conversionJobId})
+	GetProjectConversionJob(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, conversionJobId uuid.UUID)
 	// ListProjectFiles List files for a project owned by the current user
 	// (GET /api/projects/{projectId}/files)
 	ListProjectFiles(w http.ResponseWriter, r *http.Request, projectId uuid.UUID)
@@ -279,6 +323,12 @@ type ServerInterface interface {
 	// DownloadProjectFileContent Download source file content for a project owned by the current user
 	// (GET /api/projects/{projectId}/files/{projectFileId}/content)
 	DownloadProjectFileContent(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID)
+	// ListProjectFileConversionJobs List conversion jobs for a project file owned by the current user
+	// (GET /api/projects/{projectId}/files/{projectFileId}/conversion-jobs)
+	ListProjectFileConversionJobs(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID)
+	// CreateProjectFileConversionJob Request conversion of a project file owned by the current user
+	// (POST /api/projects/{projectId}/files/{projectFileId}/conversion-jobs)
+	CreateProjectFileConversionJob(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID)
@@ -641,6 +691,41 @@ func (siw *ServerInterfaceWrapper) CreateProjectRevision(w http.ResponseWriter, 
 	handler.ServeHTTP(w, r)
 }
 
+// GetProjectConversionJob operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectConversionJob(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "conversionJobId" -------------
+	var conversionJobId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "conversionJobId", r.PathValue("conversionJobId"), &conversionJobId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversionJobId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectConversionJob(w, r, projectId, conversionJobId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListProjectFiles operation middleware
 func (siw *ServerInterfaceWrapper) ListProjectFiles(w http.ResponseWriter, r *http.Request) {
 
@@ -754,6 +839,76 @@ func (siw *ServerInterfaceWrapper) DownloadProjectFileContent(w http.ResponseWri
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DownloadProjectFileContent(w, r, projectId, projectFileId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListProjectFileConversionJobs operation middleware
+func (siw *ServerInterfaceWrapper) ListProjectFileConversionJobs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "projectFileId" -------------
+	var projectFileId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectFileId", r.PathValue("projectFileId"), &projectFileId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectFileId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListProjectFileConversionJobs(w, r, projectId, projectFileId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateProjectFileConversionJob operation middleware
+func (siw *ServerInterfaceWrapper) CreateProjectFileConversionJob(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "projectFileId" -------------
+	var projectFileId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectFileId", r.PathValue("projectFileId"), &projectFileId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectFileId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateProjectFileConversionJob(w, r, projectId, projectFileId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -981,6 +1136,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/files", wrapper.UploadProjectFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}", wrapper.GetProjectFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}/content", wrapper.DownloadProjectFileContent)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}/conversion-jobs", wrapper.ListProjectFileConversionJobs)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}/conversion-jobs", wrapper.CreateProjectFileConversionJob)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/conversion-jobs/{conversionJobId}", wrapper.GetProjectConversionJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.ListProjectBranches)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/branches", wrapper.CreateProjectBranch)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/api/projects/{projectId}/branches/{branchId}", wrapper.DeleteProjectBranch)
@@ -2159,6 +2317,85 @@ func (response CreateProjectRevision500JSONResponse) VisitCreateProjectRevisionR
 	return err
 }
 
+type GetProjectConversionJobRequestObject struct {
+	ProjectId       uuid.UUID `json:"projectId"`
+	ConversionJobId uuid.UUID `json:"conversionJobId"`
+}
+
+type GetProjectConversionJobResponseObject interface {
+	VisitGetProjectConversionJobResponse(w http.ResponseWriter) error
+}
+
+type GetProjectConversionJob200JSONResponse ConversionJobResponse
+
+func (response GetProjectConversionJob200JSONResponse) VisitGetProjectConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectConversionJob400JSONResponse ErrorResponse
+
+func (response GetProjectConversionJob400JSONResponse) VisitGetProjectConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectConversionJob401JSONResponse ErrorResponse
+
+func (response GetProjectConversionJob401JSONResponse) VisitGetProjectConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectConversionJob404JSONResponse ErrorResponse
+
+func (response GetProjectConversionJob404JSONResponse) VisitGetProjectConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectConversionJob500JSONResponse ErrorResponse
+
+func (response GetProjectConversionJob500JSONResponse) VisitGetProjectConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListProjectFilesRequestObject struct {
 	ProjectId uuid.UUID `json:"projectId"`
 }
@@ -2516,6 +2753,192 @@ func (response DownloadProjectFileContent500JSONResponse) VisitDownloadProjectFi
 	return err
 }
 
+type ListProjectFileConversionJobsRequestObject struct {
+	ProjectId     uuid.UUID `json:"projectId"`
+	ProjectFileId uuid.UUID `json:"projectFileId"`
+}
+
+type ListProjectFileConversionJobsResponseObject interface {
+	VisitListProjectFileConversionJobsResponse(w http.ResponseWriter) error
+}
+
+type ListProjectFileConversionJobs200JSONResponse []ConversionJobResponse
+
+func (response ListProjectFileConversionJobs200JSONResponse) VisitListProjectFileConversionJobsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectFileConversionJobs400JSONResponse ErrorResponse
+
+func (response ListProjectFileConversionJobs400JSONResponse) VisitListProjectFileConversionJobsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectFileConversionJobs401JSONResponse ErrorResponse
+
+func (response ListProjectFileConversionJobs401JSONResponse) VisitListProjectFileConversionJobsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectFileConversionJobs404JSONResponse ErrorResponse
+
+func (response ListProjectFileConversionJobs404JSONResponse) VisitListProjectFileConversionJobsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListProjectFileConversionJobs500JSONResponse ErrorResponse
+
+func (response ListProjectFileConversionJobs500JSONResponse) VisitListProjectFileConversionJobsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectFileConversionJobRequestObject struct {
+	ProjectId     uuid.UUID `json:"projectId"`
+	ProjectFileId uuid.UUID `json:"projectFileId"`
+}
+
+type CreateProjectFileConversionJobResponseObject interface {
+	VisitCreateProjectFileConversionJobResponse(w http.ResponseWriter) error
+}
+
+type CreateProjectFileConversionJob201JSONResponse ConversionJobResponse
+
+func (response CreateProjectFileConversionJob201JSONResponse) VisitCreateProjectFileConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectFileConversionJob400JSONResponse ErrorResponse
+
+func (response CreateProjectFileConversionJob400JSONResponse) VisitCreateProjectFileConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectFileConversionJob401JSONResponse ErrorResponse
+
+func (response CreateProjectFileConversionJob401JSONResponse) VisitCreateProjectFileConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectFileConversionJob403JSONResponse ErrorResponse
+
+func (response CreateProjectFileConversionJob403JSONResponse) VisitCreateProjectFileConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectFileConversionJob404JSONResponse ErrorResponse
+
+func (response CreateProjectFileConversionJob404JSONResponse) VisitCreateProjectFileConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectFileConversionJob409JSONResponse ErrorResponse
+
+func (response CreateProjectFileConversionJob409JSONResponse) VisitCreateProjectFileConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateProjectFileConversionJob500JSONResponse ErrorResponse
+
+func (response CreateProjectFileConversionJob500JSONResponse) VisitCreateProjectFileConversionJobResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetProjectRevisionRequestObject struct {
 	ProjectId  uuid.UUID `json:"projectId"`
 	RevisionId uuid.UUID `json:"revisionId"`
@@ -2756,6 +3179,9 @@ type StrictServerInterface interface {
 	// CreateProjectRevision Create a revision on a project branch
 	// (POST /api/projects/{projectId}/branches/{branchId}/revisions)
 	CreateProjectRevision(ctx context.Context, request CreateProjectRevisionRequestObject) (CreateProjectRevisionResponseObject, error)
+	// GetProjectConversionJob Get a conversion job for a project owned by the current user
+	// (GET /api/projects/{projectId}/conversion-jobs/{conversionJobId})
+	GetProjectConversionJob(ctx context.Context, request GetProjectConversionJobRequestObject) (GetProjectConversionJobResponseObject, error)
 	// ListProjectFiles List files for a project owned by the current user
 	// (GET /api/projects/{projectId}/files)
 	ListProjectFiles(ctx context.Context, request ListProjectFilesRequestObject) (ListProjectFilesResponseObject, error)
@@ -2768,6 +3194,12 @@ type StrictServerInterface interface {
 	// DownloadProjectFileContent Download source file content for a project owned by the current user
 	// (GET /api/projects/{projectId}/files/{projectFileId}/content)
 	DownloadProjectFileContent(ctx context.Context, request DownloadProjectFileContentRequestObject) (DownloadProjectFileContentResponseObject, error)
+	// ListProjectFileConversionJobs List conversion jobs for a project file owned by the current user
+	// (GET /api/projects/{projectId}/files/{projectFileId}/conversion-jobs)
+	ListProjectFileConversionJobs(ctx context.Context, request ListProjectFileConversionJobsRequestObject) (ListProjectFileConversionJobsResponseObject, error)
+	// CreateProjectFileConversionJob Request conversion of a project file owned by the current user
+	// (POST /api/projects/{projectId}/files/{projectFileId}/conversion-jobs)
+	CreateProjectFileConversionJob(ctx context.Context, request CreateProjectFileConversionJobRequestObject) (CreateProjectFileConversionJobResponseObject, error)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(ctx context.Context, request GetProjectRevisionRequestObject) (GetProjectRevisionResponseObject, error)
@@ -3247,6 +3679,33 @@ func (sh *strictHandler) CreateProjectRevision(w http.ResponseWriter, r *http.Re
 	}
 }
 
+// GetProjectConversionJob operation middleware
+func (sh *strictHandler) GetProjectConversionJob(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, conversionJobId uuid.UUID) {
+	var request GetProjectConversionJobRequestObject
+
+	request.ProjectId = projectId
+	request.ConversionJobId = conversionJobId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProjectConversionJob(ctx, request.(GetProjectConversionJobRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProjectConversionJob")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetProjectConversionJobResponseObject); ok {
+		if err := validResponse.VisitGetProjectConversionJobResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListProjectFiles operation middleware
 func (sh *strictHandler) ListProjectFiles(w http.ResponseWriter, r *http.Request, projectId uuid.UUID) {
 	var request ListProjectFilesRequestObject
@@ -3353,6 +3812,60 @@ func (sh *strictHandler) DownloadProjectFileContent(w http.ResponseWriter, r *ht
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DownloadProjectFileContentResponseObject); ok {
 		if err := validResponse.VisitDownloadProjectFileContentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListProjectFileConversionJobs operation middleware
+func (sh *strictHandler) ListProjectFileConversionJobs(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID) {
+	var request ListProjectFileConversionJobsRequestObject
+
+	request.ProjectId = projectId
+	request.ProjectFileId = projectFileId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListProjectFileConversionJobs(ctx, request.(ListProjectFileConversionJobsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListProjectFileConversionJobs")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListProjectFileConversionJobsResponseObject); ok {
+		if err := validResponse.VisitListProjectFileConversionJobsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateProjectFileConversionJob operation middleware
+func (sh *strictHandler) CreateProjectFileConversionJob(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID) {
+	var request CreateProjectFileConversionJobRequestObject
+
+	request.ProjectId = projectId
+	request.ProjectFileId = projectFileId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateProjectFileConversionJob(ctx, request.(CreateProjectFileConversionJobRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateProjectFileConversionJob")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateProjectFileConversionJobResponseObject); ok {
+		if err := validResponse.VisitCreateProjectFileConversionJobResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

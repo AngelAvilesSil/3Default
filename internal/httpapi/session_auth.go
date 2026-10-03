@@ -185,16 +185,87 @@ func SessionContextMiddleware(
 	}
 }
 
-func isProjectDetailPath(path string) bool {
-	projectID, ok := strings.CutPrefix(
+func isProtectedProjectRoute(
+	method string,
+	path string,
+) bool {
+	if path == "/api/projects" {
+		return method == http.MethodGet ||
+			method == http.MethodPost
+	}
+
+	remainder, ok := strings.CutPrefix(
 		path,
 		"/api/projects/",
 	)
-	if !ok || projectID == "" {
+	if !ok || remainder == "" {
 		return false
 	}
 
-	return !strings.Contains(projectID, "/")
+	segments := strings.Split(remainder, "/")
+	for _, segment := range segments {
+		if segment == "" {
+			return false
+		}
+	}
+
+	switch len(segments) {
+	case 1:
+		return method == http.MethodGet ||
+			method == http.MethodPatch
+
+	case 2:
+		switch segments[1] {
+		case "files", "branches":
+			return method == http.MethodGet ||
+				method == http.MethodPost
+		}
+
+	case 3:
+		switch segments[1] {
+		case "files":
+			return method == http.MethodGet
+
+		case "conversion-jobs":
+			return method == http.MethodGet
+
+		case "branches":
+			return method == http.MethodPatch ||
+				method == http.MethodDelete
+
+		case "revisions":
+			return method == http.MethodGet
+		}
+
+	case 4:
+		switch segments[1] {
+		case "files":
+			switch segments[3] {
+			case "content":
+				return method == http.MethodGet
+
+			case "conversion-jobs":
+				return method == http.MethodGet ||
+					method == http.MethodPost
+			}
+
+		case "branches":
+			switch segments[3] {
+			case "history":
+				return method == http.MethodGet
+
+			case "revisions":
+				return method == http.MethodPost
+			}
+
+		case "revisions":
+			if segments[3] == "files" {
+				return method == http.MethodGet
+			}
+		}
+	}
+
+	return false
 }
 
 func AuthenticatedSessionContextMiddleware(
@@ -207,18 +278,16 @@ func AuthenticatedSessionContextMiddleware(
 			w http.ResponseWriter,
 			r *http.Request,
 		) {
-			if (r.Method == http.MethodPost &&
-				r.URL.Path == "/api/projects") ||
-				(r.Method == http.MethodPatch &&
-					isProjectDetailPath(r.URL.Path)) {
+			if r.Method == http.MethodGet &&
+				r.URL.Path == "/api/auth/me" {
 				protected.ServeHTTP(w, r)
 				return
 			}
 
-			if r.Method == http.MethodGet &&
-				(r.URL.Path == "/api/auth/me" ||
-					r.URL.Path == "/api/projects" ||
-					isProjectDetailPath(r.URL.Path)) {
+			if isProtectedProjectRoute(
+				r.Method,
+				r.URL.Path,
+			) {
 				protected.ServeHTTP(w, r)
 				return
 			}

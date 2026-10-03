@@ -614,7 +614,7 @@ func TestAuthenticatedSessionContextMiddlewareOnlyResolvesProtectedRoutes(
 			name:        "nested project path",
 			method:      http.MethodGet,
 			path:        "/api/projects/11111111-1111-1111-1111-111111111111/files",
-			wantResolve: false,
+			wantResolve: true,
 		},
 		{
 			name:        "post current user",
@@ -672,6 +672,222 @@ func TestAuthenticatedSessionContextMiddlewareOnlyResolvesProtectedRoutes(
 					"expected status %d, got %d",
 					http.StatusNoContent,
 					response.Code,
+				)
+			}
+		})
+	}
+}
+
+func TestAuthenticatedSessionContextMiddlewareResolvesNestedProjectRoutes(
+	t *testing.T,
+) {
+	projectID := uuid.New().String()
+	projectFileID := uuid.New().String()
+	conversionJobID := uuid.New().String()
+	branchID := uuid.New().String()
+	revisionID := uuid.New().String()
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{
+			name:   "list project files",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/files",
+		},
+		{
+			name:   "upload project file",
+			method: http.MethodPost,
+			path: "/api/projects/" +
+				projectID +
+				"/files",
+		},
+		{
+			name:   "get project file",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/files/" +
+				projectFileID,
+		},
+		{
+			name:   "download project file",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/files/" +
+				projectFileID +
+				"/content",
+		},
+		{
+			name:   "list conversion jobs",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/files/" +
+				projectFileID +
+				"/conversion-jobs",
+		},
+		{
+			name:   "create conversion job",
+			method: http.MethodPost,
+			path: "/api/projects/" +
+				projectID +
+				"/files/" +
+				projectFileID +
+				"/conversion-jobs",
+		},
+		{
+			name:   "get conversion job",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/conversion-jobs/" +
+				conversionJobID,
+		},
+		{
+			name:   "list branches",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/branches",
+		},
+		{
+			name:   "create branch",
+			method: http.MethodPost,
+			path: "/api/projects/" +
+				projectID +
+				"/branches",
+		},
+		{
+			name:   "rename branch",
+			method: http.MethodPatch,
+			path: "/api/projects/" +
+				projectID +
+				"/branches/" +
+				branchID,
+		},
+		{
+			name:   "delete branch",
+			method: http.MethodDelete,
+			path: "/api/projects/" +
+				projectID +
+				"/branches/" +
+				branchID,
+		},
+		{
+			name:   "list branch history",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/branches/" +
+				branchID +
+				"/history",
+		},
+		{
+			name:   "create revision",
+			method: http.MethodPost,
+			path: "/api/projects/" +
+				projectID +
+				"/branches/" +
+				branchID +
+				"/revisions",
+		},
+		{
+			name:   "get revision",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/revisions/" +
+				revisionID,
+		},
+		{
+			name:   "list revision files",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/revisions/" +
+				revisionID +
+				"/files",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			userID := uuid.New()
+
+			resolver := &fakeSessionResolver{
+				session: auth.Session{
+					ID:     uuid.New(),
+					UserID: userID,
+				},
+			}
+
+			next := http.HandlerFunc(func(
+				w http.ResponseWriter,
+				r *http.Request,
+			) {
+				session, ok := SessionFromContext(
+					r.Context(),
+				)
+				if !ok {
+					t.Fatal(
+						"expected authenticated session",
+					)
+				}
+
+				if session.UserID != userID {
+					t.Fatalf(
+						"expected user ID %s, got %s",
+						userID,
+						session.UserID,
+					)
+				}
+
+				w.WriteHeader(http.StatusNoContent)
+			})
+
+			handler :=
+				AuthenticatedSessionContextMiddleware(
+					resolver,
+				)(next)
+
+			request := httptest.NewRequest(
+				test.method,
+				test.path,
+				nil,
+			)
+			request.AddCookie(&http.Cookie{
+				Name:  sessionCookieName,
+				Value: "session-token",
+			})
+
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusNoContent {
+				t.Fatalf(
+					"expected status %d, got %d",
+					http.StatusNoContent,
+					response.Code,
+				)
+			}
+
+			if !resolver.called {
+				t.Fatal(
+					"expected session resolver to be called",
+				)
+			}
+
+			if resolver.token != "session-token" {
+				t.Fatalf(
+					"expected session token %q, got %q",
+					"session-token",
+					resolver.token,
 				)
 			}
 		})
