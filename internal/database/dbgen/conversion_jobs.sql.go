@@ -290,3 +290,60 @@ func (q *Queries) MarkConversionJobSucceeded(ctx context.Context, conversionJobI
 	)
 	return i, err
 }
+
+const requeueConversionJob = `-- name: RequeueConversionJob :one
+UPDATE conversion_jobs
+SET
+    status = 'pending',
+    started_at = NULL,
+    finished_at = NULL,
+    last_error = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND status = 'running'
+RETURNING
+    id,
+    project_id,
+    project_file_id,
+    status,
+    attempt_count,
+    last_error,
+    created_at,
+    started_at,
+    finished_at,
+    updated_at
+`
+
+func (q *Queries) RequeueConversionJob(ctx context.Context, conversionJobID uuid.UUID) (ConversionJob, error) {
+	row := q.db.QueryRow(ctx, requeueConversionJob, conversionJobID)
+	var i ConversionJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ProjectFileID,
+		&i.Status,
+		&i.AttemptCount,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const requeueRunningConversionJobs = `-- name: RequeueRunningConversionJobs :exec
+UPDATE conversion_jobs
+SET
+    status = 'pending',
+    started_at = NULL,
+    finished_at = NULL,
+    last_error = NULL,
+    updated_at = now()
+WHERE status = 'running'
+`
+
+func (q *Queries) RequeueRunningConversionJobs(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, requeueRunningConversionJobs)
+	return err
+}

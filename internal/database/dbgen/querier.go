@@ -47,6 +47,8 @@ type Querier interface {
 	MarkConversionJobFailed(ctx context.Context, arg MarkConversionJobFailedParams) (ConversionJob, error)
 	MarkConversionJobSucceeded(ctx context.Context, conversionJobID uuid.UUID) (ConversionJob, error)
 	RenameProjectBranch(ctx context.Context, arg RenameProjectBranchParams) (ProjectBranch, error)
+	RequeueConversionJob(ctx context.Context, conversionJobID uuid.UUID) (ConversionJob, error)
+	RequeueRunningConversionJobs(ctx context.Context) error
 	UpdateProjectMetadataByIDAndOwner(ctx context.Context, arg UpdateProjectMetadataByIDAndOwnerParams) (Project, error)
 }
 

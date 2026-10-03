@@ -7,6 +7,7 @@ import (
 
 	"github.com/AngelAvilesSil/3Default/internal/conversionjobs"
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -73,3 +74,86 @@ func (s *ConversionJobStore) ListConversionJobsByProjectFile(
 }
 
 var _ conversionjobs.Store = (*ConversionJobStore)(nil)
+
+func (s *ConversionJobStore) ClaimNextPendingConversionJob(
+	ctx context.Context,
+) (dbgen.ConversionJob, error) {
+	job, err := s.Queries.ClaimNextPendingConversionJob(ctx)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.ConversionJob{},
+			conversionjobs.ErrNoPendingConversionJob
+	}
+	if err != nil {
+		return dbgen.ConversionJob{}, fmt.Errorf(
+			"claim next conversion job row: %w",
+			err,
+		)
+	}
+
+	return job, nil
+}
+
+func (s *ConversionJobStore) RequeueConversionJob(
+	ctx context.Context,
+	conversionJobID uuid.UUID,
+) (dbgen.ConversionJob, error) {
+	job, err := s.Queries.RequeueConversionJob(
+		ctx,
+		conversionJobID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.ConversionJob{},
+			conversionjobs.ErrConversionJobNotRunning
+	}
+	if err != nil {
+		return dbgen.ConversionJob{}, fmt.Errorf(
+			"requeue conversion job row: %w",
+			err,
+		)
+	}
+
+	return job, nil
+}
+
+func (s *ConversionJobStore) MarkConversionJobSucceeded(
+	ctx context.Context,
+	conversionJobID uuid.UUID,
+) (dbgen.ConversionJob, error) {
+	job, err := s.Queries.MarkConversionJobSucceeded(
+		ctx,
+		conversionJobID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.ConversionJob{},
+			conversionjobs.ErrConversionJobNotRunning
+	}
+	if err != nil {
+		return dbgen.ConversionJob{}, fmt.Errorf(
+			"mark conversion job succeeded: %w",
+			err,
+		)
+	}
+
+	return job, nil
+}
+
+func (s *ConversionJobStore) MarkConversionJobFailed(
+	ctx context.Context,
+	arg dbgen.MarkConversionJobFailedParams,
+) (dbgen.ConversionJob, error) {
+	job, err := s.Queries.MarkConversionJobFailed(ctx, arg)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return dbgen.ConversionJob{},
+			conversionjobs.ErrConversionJobNotRunning
+	}
+	if err != nil {
+		return dbgen.ConversionJob{}, fmt.Errorf(
+			"mark conversion job failed: %w",
+			err,
+		)
+	}
+
+	return job, nil
+}
+
+var _ conversionjobs.WorkerStore = (*ConversionJobStore)(nil)
