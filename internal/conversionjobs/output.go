@@ -2,6 +2,7 @@ package conversionjobs
 
 import (
 	"errors"
+	"io"
 
 	"github.com/google/uuid"
 )
@@ -9,6 +10,11 @@ import (
 var ErrOutputContentSizeConflict = errors.New(
 	"conversion output content size conflicts with existing hash",
 )
+
+type ConversionResult struct {
+	Content   io.ReadCloser
+	MediaType string
+}
 
 type FinalizeSuccessInput struct {
 	ConversionJobID uuid.UUID
