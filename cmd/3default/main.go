@@ -84,6 +84,13 @@ func main() {
 		conversionJobStore,
 	)
 
+	conversionPreviewService := conversionjobs.NewPreviewService(
+		projectStore,
+		fileStore,
+		conversionJobStore,
+		contentStore,
+	)
+
 	conversionWorker, err := conversionjobs.NewWorker(
 		conversionJobStore,
 		contentStore,
@@ -142,7 +149,7 @@ func main() {
 	}
 
 	handler := httpapi.NewHandler(
-		httpapi.NewServerWithConversionJobs(
+		httpapi.NewServerWithConversionPreviews(
 			db,
 			projectService,
 			versioningService,
@@ -150,6 +157,7 @@ func main() {
 			fileUploadService,
 			fileDownloadService,
 			conversionJobService,
+			conversionPreviewService,
 			registrationService,
 			loginService,
 			sessionService,

@@ -241,7 +241,7 @@ func isProtectedProjectRoute(
 		switch segments[1] {
 		case "files":
 			switch segments[3] {
-			case "content":
+			case "content", "preview":
 				return method == http.MethodGet
 
 			case "conversion-jobs":
