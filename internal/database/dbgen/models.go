@@ -30,6 +30,13 @@ type ConversionJob struct {
 	UpdatedAt     time.Time
 }
 
+type ConversionJobOutput struct {
+	ConversionJobID uuid.UUID
+	ContentSha256   string
+	MediaType       string
+	CreatedAt       time.Time
+}
+
 type PasswordCredential struct {
 	UserID       uuid.UUID
 	PasswordHash string
