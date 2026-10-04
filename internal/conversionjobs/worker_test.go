@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
+	"github.com/AngelAvilesSil/3Default/internal/storage"
 	"github.com/google/uuid"
 )
 
@@ -32,10 +33,11 @@ type fakeWorkerStore struct {
 	projectFile   dbgen.ProjectFile
 	getFileErr    error
 
-	succeedCalled bool
-	succeedID     uuid.UUID
-	succeedJob    dbgen.ConversionJob
-	succeedErr    error
+	succeedCalled  bool
+	succeedID      uuid.UUID
+	succeedInput   FinalizeSuccessInput
+	finalizeOutput dbgen.ConversionJobOutput
+	succeedErr     error
 
 	failCalled bool
 	failParams dbgen.MarkConversionJobFailedParams
@@ -83,13 +85,14 @@ func (f *fakeWorkerStore) GetProjectFileByIDAndProject(
 	return f.projectFile, f.getFileErr
 }
 
-func (f *fakeWorkerStore) MarkConversionJobSucceeded(
+func (f *fakeWorkerStore) FinalizeConversionJobSuccess(
 	_ context.Context,
-	conversionJobID uuid.UUID,
-) (dbgen.ConversionJob, error) {
+	input FinalizeSuccessInput,
+) (dbgen.ConversionJobOutput, error) {
 	f.succeedCalled = true
-	f.succeedID = conversionJobID
-	return f.succeedJob, f.succeedErr
+	f.succeedID = input.ConversionJobID
+	f.succeedInput = input
+	return f.finalizeOutput, f.succeedErr
 }
 
 func (f *fakeWorkerStore) MarkConversionJobFailed(
@@ -106,6 +109,13 @@ type fakeWorkerContentReader struct {
 	contentSHA256 string
 	content       io.ReadCloser
 	err           error
+
+	putCalled              bool
+	putContent             []byte
+	putResult              storage.PutResult
+	putErr                 error
+	putStarted             chan struct{}
+	putWaitForCancellation bool
 }
 
 func (f *fakeWorkerContentReader) Open(
@@ -117,29 +127,89 @@ func (f *fakeWorkerContentReader) Open(
 	return f.content, f.err
 }
 
+func (f *fakeWorkerContentReader) Put(
+	ctx context.Context,
+	source io.Reader,
+) (storage.PutResult, error) {
+	f.putCalled = true
+
+	if f.putStarted != nil {
+		close(f.putStarted)
+	}
+
+	if f.putWaitForCancellation {
+		<-ctx.Done()
+		return storage.PutResult{}, ctx.Err()
+	}
+
+	content, err := io.ReadAll(source)
+	if err != nil {
+		return storage.PutResult{}, err
+	}
+	f.putContent = content
+
+	if f.putErr != nil {
+		return storage.PutResult{}, f.putErr
+	}
+
+	result := f.putResult
+	if result.SHA256 == "" {
+		result.SHA256 = strings.Repeat("9", 64)
+		result.SizeBytes = int64(len(content))
+	}
+
+	return result, nil
+}
+
 type recordingConverter struct {
-	called      bool
-	projectFile dbgen.ProjectFile
-	content     []byte
-	err         error
+	called         bool
+	projectFile    dbgen.ProjectFile
+	content        []byte
+	output         []byte
+	mediaType      string
+	outputCloseErr error
+	produced       *trackingReadCloser
+	err            error
 }
 
 func (c *recordingConverter) Convert(
 	_ context.Context,
 	projectFile dbgen.ProjectFile,
 	source io.Reader,
-) error {
+) (ConversionResult, error) {
 	c.called = true
 	c.projectFile = projectFile
 
 	content, err := io.ReadAll(source)
 	if err != nil {
-		return err
+		return ConversionResult{}, err
 	}
 
 	c.content = content
 
-	return c.err
+	if c.err != nil {
+		return ConversionResult{}, c.err
+	}
+
+	output := c.output
+	if output == nil {
+		output = []byte("derived GLB")
+	}
+
+	mediaType := c.mediaType
+	if mediaType == "" {
+		mediaType = "model/gltf-binary"
+	}
+
+	c.produced = &trackingReadCloser{
+		reader:   bytes.NewReader(output),
+		closeErr: c.outputCloseErr,
+	}
+
+	return ConversionResult{
+		Content:   c.produced,
+		MediaType: mediaType,
+	}, nil
 }
 
 type blockingConverter struct {
@@ -150,10 +220,10 @@ func (c *blockingConverter) Convert(
 	ctx context.Context,
 	_ dbgen.ProjectFile,
 	_ io.Reader,
-) error {
+) (ConversionResult, error) {
 	close(c.started)
 	<-ctx.Done()
-	return ctx.Err()
+	return ConversionResult{}, ctx.Err()
 }
 
 type trackingReadCloser struct {
@@ -181,7 +251,7 @@ func TestNewWorkerRejectsInvalidDependencies(t *testing.T) {
 	tests := []struct {
 		name      string
 		store     WorkerStore
-		content   SourceContentReader
+		content   ContentStore
 		converter Converter
 		idleDelay time.Duration
 		want      error
@@ -194,11 +264,11 @@ func TestNewWorkerRejectsInvalidDependencies(t *testing.T) {
 			want:      ErrWorkerStoreRequired,
 		},
 		{
-			name:      "missing content reader",
+			name:      "missing content store",
 			store:     validStore,
 			converter: validConverter,
 			idleDelay: time.Second,
-			want:      ErrContentReaderRequired,
+			want:      ErrContentStoreRequired,
 		},
 		{
 			name:      "missing converter",
@@ -387,6 +457,26 @@ func TestRunOnceConvertsSourceAndMarksJobSucceeded(
 		)
 	}
 
+	if !content.putCalled {
+		t.Fatal("expected converted output to be stored")
+	}
+
+	if !bytes.Equal(
+		content.putContent,
+		[]byte("derived GLB"),
+	) {
+		t.Fatalf(
+			"expected stored output %q, got %q",
+			[]byte("derived GLB"),
+			content.putContent,
+		)
+	}
+
+	if converter.produced == nil ||
+		!converter.produced.closed {
+		t.Fatal("expected conversion output to be closed")
+	}
+
 	if !source.closed {
 		t.Fatal("expected source content to be closed")
 	}
@@ -400,6 +490,30 @@ func TestRunOnceConvertsSourceAndMarksJobSucceeded(
 			"expected success job ID %s, got %s",
 			jobID,
 			store.succeedID,
+		)
+	}
+
+	if store.succeedInput.ContentSHA256 !=
+		strings.Repeat("9", 64) {
+		t.Fatalf(
+			"unexpected finalized SHA-256 %q",
+			store.succeedInput.ContentSHA256,
+		)
+	}
+
+	if store.succeedInput.SizeBytes !=
+		int64(len("derived GLB")) {
+		t.Fatalf(
+			"unexpected finalized size %d",
+			store.succeedInput.SizeBytes,
+		)
+	}
+
+	if store.succeedInput.MediaType !=
+		"model/gltf-binary" {
+		t.Fatalf(
+			"unexpected finalized media type %q",
+			store.succeedInput.MediaType,
 		)
 	}
 
@@ -1049,6 +1163,521 @@ func TestRunOnceSurfacesCancellationRequeueFailure(
 	if store.failCalled {
 		t.Fatal(
 			"did not expect canceled job to be marked failed",
+		)
+	}
+}
+
+func TestRunOnceRecordsOutputStorageFailure(
+	t *testing.T,
+) {
+	jobID := uuid.New()
+	putErr := errors.New("output storage failed")
+
+	store := &fakeWorkerStore{
+		claimJob: dbgen.ConversionJob{
+			ID:            jobID,
+			ProjectID:     uuid.New(),
+			ProjectFileID: uuid.New(),
+			Status:        "running",
+			AttemptCount:  1,
+		},
+		projectFile: dbgen.ProjectFile{
+			ContentSha256: strings.Repeat("3", 64),
+		},
+	}
+	content := &fakeWorkerContentReader{
+		content: io.NopCloser(
+			bytes.NewReader([]byte("CAD")),
+		),
+		putErr: putErr,
+	}
+	converter := &recordingConverter{}
+
+	worker, err := NewWorker(
+		store,
+		content,
+		converter,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("create worker: %v", err)
+	}
+
+	processed, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("run worker once: %v", err)
+	}
+
+	if !processed {
+		t.Fatal("expected job to be processed")
+	}
+
+	if !content.putCalled {
+		t.Fatal("expected output storage attempt")
+	}
+
+	if converter.produced == nil ||
+		!converter.produced.closed {
+		t.Fatal("expected failed output storage stream to close")
+	}
+
+	if !store.failCalled {
+		t.Fatal("expected output storage failure to fail job")
+	}
+
+	if store.failParams.LastError == nil ||
+		!strings.Contains(
+			*store.failParams.LastError,
+			putErr.Error(),
+		) {
+		t.Fatalf(
+			"expected persisted output storage failure, got %+v",
+			store.failParams.LastError,
+		)
+	}
+
+	if store.succeedCalled {
+		t.Fatal("did not expect success finalization")
+	}
+}
+
+func TestRunOnceRecordsOutputCloseFailure(
+	t *testing.T,
+) {
+	jobID := uuid.New()
+	closeErr := errors.New("output close failed")
+
+	store := &fakeWorkerStore{
+		claimJob: dbgen.ConversionJob{
+			ID:            jobID,
+			ProjectID:     uuid.New(),
+			ProjectFileID: uuid.New(),
+			Status:        "running",
+			AttemptCount:  1,
+		},
+		projectFile: dbgen.ProjectFile{
+			ContentSha256: strings.Repeat("4", 64),
+		},
+	}
+	content := &fakeWorkerContentReader{
+		content: io.NopCloser(
+			bytes.NewReader([]byte("CAD")),
+		),
+	}
+	converter := &recordingConverter{
+		outputCloseErr: closeErr,
+	}
+
+	worker, err := NewWorker(
+		store,
+		content,
+		converter,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("create worker: %v", err)
+	}
+
+	processed, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("run worker once: %v", err)
+	}
+
+	if !processed {
+		t.Fatal("expected job to be processed")
+	}
+
+	if !store.failCalled {
+		t.Fatal("expected output-close failure to fail job")
+	}
+
+	if store.failParams.LastError == nil ||
+		!strings.Contains(
+			*store.failParams.LastError,
+			closeErr.Error(),
+		) {
+		t.Fatalf(
+			"expected persisted output close failure, got %+v",
+			store.failParams.LastError,
+		)
+	}
+
+	if store.succeedCalled {
+		t.Fatal("did not expect success finalization")
+	}
+}
+
+type fixedResultConverter struct {
+	result ConversionResult
+	err    error
+}
+
+func (c *fixedResultConverter) Convert(
+	_ context.Context,
+	_ dbgen.ProjectFile,
+	_ io.Reader,
+) (ConversionResult, error) {
+	return c.result, c.err
+}
+
+func TestRunOnceRecordsMissingOutputContent(
+	t *testing.T,
+) {
+	jobID := uuid.New()
+
+	store := &fakeWorkerStore{
+		claimJob: dbgen.ConversionJob{
+			ID:            jobID,
+			ProjectID:     uuid.New(),
+			ProjectFileID: uuid.New(),
+			Status:        "running",
+			AttemptCount:  1,
+		},
+		projectFile: dbgen.ProjectFile{
+			ContentSha256: strings.Repeat("5", 64),
+		},
+	}
+	content := &fakeWorkerContentReader{
+		content: io.NopCloser(
+			bytes.NewReader([]byte("CAD")),
+		),
+	}
+	converter := &fixedResultConverter{
+		result: ConversionResult{
+			MediaType: "model/gltf-binary",
+		},
+	}
+
+	worker, err := NewWorker(
+		store,
+		content,
+		converter,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("create worker: %v", err)
+	}
+
+	processed, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("run worker once: %v", err)
+	}
+
+	if !processed {
+		t.Fatal("expected job to be processed")
+	}
+
+	if content.putCalled {
+		t.Fatal("did not expect storage for missing output content")
+	}
+
+	if !store.failCalled {
+		t.Fatal("expected missing output content to fail job")
+	}
+
+	if store.failParams.LastError == nil ||
+		!strings.Contains(
+			*store.failParams.LastError,
+			ErrOutputContentRequired.Error(),
+		) {
+		t.Fatalf(
+			"expected persisted missing-content error, got %+v",
+			store.failParams.LastError,
+		)
+	}
+
+	if store.succeedCalled {
+		t.Fatal("did not expect success finalization")
+	}
+}
+
+func TestRunOnceRecordsBlankOutputMediaType(
+	t *testing.T,
+) {
+	jobID := uuid.New()
+	output := &trackingReadCloser{
+		reader: bytes.NewReader([]byte("GLB")),
+	}
+
+	store := &fakeWorkerStore{
+		claimJob: dbgen.ConversionJob{
+			ID:            jobID,
+			ProjectID:     uuid.New(),
+			ProjectFileID: uuid.New(),
+			Status:        "running",
+			AttemptCount:  1,
+		},
+		projectFile: dbgen.ProjectFile{
+			ContentSha256: strings.Repeat("6", 64),
+		},
+	}
+	content := &fakeWorkerContentReader{
+		content: io.NopCloser(
+			bytes.NewReader([]byte("CAD")),
+		),
+	}
+	converter := &fixedResultConverter{
+		result: ConversionResult{
+			Content:   output,
+			MediaType: "   ",
+		},
+	}
+
+	worker, err := NewWorker(
+		store,
+		content,
+		converter,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("create worker: %v", err)
+	}
+
+	processed, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("run worker once: %v", err)
+	}
+
+	if !processed {
+		t.Fatal("expected job to be processed")
+	}
+
+	if !output.closed {
+		t.Fatal("expected rejected output stream to close")
+	}
+
+	if content.putCalled {
+		t.Fatal("did not expect storage for blank media type")
+	}
+
+	if !store.failCalled {
+		t.Fatal("expected blank media type to fail job")
+	}
+
+	if store.failParams.LastError == nil ||
+		!strings.Contains(
+			*store.failParams.LastError,
+			ErrOutputMediaTypeRequired.Error(),
+		) {
+		t.Fatalf(
+			"expected persisted blank-media-type error, got %+v",
+			store.failParams.LastError,
+		)
+	}
+
+	if store.succeedCalled {
+		t.Fatal("did not expect success finalization")
+	}
+}
+
+func TestRunOnceRecordsInvalidStoredOutputMetadata(
+	t *testing.T,
+) {
+	tests := []struct {
+		name      string
+		putResult storage.PutResult
+		want      error
+	}{
+		{
+			name: "invalid SHA-256",
+			putResult: storage.PutResult{
+				SHA256:    "not-a-sha256",
+				SizeBytes: 3,
+			},
+			want: ErrStoredOutputSHA256Invalid,
+		},
+		{
+			name: "negative size",
+			putResult: storage.PutResult{
+				SHA256:    strings.Repeat("7", 64),
+				SizeBytes: -1,
+			},
+			want: ErrStoredOutputSizeInvalid,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeWorkerStore{
+				claimJob: dbgen.ConversionJob{
+					ID:            uuid.New(),
+					ProjectID:     uuid.New(),
+					ProjectFileID: uuid.New(),
+					Status:        "running",
+					AttemptCount:  1,
+				},
+				projectFile: dbgen.ProjectFile{
+					ContentSha256: strings.Repeat("8", 64),
+				},
+			}
+			content := &fakeWorkerContentReader{
+				content: io.NopCloser(
+					bytes.NewReader([]byte("CAD")),
+				),
+				putResult: test.putResult,
+			}
+			converter := &recordingConverter{}
+
+			worker, err := NewWorker(
+				store,
+				content,
+				converter,
+				time.Second,
+			)
+			if err != nil {
+				t.Fatalf("create worker: %v", err)
+			}
+
+			processed, err := worker.RunOnce(
+				context.Background(),
+			)
+			if err != nil {
+				t.Fatalf("run worker once: %v", err)
+			}
+
+			if !processed {
+				t.Fatal("expected job to be processed")
+			}
+
+			if !store.failCalled {
+				t.Fatal(
+					"expected invalid stored output metadata to fail job",
+				)
+			}
+
+			if store.failParams.LastError == nil ||
+				!strings.Contains(
+					*store.failParams.LastError,
+					test.want.Error(),
+				) {
+				t.Fatalf(
+					"expected persisted error %v, got %+v",
+					test.want,
+					store.failParams.LastError,
+				)
+			}
+
+			if store.succeedCalled {
+				t.Fatal(
+					"did not expect success finalization",
+				)
+			}
+		})
+	}
+}
+
+func TestRunOnceRequeuesJobWhenOutputStorageIsCanceled(
+	t *testing.T,
+) {
+	jobID := uuid.New()
+	putStarted := make(chan struct{})
+
+	store := &fakeWorkerStore{
+		claimJob: dbgen.ConversionJob{
+			ID:            jobID,
+			ProjectID:     uuid.New(),
+			ProjectFileID: uuid.New(),
+			Status:        "running",
+			AttemptCount:  1,
+		},
+		projectFile: dbgen.ProjectFile{
+			ContentSha256: strings.Repeat("a", 64),
+		},
+	}
+	content := &fakeWorkerContentReader{
+		content: io.NopCloser(
+			bytes.NewReader([]byte("CAD")),
+		),
+		putStarted:             putStarted,
+		putWaitForCancellation: true,
+	}
+	converter := &recordingConverter{}
+
+	worker, err := NewWorker(
+		store,
+		content,
+		converter,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("create worker: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type result struct {
+		processed bool
+		err       error
+	}
+
+	resultChannel := make(chan result, 1)
+
+	go func() {
+		processed, err := worker.RunOnce(ctx)
+		resultChannel <- result{
+			processed: processed,
+			err:       err,
+		}
+	}()
+
+	select {
+	case <-putStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("output storage did not start")
+	}
+
+	cancel()
+
+	select {
+	case result := <-resultChannel:
+		if !result.processed {
+			t.Fatal(
+				"expected claimed job to count as processed",
+			)
+		}
+
+		if !errors.Is(result.err, context.Canceled) {
+			t.Fatalf(
+				"expected context.Canceled, got %v",
+				result.err,
+			)
+		}
+
+	case <-time.After(2 * time.Second):
+		t.Fatal(
+			"worker did not return after output-storage cancellation",
+		)
+	}
+
+	if !store.requeueCalled {
+		t.Fatal("expected canceled job to be requeued")
+	}
+
+	if store.requeueID != jobID {
+		t.Fatalf(
+			"expected requeued job ID %s, got %s",
+			jobID,
+			store.requeueID,
+		)
+	}
+
+	if converter.produced == nil ||
+		!converter.produced.closed {
+		t.Fatal(
+			"expected canceled output stream to close",
+		)
+	}
+
+	if store.failCalled {
+		t.Fatal(
+			"did not expect canceled job to be marked failed",
+		)
+	}
+
+	if store.succeedCalled {
+		t.Fatal(
+			"did not expect canceled job to succeed",
 		)
 	}
 }

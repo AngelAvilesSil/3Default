@@ -2,6 +2,7 @@ package conversionjobs
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
+	"github.com/AngelAvilesSil/3Default/internal/storage"
 	"github.com/google/uuid"
 )
 
@@ -16,8 +18,8 @@ var (
 	ErrWorkerStoreRequired = errors.New(
 		"conversion worker store is required",
 	)
-	ErrContentReaderRequired = errors.New(
-		"conversion content reader is required",
+	ErrContentStoreRequired = errors.New(
+		"conversion content store is required",
 	)
 	ErrConverterRequired = errors.New(
 		"converter is required",
@@ -30,6 +32,18 @@ var (
 	)
 	ErrConversionJobNotRunning = errors.New(
 		"conversion job is not running",
+	)
+	ErrOutputContentRequired = errors.New(
+		"conversion output content is required",
+	)
+	ErrOutputMediaTypeRequired = errors.New(
+		"conversion output media type is required",
+	)
+	ErrStoredOutputSHA256Invalid = errors.New(
+		"stored conversion output SHA-256 is invalid",
+	)
+	ErrStoredOutputSizeInvalid = errors.New(
+		"stored conversion output size is invalid",
 	)
 )
 
@@ -50,21 +64,25 @@ type WorkerStore interface {
 		ctx context.Context,
 		arg dbgen.GetProjectFileByIDAndProjectParams,
 	) (dbgen.ProjectFile, error)
-	MarkConversionJobSucceeded(
+	FinalizeConversionJobSuccess(
 		ctx context.Context,
-		conversionJobID uuid.UUID,
-	) (dbgen.ConversionJob, error)
+		input FinalizeSuccessInput,
+	) (dbgen.ConversionJobOutput, error)
 	MarkConversionJobFailed(
 		ctx context.Context,
 		arg dbgen.MarkConversionJobFailedParams,
 	) (dbgen.ConversionJob, error)
 }
 
-type SourceContentReader interface {
+type ContentStore interface {
 	Open(
 		ctx context.Context,
 		contentSHA256 string,
 	) (io.ReadCloser, error)
+	Put(
+		ctx context.Context,
+		source io.Reader,
+	) (storage.PutResult, error)
 }
 
 type Converter interface {
@@ -72,19 +90,19 @@ type Converter interface {
 		ctx context.Context,
 		projectFile dbgen.ProjectFile,
 		source io.Reader,
-	) error
+	) (ConversionResult, error)
 }
 
 type Worker struct {
 	store     WorkerStore
-	content   SourceContentReader
+	content   ContentStore
 	converter Converter
 	idleDelay time.Duration
 }
 
 func NewWorker(
 	store WorkerStore,
-	content SourceContentReader,
+	content ContentStore,
 	converter Converter,
 	idleDelay time.Duration,
 ) (*Worker, error) {
@@ -93,7 +111,7 @@ func NewWorker(
 	}
 
 	if content == nil {
-		return nil, ErrContentReaderRequired
+		return nil, ErrContentStoreRequired
 	}
 
 	if converter == nil {
@@ -170,7 +188,8 @@ func (w *Worker) RunOnce(
 		)
 	}
 
-	if err := w.processClaimedJob(ctx, job); err != nil {
+	finalizeInput, err := w.processClaimedJob(ctx, job)
+	if err != nil {
 		if ctx.Err() != nil {
 			if requeueErr := w.requeueAfterCancellation(
 				job.ID,
@@ -197,7 +216,7 @@ func (w *Worker) RunOnce(
 		return true, nil
 	}
 
-	if err := w.succeedJob(job.ID); err != nil {
+	if err := w.finalizeSuccess(finalizeInput); err != nil {
 		return true, fmt.Errorf(
 			"record conversion job success: %w",
 			err,
@@ -210,7 +229,7 @@ func (w *Worker) RunOnce(
 func (w *Worker) processClaimedJob(
 	ctx context.Context,
 	job dbgen.ConversionJob,
-) error {
+) (FinalizeSuccessInput, error) {
 	projectFile, err := w.store.GetProjectFileByIDAndProject(
 		ctx,
 		dbgen.GetProjectFileByIDAndProjectParams{
@@ -219,7 +238,7 @@ func (w *Worker) processClaimedJob(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf(
+		return FinalizeSuccessInput{}, fmt.Errorf(
 			"get conversion source metadata: %w",
 			err,
 		)
@@ -230,39 +249,119 @@ func (w *Worker) processClaimedJob(
 		projectFile.ContentSha256,
 	)
 	if err != nil {
-		return fmt.Errorf(
+		return FinalizeSuccessInput{}, fmt.Errorf(
 			"open conversion source content: %w",
 			err,
 		)
 	}
 
-	convertErr := w.converter.Convert(
+	result, convertErr := w.converter.Convert(
 		ctx,
 		projectFile,
 		source,
 	)
 
-	closeErr := source.Close()
+	sourceCloseErr := source.Close()
 
 	if convertErr != nil {
-		return fmt.Errorf(
+		if result.Content != nil {
+			_ = result.Content.Close()
+		}
+
+		return FinalizeSuccessInput{}, fmt.Errorf(
 			"convert project file: %w",
 			convertErr,
 		)
 	}
 
-	if closeErr != nil {
-		return fmt.Errorf(
+	if sourceCloseErr != nil {
+		if result.Content != nil {
+			_ = result.Content.Close()
+		}
+
+		return FinalizeSuccessInput{}, fmt.Errorf(
 			"close conversion source content: %w",
-			closeErr,
+			sourceCloseErr,
 		)
+	}
+
+	if result.Content == nil {
+		return FinalizeSuccessInput{}, ErrOutputContentRequired
+	}
+
+	mediaType := strings.TrimSpace(result.MediaType)
+	if mediaType == "" {
+		_ = result.Content.Close()
+		return FinalizeSuccessInput{}, ErrOutputMediaTypeRequired
+	}
+
+	stored, putErr := w.content.Put(
+		ctx,
+		result.Content,
+	)
+
+	outputCloseErr := result.Content.Close()
+
+	if putErr != nil {
+		if outputCloseErr != nil {
+			return FinalizeSuccessInput{}, fmt.Errorf(
+				"store conversion output: %w",
+				errors.Join(
+					putErr,
+					fmt.Errorf(
+						"close conversion output content: %w",
+						outputCloseErr,
+					),
+				),
+			)
+		}
+
+		return FinalizeSuccessInput{}, fmt.Errorf(
+			"store conversion output: %w",
+			putErr,
+		)
+	}
+
+	if outputCloseErr != nil {
+		return FinalizeSuccessInput{}, fmt.Errorf(
+			"close conversion output content: %w",
+			outputCloseErr,
+		)
+	}
+
+	if err := validateStoredOutput(stored); err != nil {
+		return FinalizeSuccessInput{}, err
+	}
+
+	return FinalizeSuccessInput{
+		ConversionJobID: job.ID,
+		ContentSHA256:   stored.SHA256,
+		SizeBytes:       stored.SizeBytes,
+		MediaType:       mediaType,
+	}, nil
+}
+
+func validateStoredOutput(
+	stored storage.PutResult,
+) error {
+	if len(stored.SHA256) != 64 ||
+		stored.SHA256 != strings.ToLower(stored.SHA256) {
+		return ErrStoredOutputSHA256Invalid
+	}
+
+	if _, err := hex.DecodeString(stored.SHA256); err != nil {
+		return ErrStoredOutputSHA256Invalid
+	}
+
+	if stored.SizeBytes < 0 {
+		return ErrStoredOutputSizeInvalid
 	}
 
 	return nil
 }
 
-func (w *Worker) succeedJob(
-	conversionJobID uuid.UUID,
+func (w *Worker) finalizeSuccess(
+	input FinalizeSuccessInput,
 ) error {
 	ctx, cancel := context.WithTimeout(
 		context.Background(),
@@ -270,15 +369,11 @@ func (w *Worker) succeedJob(
 	)
 	defer cancel()
 
-	_, err := w.store.MarkConversionJobSucceeded(
+	_, err := w.store.FinalizeConversionJobSuccess(
 		ctx,
-		conversionJobID,
+		input,
 	)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func (w *Worker) failJob(
