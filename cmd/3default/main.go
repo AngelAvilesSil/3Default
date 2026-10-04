@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -25,6 +26,7 @@ func main() {
 		loginAttemptCapacity       = 5
 		loginAttemptRefillInterval = time.Minute
 		loginAttemptMaxEntries     = 10_000
+		conversionWorkerIdleDelay  = time.Second
 	)
 
 	cfg, err := config.Load()
@@ -81,6 +83,19 @@ func main() {
 		fileStore,
 		conversionJobStore,
 	)
+
+	conversionWorker, err := conversionjobs.NewWorker(
+		conversionJobStore,
+		contentStore,
+		conversionjobs.NewGLBPassThroughConverter(),
+		conversionWorkerIdleDelay,
+	)
+	if err != nil {
+		log.Fatalf(
+			"initialize conversion worker: %v",
+			err,
+		)
+	}
 
 	registrationStore := database.NewRegistrationStore(db)
 
@@ -149,9 +164,26 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	log.Printf("3Default listening on %s", address)
+	runtimeErr := make(chan error, 2)
 
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatal(err)
-	}
+	go func() {
+		if err := conversionWorker.Run(ctx); err != nil {
+			runtimeErr <- fmt.Errorf(
+				"run conversion worker: %w",
+				err,
+			)
+		}
+	}()
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil {
+			runtimeErr <- fmt.Errorf(
+				"serve HTTP: %w",
+				err,
+			)
+		}
+	}()
+
+	log.Printf("3Default listening on %s", address)
+	log.Fatal(<-runtimeErr)
 }
