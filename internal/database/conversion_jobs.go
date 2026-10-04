@@ -14,6 +14,7 @@ import (
 )
 
 type ConversionJobStore struct {
+	pool *pgxpool.Pool
 	*dbgen.Queries
 }
 
@@ -21,6 +22,7 @@ func NewConversionJobStore(
 	pool *pgxpool.Pool,
 ) *ConversionJobStore {
 	return &ConversionJobStore{
+		pool:    pool,
 		Queries: dbgen.New(pool),
 	}
 }
