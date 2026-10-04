@@ -136,6 +136,15 @@ type ConversionJobService interface {
 	) ([]dbgen.ConversionJob, error)
 }
 
+type ConversionPreviewService interface {
+	GetLatest(
+		ctx context.Context,
+		ownerUserID googleuuid.UUID,
+		projectID googleuuid.UUID,
+		projectFileID googleuuid.UUID,
+	) (conversionjobs.PreviewResult, error)
+}
+
 type UserRegistrar interface {
 	Register(
 		ctx context.Context,
@@ -172,6 +181,7 @@ type Server struct {
 	fileUploads        ProjectFileUploader
 	fileDownloads      ProjectFileDownloader
 	conversionJobs     ConversionJobService
+	conversionPreviews ConversionPreviewService
 	registrations      UserRegistrar
 	authentication     UserAuthenticator
 	sessionRevocations SessionRevoker
@@ -274,6 +284,39 @@ func NewServerWithConversionJobs(
 	)
 
 	server.conversionJobs = conversionJobs
+
+	return server
+}
+
+func NewServerWithConversionPreviews(
+	database DatabasePinger,
+	projects ProjectService,
+	versioningService VersioningService,
+	projectFiles ProjectFileService,
+	fileUploads ProjectFileUploader,
+	fileDownloads ProjectFileDownloader,
+	conversionJobs ConversionJobService,
+	conversionPreviews ConversionPreviewService,
+	registrations UserRegistrar,
+	authentication UserAuthenticator,
+	sessionRevocations SessionRevoker,
+	currentUsers CurrentUserReader,
+) *Server {
+	server := NewServerWithConversionJobs(
+		database,
+		projects,
+		versioningService,
+		projectFiles,
+		fileUploads,
+		fileDownloads,
+		conversionJobs,
+		registrations,
+		authentication,
+		sessionRevocations,
+		currentUsers,
+	)
+
+	server.conversionPreviews = conversionPreviews
 
 	return server
 }
@@ -1854,6 +1897,95 @@ func apiUUIDFromPGUUID(value pgtype.UUID) *uuid.UUID {
 	return &converted
 }
 
+func (s *Server) GetProjectFilePreview(
+	ctx context.Context,
+	request api.GetProjectFilePreviewRequestObject,
+) (api.GetProjectFilePreviewResponseObject, error) {
+	if err := SessionResolutionError(ctx); err != nil {
+		return api.GetProjectFilePreview500JSONResponse{
+			Error: "unable to authenticate request",
+		}, nil
+	}
+
+	session, ok := SessionFromContext(ctx)
+	if !ok {
+		return api.GetProjectFilePreview401JSONResponse{
+			Error: "authentication required",
+		}, nil
+	}
+
+	if s.conversionPreviews == nil {
+		return api.GetProjectFilePreview500JSONResponse{
+			Error: "unable to get project file preview",
+		}, nil
+	}
+
+	result, err := s.conversionPreviews.GetLatest(
+		ctx,
+		session.UserID,
+		googleuuid.UUID(request.ProjectId),
+		googleuuid.UUID(request.ProjectFileId),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(
+			err,
+			conversionjobs.ErrProjectIDRequired,
+		):
+			return api.GetProjectFilePreview400JSONResponse{
+				Error: "project ID is required",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrProjectFileIDRequired,
+		):
+			return api.GetProjectFilePreview400JSONResponse{
+				Error: "project file ID is required",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrProjectNotFound,
+		):
+			return api.GetProjectFilePreview404JSONResponse{
+				Error: "project not found",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrProjectFileNotFound,
+		):
+			return api.GetProjectFilePreview404JSONResponse{
+				Error: "project file not found",
+			}, nil
+
+		case errors.Is(
+			err,
+			conversionjobs.ErrPreviewNotFound,
+		):
+			return api.GetProjectFilePreview404JSONResponse{
+				Error: "preview not found",
+			}, nil
+
+		default:
+			return api.GetProjectFilePreview500JSONResponse{
+				Error: "unable to get project file preview",
+			}, nil
+		}
+	}
+
+	if result.Content == nil {
+		return api.GetProjectFilePreview500JSONResponse{
+			Error: "unable to get project file preview",
+		}, nil
+	}
+
+	return api.GetProjectFilePreview200ModelgltfBinaryResponse{
+		Body: result.Content,
+	}, nil
+}
+
 func (s *Server) CreateProjectFileConversionJob(
 	ctx context.Context,
 	request api.CreateProjectFileConversionJobRequestObject,
@@ -2119,6 +2251,7 @@ var _ ProjectFileService = (*filestorage.Service)(nil)
 var _ ProjectFileUploader = (*filestorage.UploadService)(nil)
 var _ ProjectFileDownloader = (*filestorage.DownloadService)(nil)
 var _ ConversionJobService = (*conversionjobs.Service)(nil)
+var _ ConversionPreviewService = (*conversionjobs.PreviewService)(nil)
 var _ UserRegistrar = (*auth.RegistrationService)(nil)
 var _ UserAuthenticator = (*auth.LoginService)(nil)
 var _ SessionRevoker = (*auth.SessionService)(nil)

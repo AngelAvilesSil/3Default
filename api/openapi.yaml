@@ -552,6 +552,56 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/projects/{projectId}/files/{projectFileId}/preview:
+    get:
+      operationId: getProjectFilePreview
+      summary: Get the latest successful GLB preview for a project file owned by the current user
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: projectFileId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Latest successful GLB preview
+          content:
+            model/gltf-binary:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid project or project file ID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Project, project file, or successful preview not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server or physical preview storage error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/projects/{projectId}/files/{projectFileId}/conversion-jobs:
     get:
       operationId: listProjectFileConversionJobs

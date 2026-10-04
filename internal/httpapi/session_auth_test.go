@@ -724,6 +724,15 @@ func TestAuthenticatedSessionContextMiddlewareResolvesNestedProjectRoutes(
 				"/content",
 		},
 		{
+			name:   "get project file preview",
+			method: http.MethodGet,
+			path: "/api/projects/" +
+				projectID +
+				"/files/" +
+				projectFileID +
+				"/preview",
+		},
+		{
 			name:   "list conversion jobs",
 			method: http.MethodGet,
 			path: "/api/projects/" +

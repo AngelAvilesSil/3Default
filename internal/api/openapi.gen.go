@@ -329,6 +329,9 @@ type ServerInterface interface {
 	// CreateProjectFileConversionJob Request conversion of a project file owned by the current user
 	// (POST /api/projects/{projectId}/files/{projectFileId}/conversion-jobs)
 	CreateProjectFileConversionJob(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID)
+	// GetProjectFilePreview Get the latest successful GLB preview for a project file owned by the current user
+	// (GET /api/projects/{projectId}/files/{projectFileId}/preview)
+	GetProjectFilePreview(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, revisionId uuid.UUID)
@@ -918,6 +921,41 @@ func (siw *ServerInterfaceWrapper) CreateProjectFileConversionJob(w http.Respons
 	handler.ServeHTTP(w, r)
 }
 
+// GetProjectFilePreview operation middleware
+func (siw *ServerInterfaceWrapper) GetProjectFilePreview(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "projectId" -------------
+	var projectId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectId", r.PathValue("projectId"), &projectId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "projectFileId" -------------
+	var projectFileId uuid.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "projectFileId", r.PathValue("projectFileId"), &projectFileId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectFileId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProjectFilePreview(w, r, projectId, projectFileId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetProjectRevision operation middleware
 func (siw *ServerInterfaceWrapper) GetProjectRevision(w http.ResponseWriter, r *http.Request) {
 
@@ -1136,6 +1174,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/files", wrapper.UploadProjectFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}", wrapper.GetProjectFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}/content", wrapper.DownloadProjectFileContent)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}/preview", wrapper.GetProjectFilePreview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}/conversion-jobs", wrapper.ListProjectFileConversionJobs)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/projects/{projectId}/files/{projectFileId}/conversion-jobs", wrapper.CreateProjectFileConversionJob)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/projects/{projectId}/conversion-jobs/{conversionJobId}", wrapper.GetProjectConversionJob)
@@ -2939,6 +2978,91 @@ func (response CreateProjectFileConversionJob500JSONResponse) VisitCreateProject
 	return err
 }
 
+type GetProjectFilePreviewRequestObject struct {
+	ProjectId     uuid.UUID `json:"projectId"`
+	ProjectFileId uuid.UUID `json:"projectFileId"`
+}
+
+type GetProjectFilePreviewResponseObject interface {
+	VisitGetProjectFilePreviewResponse(w http.ResponseWriter) error
+}
+
+type GetProjectFilePreview200ModelgltfBinaryResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response GetProjectFilePreview200ModelgltfBinaryResponse) VisitGetProjectFilePreviewResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "model/gltf-binary")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	_, err := io.Copy(w, response.Body)
+	return err
+}
+
+type GetProjectFilePreview400JSONResponse ErrorResponse
+
+func (response GetProjectFilePreview400JSONResponse) VisitGetProjectFilePreviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFilePreview401JSONResponse ErrorResponse
+
+func (response GetProjectFilePreview401JSONResponse) VisitGetProjectFilePreviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFilePreview404JSONResponse ErrorResponse
+
+func (response GetProjectFilePreview404JSONResponse) VisitGetProjectFilePreviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetProjectFilePreview500JSONResponse ErrorResponse
+
+func (response GetProjectFilePreview500JSONResponse) VisitGetProjectFilePreviewResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(500)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type GetProjectRevisionRequestObject struct {
 	ProjectId  uuid.UUID `json:"projectId"`
 	RevisionId uuid.UUID `json:"revisionId"`
@@ -3200,6 +3324,9 @@ type StrictServerInterface interface {
 	// CreateProjectFileConversionJob Request conversion of a project file owned by the current user
 	// (POST /api/projects/{projectId}/files/{projectFileId}/conversion-jobs)
 	CreateProjectFileConversionJob(ctx context.Context, request CreateProjectFileConversionJobRequestObject) (CreateProjectFileConversionJobResponseObject, error)
+	// GetProjectFilePreview Get the latest successful GLB preview for a project file owned by the current user
+	// (GET /api/projects/{projectId}/files/{projectFileId}/preview)
+	GetProjectFilePreview(ctx context.Context, request GetProjectFilePreviewRequestObject) (GetProjectFilePreviewResponseObject, error)
 	// GetProjectRevision Get a revision for a project owned by the current user
 	// (GET /api/projects/{projectId}/revisions/{revisionId})
 	GetProjectRevision(ctx context.Context, request GetProjectRevisionRequestObject) (GetProjectRevisionResponseObject, error)
@@ -3866,6 +3993,33 @@ func (sh *strictHandler) CreateProjectFileConversionJob(w http.ResponseWriter, r
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateProjectFileConversionJobResponseObject); ok {
 		if err := validResponse.VisitCreateProjectFileConversionJobResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetProjectFilePreview operation middleware
+func (sh *strictHandler) GetProjectFilePreview(w http.ResponseWriter, r *http.Request, projectId uuid.UUID, projectFileId uuid.UUID) {
+	var request GetProjectFilePreviewRequestObject
+
+	request.ProjectId = projectId
+	request.ProjectFileId = projectFileId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetProjectFilePreview(ctx, request.(GetProjectFilePreviewRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetProjectFilePreview")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetProjectFilePreviewResponseObject); ok {
+		if err := validResponse.VisitGetProjectFilePreviewResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
