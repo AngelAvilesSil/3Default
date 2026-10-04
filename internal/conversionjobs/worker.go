@@ -260,13 +260,11 @@ func (w *Worker) processClaimedJob(
 		projectFile,
 		source,
 	)
-
-	sourceCloseErr := source.Close()
-
 	if convertErr != nil {
 		if result.Content != nil {
 			_ = result.Content.Close()
 		}
+		_ = source.Close()
 
 		return FinalizeSuccessInput{}, fmt.Errorf(
 			"convert project file: %w",
@@ -274,25 +272,18 @@ func (w *Worker) processClaimedJob(
 		)
 	}
 
-	if sourceCloseErr != nil {
-		if result.Content != nil {
-			_ = result.Content.Close()
-		}
-
-		return FinalizeSuccessInput{}, fmt.Errorf(
-			"close conversion source content: %w",
-			sourceCloseErr,
-		)
-	}
-
 	if result.Content == nil {
+		_ = source.Close()
 		return FinalizeSuccessInput{}, ErrOutputContentRequired
 	}
 
 	mediaType := strings.TrimSpace(result.MediaType)
 	if mediaType == "" {
 		_ = result.Content.Close()
-		return FinalizeSuccessInput{}, ErrOutputMediaTypeRequired
+		_ = source.Close()
+
+		return FinalizeSuccessInput{},
+			ErrOutputMediaTypeRequired
 	}
 
 	stored, putErr := w.content.Put(
@@ -301,31 +292,36 @@ func (w *Worker) processClaimedJob(
 	)
 
 	outputCloseErr := result.Content.Close()
+	sourceCloseErr := source.Close()
 
 	if putErr != nil {
-		if outputCloseErr != nil {
-			return FinalizeSuccessInput{}, fmt.Errorf(
-				"store conversion output: %w",
-				errors.Join(
+		return FinalizeSuccessInput{},
+			joinOutputLifecycleErrors(
+				fmt.Errorf(
+					"store conversion output: %w",
 					putErr,
-					fmt.Errorf(
-						"close conversion output content: %w",
-						outputCloseErr,
-					),
 				),
+				outputCloseErr,
+				sourceCloseErr,
 			)
-		}
-
-		return FinalizeSuccessInput{}, fmt.Errorf(
-			"store conversion output: %w",
-			putErr,
-		)
 	}
 
 	if outputCloseErr != nil {
+		return FinalizeSuccessInput{},
+			joinOutputLifecycleErrors(
+				fmt.Errorf(
+					"close conversion output content: %w",
+					outputCloseErr,
+				),
+				nil,
+				sourceCloseErr,
+			)
+	}
+
+	if sourceCloseErr != nil {
 		return FinalizeSuccessInput{}, fmt.Errorf(
-			"close conversion output content: %w",
-			outputCloseErr,
+			"close conversion source content: %w",
+			sourceCloseErr,
 		)
 	}
 
@@ -339,6 +335,36 @@ func (w *Worker) processClaimedJob(
 		SizeBytes:       stored.SizeBytes,
 		MediaType:       mediaType,
 	}, nil
+}
+
+func joinOutputLifecycleErrors(
+	primary error,
+	outputCloseErr error,
+	sourceCloseErr error,
+) error {
+	errs := []error{primary}
+
+	if outputCloseErr != nil {
+		errs = append(
+			errs,
+			fmt.Errorf(
+				"close conversion output content: %w",
+				outputCloseErr,
+			),
+		)
+	}
+
+	if sourceCloseErr != nil {
+		errs = append(
+			errs,
+			fmt.Errorf(
+				"close conversion source content: %w",
+				sourceCloseErr,
+			),
+		)
+	}
+
+	return errors.Join(errs...)
 }
 
 func validateStoredOutput(
