@@ -7,6 +7,7 @@ services:
       - .:/workspace
       - go-mod-cache:/go/pkg/mod
       - go-build-cache:/root/.cache/go-build
+      - web-node-modules:/workspace/web/node_modules
       - storage-data:/var/lib/3default/storage
     environment:
       GOMODCACHE: /go/pkg/mod
