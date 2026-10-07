@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: project versioning, authenticated content storage, and a durable GLB preview pipeline**
+**Current phase: project versioning, authenticated content storage, a durable GLB preview pipeline, and routed Three.js browser visualization**
 
 Implemented foundations include:
 
@@ -37,6 +37,11 @@ Implemented foundations include:
 * immutable derived-preview persistence using the shared content-addressed storage layer and transactional conversion-output metadata
 * GLB 2.0 pass-through converter adapter with structural validation and a replaceable converter boundary for future native CAD conversion
 * authenticated latest-successful GLB preview streaming through `/api/projects/{projectId}/files/{projectFileId}/preview`
+* routed Three.js browser preview through `/projects/{projectId}/files/{projectFileId}/preview`
+* same-origin authenticated preview loading with explicit loading, unavailable, request-error, and render-error states
+* GLTFLoader-based GLB parsing with OrbitControls, automatic camera fitting, resize handling, animation-loop lifecycle management, and deterministic model-resource disposal
+* abortable preview requests with stale-response protection when the selected project or file changes
+* lazy-loaded preview route so Three.js stays out of the initial application bundle
 * persistent Docker storage configured through `STORAGE_ROOT`
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
@@ -48,7 +53,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. The current converter is intentionally limited to structurally valid GLB 2.0 pass-through: it does not yet convert native CAD or STEP files into GLB. Three.js browser visualization, real CAD-to-GLB conversion, immutable-history hardening, and user-facing merge/conflict-resolution workflows remain future work.
+The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. The current converter is intentionally limited to structurally valid GLB 2.0 pass-through: it does not yet convert native CAD or STEP files into GLB. The routed Vue application now consumes authenticated GLB previews through a Three.js browser viewer. Real CAD-to-GLB conversion, immutable-history hardening, and user-facing merge/conflict-resolution workflows remain future work.
 
 ---
 
@@ -105,7 +110,7 @@ Go HTTP server
       STORAGE_ROOT filesystem
 ```
 
-During development, Vite proxies `/api/*` requests to the Go service.
+During development, Vite proxies `/api/*` requests to the Go service. The project-file preview route is lazy-loaded so the Three.js viewer and its rendering dependencies are fetched only when browser visualization is requested.
 
 The intended production shape is:
 
@@ -149,6 +154,7 @@ This keeps the frontend and API on the same origin and avoids unnecessary CORS c
 * Vue Router
 * Pinia
 * Vite
+* Three.js
 * Vitest
 * Prettier
 * Oxlint
@@ -159,6 +165,7 @@ This keeps the frontend and API on the same origin and avoids unnecessary CORS c
 * Docker Desktop
 * Docker Compose
 * VS Code Dev Containers
+* Node.js 24 frontend container
 * Git
 * GitHub
 
@@ -499,7 +506,7 @@ Successful downloads return `application/octet-stream`. `Content-Disposition` is
 
 A missing or wrong-project metadata record remains a normal owner-scoped `404`. If project-file metadata exists but its physical content object is missing, non-regular, unreadable, or hash-corrupt, the condition is treated as an internal storage inconsistency and the download endpoint returns `500` rather than pretending that the project-file metadata does not exist.
 
-The current HTTP API exposes project-file metadata, exact revision-file snapshot metadata, authoritative physical source-file download, durable conversion-job orchestration, and retrieval of the latest successful GLB preview for a project file. Derived preview bytes reuse the immutable content-addressed storage layer, while their conversion-job relationship is stored separately so source `project_files` remain authoritative. HTTP range requests, conditional caching/ETags, browser visualization, and real native-CAD-to-GLB conversion remain future work.
+The current HTTP API exposes project-file metadata, exact revision-file snapshot metadata, authoritative physical source-file download, durable conversion-job orchestration, and retrieval of the latest successful GLB preview for a project file. Derived preview bytes reuse the immutable content-addressed storage layer, while their conversion-job relationship is stored separately so source `project_files` remain authoritative. HTTP range requests, conditional caching/ETags, and real native-CAD-to-GLB conversion remain future work. Browser visualization is now implemented through the routed Three.js preview viewer.
 
 The filesystem root is supplied through the required `STORAGE_ROOT` environment variable. The Docker development configuration uses:
 
@@ -587,6 +594,22 @@ The conversion service, preview service, and embedded worker are wired into the 
 
 ---
 
+## Three.js Browser Preview
+
+The Vue application exposes a direct browser route for a project-file preview:
+
+```text
+/projects/{projectId}/files/{projectFileId}/preview
+```
+
+Vue Router lazy-loads the preview feature only when this route is visited. The `ProjectFilePreview` coordinator starts an abortable same-origin request to the authenticated backend preview endpoint, maps `404` to a normal unavailable state, maps other request failures to an error state, and passes a successful GLB `ArrayBuffer` to the rendering component. Changing either route identifier aborts the previous request and prevents a stale response from replacing the newly selected file.
+
+`ThreePreviewCanvas` owns the WebGL-specific lifecycle. It parses binary GLB data with `GLTFLoader`, renders it with Three.js, provides orbit/pan/zoom interaction through `OrbitControls`, and automatically fits the camera to the loaded model. The component also observes container resizing, caps device pixel ratio, runs damped controls through the renderer animation loop, rejects stale asynchronous model loads, and releases model geometry, materials, textures, closeable texture sources, controls, the animation loop, and the renderer when models are replaced or the component unmounts.
+
+The route currently depends on an existing authenticated session and a successful persisted GLB conversion output. Because the converter remains GLB pass-through only, native CAD and STEP uploads still require a future real conversion adapter before they can produce browser previews automatically.
+
+---
+
 ## Development Environment
 
 ### Requirements
@@ -605,6 +628,8 @@ Dev Containers: Reopen in Container
 ```
 
 The development container provides Go 1.27.1, `gopls`, Linux Go tooling, shared Go caches, PostgreSQL access, the repository mounted at `/workspace`, and persistent application storage mounted at `/var/lib/3default/storage`.
+
+Node and npm intentionally run in the dedicated `web` Compose service rather than being installed in the Go development container. The Dev Container mounts the same `web-node-modules` named volume at `/workspace/web/node_modules`, which lets VS Code and the workspace TypeScript server resolve the exact frontend dependencies installed by the `web` service without duplicating the Node toolchain inside the Go container.
 
 The application requires both `DATABASE_URL` and `STORAGE_ROOT`. Docker Compose and the Dev Container configure these automatically for local development.
 
@@ -640,7 +665,13 @@ Development services:
 
 For browser development, open [http://localhost:5173](http://localhost:5173).
 
-Vite proxies `/api/*` requests to the Go API service.
+An authenticated project-file preview can be opened directly at:
+
+```text
+http://localhost:5173/projects/<projectId>/files/<projectFileId>/preview
+```
+
+The page requires the normal server-side login session. Its browser request is sent through the same-origin `/api/*` path, which Vite proxies to the Go API service during development.
 
 Uploaded source content and generated preview content are intentionally stored outside the repository checkout. Removing or recreating the application container does not remove the named storage volume unless the volume itself is explicitly deleted.
 
@@ -706,6 +737,18 @@ For an uncached run:
 go test -count=1 ./cmd/... ./internal/...
 ```
 
+Use the explicit `./cmd/... ./internal/...` package scopes from the Dev Container rather than `go test ./...`. The Dev Container now mounts the frontend `node_modules` volume for editor tooling, and third-party npm packages may themselves contain unrelated Go source trees.
+
+Run the frontend unit suite, TypeScript check, and production build from the host through the dedicated `web` service:
+
+```powershell
+docker compose run --rm --no-deps web npm run test:unit -- --run
+docker compose run --rm --no-deps web npm run type-check
+docker compose run --rm --no-deps web npm run build-only
+```
+
+The preview route is lazy-loaded. A production build therefore keeps the initial application bundle separate from the larger on-demand Three.js preview chunk.
+
 Run PostgreSQL integration tests:
 
 ```bash
@@ -742,6 +785,7 @@ milestone/project-versioning
 milestone/file-storage
 milestone/conversion-jobs
 milestone/glb-preview-pipeline
+milestone/threejs-preview-viewer
 ```
 
 Within each milestone, work remains divided into small logical commits. Completed milestones are merged into `main` through pull requests.
@@ -760,6 +804,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * **Infrastructure stays simple until complexity is justified.** PostgreSQL and a modular monolith are preferred over premature distributed services.
 * **Durable background work belongs in durable state.** Conversion jobs are persisted before execution and recovered explicitly rather than relying on in-memory queues.
 * **Derived artifacts remain replaceable.** Conversion and preview outputs must be reproducible from authoritative source files and should not become the source of truth.
+* **Browser responsibilities stay separated.** HTTP loading and UI state belong to the preview coordinator, while WebGL parsing, camera control, rendering, and GPU-resource cleanup belong to the Three.js canvas component.
+* **Heavy browser features load only when needed.** The preview route is lazy-loaded so Three.js does not inflate the initial application bundle.
 * **Development should resemble production.** The development architecture intentionally follows the expected production shape.
 
 ---
@@ -820,7 +866,9 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] physical file download/open API
 * [x] conversion jobs
 * [x] GLB preview pipeline
-* [ ] Three.js browser viewer
+* [x] Three.js browser viewer
+* [x] authenticated routed project-file preview states and lazy loading
+* [ ] real STEP/native-CAD-to-GLB conversion
 * [ ] assembly/revision relationships
 
 ### Product Evolution
