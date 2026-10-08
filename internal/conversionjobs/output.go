@@ -7,8 +7,13 @@ import (
 	"github.com/google/uuid"
 )
 
-var ErrOutputContentSizeConflict = errors.New(
-	"conversion output content size conflicts with existing hash",
+var (
+	ErrUnsupportedConversionSource = errors.New(
+		"conversion source format is unsupported",
+	)
+	ErrOutputContentSizeConflict = errors.New(
+		"conversion output content size conflicts with existing hash",
+	)
 )
 
 type ConversionResult struct {

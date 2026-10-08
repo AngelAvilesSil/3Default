@@ -11,13 +11,8 @@ import (
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 )
 
-var (
-	ErrUnsupportedConversionSource = errors.New(
-		"conversion source format is unsupported",
-	)
-	ErrInvalidGLB = errors.New(
-		"GLB content is invalid",
-	)
+var ErrInvalidGLB = errors.New(
+	"GLB content is invalid",
 )
 
 const (
