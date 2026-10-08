@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: project versioning, authenticated content storage, a durable GLB preview pipeline, and routed Three.js browser visualization**
+**Current phase: project versioning, authenticated content storage, STEP/GLB conversion, and routed Three.js browser visualization**
 
 Implemented foundations include:
 
@@ -35,7 +35,10 @@ Implemented foundations include:
 * authenticated conversion-job creation, project-file job history, and project-scoped job detail APIs
 * embedded conversion worker started by the Go application, with PostgreSQL-backed claiming, at-least-once execution semantics, graceful requeue, and startup recovery
 * immutable derived-preview persistence using the shared content-addressed storage layer and transactional conversion-output metadata
-* GLB 2.0 pass-through converter adapter with structural validation and a replaceable converter boundary for future native CAD conversion
+* GLB 2.0 pass-through converter with structural validation
+* format routing for `.glb`, `.step`, and `.stp` source files
+* MayoConv 0.10.0 STEP-to-GLB adapter with temporary-file cleanup and output validation
+* Docker-packaged Mayo executable with optional `MAYO_EXECUTABLE` application configuration
 * authenticated latest-successful GLB preview streaming through `/api/projects/{projectId}/files/{projectFileId}/preview`
 * routed Three.js browser preview through `/projects/{projectId}/files/{projectFileId}/preview`
 * same-origin authenticated preview loading with explicit loading, unavailable, request-error, and render-error states
@@ -53,7 +56,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. The current converter is intentionally limited to structurally valid GLB 2.0 pass-through: it does not yet convert native CAD or STEP files into GLB. The routed Vue application now consumes authenticated GLB previews through a Three.js browser viewer. Real CAD-to-GLB conversion, immutable-history hardening, and user-facing merge/conflict-resolution workflows remain future work.
+The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The routed Vue application now consumes authenticated GLB previews through a Three.js browser viewer. Additional native CAD conversion formats, immutable-history hardening, and user-facing merge/conflict-resolution workflows remain future work.
 
 ---
 
@@ -506,7 +509,7 @@ Successful downloads return `application/octet-stream`. `Content-Disposition` is
 
 A missing or wrong-project metadata record remains a normal owner-scoped `404`. If project-file metadata exists but its physical content object is missing, non-regular, unreadable, or hash-corrupt, the condition is treated as an internal storage inconsistency and the download endpoint returns `500` rather than pretending that the project-file metadata does not exist.
 
-The current HTTP API exposes project-file metadata, exact revision-file snapshot metadata, authoritative physical source-file download, durable conversion-job orchestration, and retrieval of the latest successful GLB preview for a project file. Derived preview bytes reuse the immutable content-addressed storage layer, while their conversion-job relationship is stored separately so source `project_files` remain authoritative. HTTP range requests, conditional caching/ETags, and real native-CAD-to-GLB conversion remain future work. Browser visualization is now implemented through the routed Three.js preview viewer.
+The current HTTP API exposes project-file metadata, exact revision-file snapshot metadata, authoritative physical source-file download, durable conversion-job orchestration, and retrieval of the latest successful GLB preview for a project file. Derived preview bytes reuse the immutable content-addressed storage layer, while their conversion-job relationship is stored separately so source `project_files` remain authoritative. HTTP range requests, conditional caching/ETags, and conversion support for additional native CAD formats remain future work. Browser visualization is now implemented through the routed Three.js preview viewer.
 
 The filesystem root is supplied through the required `STORAGE_ROOT` environment variable. The Docker development configuration uses:
 
@@ -544,7 +547,7 @@ The embedded worker claims the oldest pending job with PostgreSQL row locking an
 
 Graceful cancellation requeues the currently running job instead of marking it failed. Startup recovery also requeues rows left in `running` by an earlier process. This recovery model is correct for the current single-process, single-worker deployment shape. A future multi-process or distributed worker topology would require a lease or heartbeat mechanism rather than globally requeueing all running jobs.
 
-The converter itself is behind a replaceable adapter boundary. The current implementation uses a GLB pass-through adapter: it accepts structurally valid GLB 2.0 input, validates the container framing while streaming, and returns the same GLB bytes as the derived preview with media type `model/gltf-binary`. Unsupported source formats fail the job rather than being mislabeled as converted previews.
+The converter itself is behind a replaceable adapter boundary. When `MAYO_EXECUTABLE` is configured, the format router delegates `.glb` files to the structurally validating GLB pass-through adapter and `.step`/`.stp` files to MayoConv 0.10.0. The Mayo adapter stages STEP input in temporary files, runs the external converter, validates the resulting GLB, and cleans up temporary files. The resulting preview uses media type `model/gltf-binary`. Unsupported formats fail rather than being mislabeled as converted previews. When Mayo is unconfigured, the worker falls back to the previous content-based GLB pass-through behavior.
 
 The worker stores the derived bytes in the same immutable content-addressed filesystem used by source content. It then finalizes success in one PostgreSQL transaction that ensures the matching `content_objects` row, creates the `conversion_job_outputs` row, and transitions the job from `running` to `succeeded`. A job therefore cannot be recorded as succeeded without persisted output metadata. If physical storage succeeds but the database transaction fails, the immutable physical object may remain unreferenced and can be handled later by orphan garbage collection.
 
@@ -575,6 +578,17 @@ The HTTP response includes:
 
 All nested project routes participate in the same PostgreSQL-backed session resolution as the project collection and project-detail APIs. Unsafe cross-origin browser requests to the conversion-job creation endpoint are rejected by the shared request protection.
 
+### STEP-to-GLB Conversion Verification
+
+The STEP conversion pipeline was validated with a disposable Docker Compose project, a fresh PostgreSQL database, and an OpenCascade `screw.step` fixture.
+
+The end-to-end test registered and authenticated a temporary user, created a project, uploaded the original STEP source, verified the downloaded source bytes were unchanged, created a durable conversion job, and waited for the embedded worker to finish. MayoConv 0.10.0 produced a 24,112-byte GLB containing one mesh. The persisted job reached `succeeded` on its first attempt, the authenticated preview endpoint streamed valid GLB 2.0 content, and an anonymous preview request was rejected.
+
+The generated model was also opened in the Vue/Three.js browser viewer, where rendering, rotation, panning, and zooming were verified manually. The disposable database, volumes, and test scripts were removed after verification.
+
+This test confirms the supported STEP path, not arbitrary native CAD compatibility or production-scale conversion performance.
+
+---
 
 ### GLB Preview Retrieval
 
@@ -590,7 +604,7 @@ Only persisted outputs with media type `model/gltf-binary` are served by this en
 
 Successful responses stream the GLB body directly as `model/gltf-binary`. The response intentionally does not use `Content-Disposition: attachment`, because the resource is intended for browser/Three.js consumption rather than forced download. The generated OpenAPI transport closes the returned content stream after copying it to the response.
 
-The conversion service, preview service, and embedded worker are wired into the HTTP application in `main`. The worker starts with the GLB pass-through adapter and can mark a job successful only through the transactional output-finalization path. This completes the first end-to-end preview pipeline while keeping the converter boundary replaceable for later STEP/native-CAD conversion.
+The conversion service, preview service, and embedded worker are wired into the HTTP application in `main`. `NewConfiguredConverter` selects GLB pass-through alone when Mayo is absent, or GLB/STEP format routing when Mayo is configured. Successful jobs still use the transactional output-finalization path, and the converter boundary remains replaceable for additional CAD formats.
 
 ---
 
@@ -606,7 +620,7 @@ Vue Router lazy-loads the preview feature only when this route is visited. The `
 
 `ThreePreviewCanvas` owns the WebGL-specific lifecycle. It parses binary GLB data with `GLTFLoader`, renders it with Three.js, provides orbit/pan/zoom interaction through `OrbitControls`, and automatically fits the camera to the loaded model. The component also observes container resizing, caps device pixel ratio, runs damped controls through the renderer animation loop, rejects stale asynchronous model loads, and releases model geometry, materials, textures, closeable texture sources, controls, the animation loop, and the renderer when models are replaced or the component unmounts.
 
-The route currently depends on an existing authenticated session and a successful persisted GLB conversion output. Because the converter remains GLB pass-through only, native CAD and STEP uploads still require a future real conversion adapter before they can produce browser previews automatically.
+The route currently depends on an existing authenticated session and a successful persisted GLB conversion output. With Mayo configured, STEP and STP files can produce browser-viewable GLB previews after their conversion jobs succeed. Uploading a source file and requesting a conversion job remain separate API operations; the preview route does not start conversion jobs. Other native CAD formats remain unsupported.
 
 ---
 
@@ -633,6 +647,8 @@ Node and npm intentionally run in the dedicated `web` Compose service rather tha
 
 The application requires both `DATABASE_URL` and `STORAGE_ROOT`. Docker Compose and the Dev Container configure these automatically for local development.
 
+STEP conversion additionally requires `MAYO_EXECUTABLE`. The API image in `docker/api.Dockerfile` downloads a pinned MayoConv 0.10.0 AppImage, verifies its SHA-256 checksum, extracts it into `/opt/mayo`, and sets `MAYO_EXECUTABLE=/opt/mayo/AppRun`. Mayo runs directly without Xvfb. When this variable is unset or blank, such as when running Go directly in a Dev Container without Mayo installed, the worker retains GLB pass-through but cannot convert STEP files.
+
 Verify:
 
 ```bash
@@ -653,7 +669,7 @@ Expected workspace:
 From the repository root:
 
 ```bash
-docker compose up -d db api web
+docker compose up -d --build db api web
 ```
 
 Development services:
@@ -664,6 +680,8 @@ Development services:
 * immutable source and derived preview content: persistent `storage-data` Docker volume mounted at `/var/lib/3default/storage`
 
 For browser development, open [http://localhost:5173](http://localhost:5173).
+
+A source upload does not automatically enqueue conversion. After uploading a `.step` or `.stp` file, create a conversion job through the authenticated conversion-job POST endpoint and wait for its status to become `succeeded`. The generated GLB can then be retrieved through the authenticated preview endpoint.
 
 An authenticated project-file preview can be opened directly at:
 
@@ -868,7 +886,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] GLB preview pipeline
 * [x] Three.js browser viewer
 * [x] authenticated routed project-file preview states and lazy loading
-* [ ] real STEP/native-CAD-to-GLB conversion
+* [x] STEP/STP-to-GLB conversion through MayoConv 0.10.0
+* [ ] conversion support for additional native CAD formats
 * [ ] assembly/revision relationships
 
 ### Product Evolution
