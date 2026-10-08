@@ -1,6 +1,8 @@
 services:
   api:
-    image: golang:1.27.1-bookworm
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
     working_dir: /workspace
     command: go run ./cmd/3default
     ports:
