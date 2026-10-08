@@ -6,8 +6,9 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	StorageRoot string
+	DatabaseURL    string
+	StorageRoot    string
+	MayoExecutable string
 }
 
 func Load() (Config, error) {
@@ -22,7 +23,8 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		DatabaseURL: databaseURL,
-		StorageRoot: storageRoot,
+		DatabaseURL:    databaseURL,
+		StorageRoot:    storageRoot,
+		MayoExecutable: os.Getenv("MAYO_EXECUTABLE"),
 	}, nil
 }

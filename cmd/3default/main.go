@@ -91,10 +91,20 @@ func main() {
 		contentStore,
 	)
 
+	converter, err := conversionjobs.NewConfiguredConverter(
+		cfg.MayoExecutable,
+	)
+	if err != nil {
+		log.Fatalf(
+			"initialize conversion converter: %v",
+			err,
+		)
+	}
+
 	conversionWorker, err := conversionjobs.NewWorker(
 		conversionJobStore,
 		contentStore,
-		conversionjobs.NewGLBPassThroughConverter(),
+		converter,
 		conversionWorkerIdleDelay,
 	)
 	if err != nil {

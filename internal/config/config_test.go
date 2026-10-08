@@ -70,3 +70,45 @@ func TestLoadReturnsConfiguredValues(t *testing.T) {
 		)
 	}
 }
+
+func TestLoadReturnsOptionalMayoExecutable(t *testing.T) {
+	t.Setenv(
+		"DATABASE_URL",
+		"postgres://example.invalid/database",
+	)
+	t.Setenv("STORAGE_ROOT", "/tmp/3default-storage")
+	t.Setenv("MAYO_EXECUTABLE", "/opt/mayo/AppRun")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.MayoExecutable != "/opt/mayo/AppRun" {
+		t.Fatalf(
+			"unexpected Mayo executable: %q",
+			cfg.MayoExecutable,
+		)
+	}
+}
+
+func TestLoadAllowsMayoToBeUnconfigured(t *testing.T) {
+	t.Setenv(
+		"DATABASE_URL",
+		"postgres://example.invalid/database",
+	)
+	t.Setenv("STORAGE_ROOT", "/tmp/3default-storage")
+	t.Setenv("MAYO_EXECUTABLE", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if cfg.MayoExecutable != "" {
+		t.Fatalf(
+			"expected no Mayo executable, got %q",
+			cfg.MayoExecutable,
+		)
+	}
+}
