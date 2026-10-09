@@ -1681,3 +1681,191 @@ func TestRunOnceRequeuesJobWhenOutputStorageIsCanceled(
 		)
 	}
 }
+
+func TestRunOnceMarksConversionTimeoutFailed(t *testing.T) {
+	jobID := uuid.New()
+
+	source := &trackingReadCloser{
+		reader: bytes.NewReader([]byte("CAD")),
+	}
+
+	store := &fakeWorkerStore{
+		claimJob: dbgen.ConversionJob{
+			ID:            jobID,
+			ProjectID:     uuid.New(),
+			ProjectFileID: uuid.New(),
+			Status:        "running",
+			AttemptCount:  1,
+		},
+		projectFile: dbgen.ProjectFile{
+			ContentSha256: strings.Repeat("a", 64),
+		},
+	}
+
+	content := &fakeWorkerContentReader{
+		content: source,
+	}
+
+	converter := &blockingConverter{
+		started: make(chan struct{}),
+	}
+
+	worker, err := NewWorker(
+		store,
+		content,
+		converter,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("create worker: %v", err)
+	}
+
+	worker.executionTimeout = 40 * time.Millisecond
+
+	processed, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("run timed-out conversion: %v", err)
+	}
+	if !processed {
+		t.Fatal("expected claimed job to count as processed")
+	}
+
+	select {
+	case <-converter.started:
+	default:
+		t.Fatal("expected converter to start")
+	}
+
+	if !store.failCalled {
+		t.Fatal("expected timed-out job to be marked failed")
+	}
+	if store.failParams.ConversionJobID != jobID {
+		t.Fatalf(
+			"expected failed job %s, got %s",
+			jobID,
+			store.failParams.ConversionJobID,
+		)
+	}
+	if store.failParams.LastError == nil {
+		t.Fatal("expected persisted timeout reason")
+	}
+	if !strings.Contains(
+		*store.failParams.LastError,
+		"conversion job exceeded 40ms execution timeout",
+	) {
+		t.Fatalf(
+			"unexpected timeout reason: %s",
+			*store.failParams.LastError,
+		)
+	}
+	if !strings.Contains(
+		*store.failParams.LastError,
+		context.DeadlineExceeded.Error(),
+	) {
+		t.Fatal("expected context deadline exceeded reason")
+	}
+	if store.requeueCalled {
+		t.Fatal("job-specific timeout must not requeue")
+	}
+	if store.succeedCalled {
+		t.Fatal("timed-out job must not succeed")
+	}
+	if !source.closed {
+		t.Fatal("expected source content to be closed")
+	}
+}
+
+func TestRunOnceMarksOutputStorageTimeoutFailed(t *testing.T) {
+	jobID := uuid.New()
+	putStarted := make(chan struct{})
+
+	source := &trackingReadCloser{
+		reader: bytes.NewReader([]byte("CAD")),
+	}
+
+	store := &fakeWorkerStore{
+		claimJob: dbgen.ConversionJob{
+			ID:            jobID,
+			ProjectID:     uuid.New(),
+			ProjectFileID: uuid.New(),
+			Status:        "running",
+			AttemptCount:  1,
+		},
+		projectFile: dbgen.ProjectFile{
+			ContentSha256: strings.Repeat("b", 64),
+		},
+	}
+
+	content := &fakeWorkerContentReader{
+		content:                source,
+		putStarted:             putStarted,
+		putWaitForCancellation: true,
+	}
+
+	converter := &recordingConverter{}
+
+	worker, err := NewWorker(
+		store,
+		content,
+		converter,
+		time.Second,
+	)
+	if err != nil {
+		t.Fatalf("create worker: %v", err)
+	}
+
+	worker.executionTimeout = 40 * time.Millisecond
+
+	processed, err := worker.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("run timed-out output storage: %v", err)
+	}
+	if !processed {
+		t.Fatal("expected claimed job to count as processed")
+	}
+
+	select {
+	case <-putStarted:
+	default:
+		t.Fatal("expected output storage to start")
+	}
+
+	if !store.failCalled {
+		t.Fatal("expected output-storage timeout to fail job")
+	}
+	if store.failParams.ConversionJobID != jobID {
+		t.Fatalf(
+			"expected failed job %s, got %s",
+			jobID,
+			store.failParams.ConversionJobID,
+		)
+	}
+	if store.failParams.LastError == nil {
+		t.Fatal("expected persisted timeout reason")
+	}
+	if !strings.Contains(
+		*store.failParams.LastError,
+		context.DeadlineExceeded.Error(),
+	) {
+		t.Fatalf(
+			"unexpected timeout reason: %s",
+			*store.failParams.LastError,
+		)
+	}
+
+	if store.requeueCalled {
+		t.Fatal("output-storage timeout must not requeue")
+	}
+	if store.succeedCalled {
+		t.Fatal("timed-out output storage must not succeed")
+	}
+	if !source.closed {
+		t.Fatal("expected source content to be closed")
+	}
+	if converter.produced == nil {
+		t.Fatal("expected converter to produce output")
+	}
+	if !converter.produced.closed {
+		t.Fatal("expected derived output to be closed")
+	}
+}
