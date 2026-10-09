@@ -1,6 +1,6 @@
 # 3Default
 
-3Default is a collaborative engineering platform for managing and reviewing 3D CAD projects with Git-inspired version-control concepts.
+3Default is a version-control and visual-collaboration platform for 3D projects, currently focused on mechanical CAD and engineering design workflows.
 
 The goal is to make engineering design history easier to understand through explicit revisions, parallel branches, intentional merges, and browser-based 3D review.
 
@@ -34,10 +34,12 @@ Implemented foundations include:
 * durable PostgreSQL-backed CAD conversion jobs with `pending`, `running`, `succeeded`, and `failed` states
 * authenticated conversion-job creation, project-file job history, and project-scoped job detail APIs
 * embedded conversion worker started by the Go application, with PostgreSQL-backed claiming, at-least-once execution semantics, graceful requeue, and startup recovery
+* five-minute per-job execution deadline with persistent timeout failures and graceful-shutdown requeue
 * immutable derived-preview persistence using the shared content-addressed storage layer and transactional conversion-output metadata
 * GLB 2.0 pass-through converter with structural validation
 * format routing for `.glb`, `.step`, and `.stp` source files
 * MayoConv 0.10.0 STEP-to-GLB adapter with temporary-file cleanup and output validation
+* Linux Mayo subprocess-group termination on cancellation, with bounded output-pipe waiting
 * Docker-packaged Mayo executable with optional `MAYO_EXECUTABLE` application configuration
 * authenticated latest-successful GLB preview streaming through `/api/projects/{projectId}/files/{projectFileId}/preview`
 * routed Three.js browser preview through `/projects/{projectId}/files/{projectFileId}/preview`
@@ -422,7 +424,7 @@ History results use a deterministic presentation order of `createdAt` descending
 
 Historical revisions are treated as append-only by the application: there are no revision update or delete operations in the current service or HTTP API. The database schema enforces same-project parent references and several parent constraints, but it does **not** currently prevent arbitrary direct SQL updates to revision rows or fully enforce cycle prevention. Stronger immutable-history enforcement and graph validation remain future work.
 
-Immutable-history hardening and cycle prevention, broader branch management, CAD conversion, visualization, and user-facing merge/conflict-resolution workflows are not implemented yet.
+Immutable-history hardening and cycle prevention, broader branch management, additional CAD-format support, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
 
 ---
 
@@ -537,6 +539,7 @@ pending
 running
    ├── converter succeeds ──► succeeded
    ├── converter fails ─────► failed
+   ├── execution timeout ───► failed
    ├── graceful shutdown ───► pending
    └── process crash ───────► recovered to pending on startup
 ```
@@ -546,6 +549,10 @@ The schema enforces the state/timestamp relationships, keeps `attempt_count`, st
 The embedded worker claims the oldest pending job with PostgreSQL row locking and `FOR UPDATE SKIP LOCKED`, increments its attempt count, and transitions it to `running`. Execution is intentionally **at least once** rather than exactly once. A converter must therefore tolerate the possibility that a previously started job is executed again after process failure and startup recovery.
 
 Graceful cancellation requeues the currently running job instead of marking it failed. Startup recovery also requeues rows left in `running` by an earlier process. This recovery model is correct for the current single-process, single-worker deployment shape. A future multi-process or distributed worker topology would require a lease or heartbeat mechanism rather than globally requeueing all running jobs.
+
+After claiming a job, the worker applies a fixed five-minute execution deadline to source retrieval, conversion, and derived-output storage. If the deadline expires, the job is marked `failed` with a persisted timeout reason. Application shutdown instead takes precedence and requeues interrupted work. Database claiming and finalization retain their existing separate execution contexts.
+
+On Linux, the Mayo command runner starts the converter in a separate process group and sends `SIGKILL` to that group when the command context is canceled. A two-second `WaitDelay` bounds waiting for inherited output pipes. Other operating systems retain Go's direct-process cancellation with the same pipe-wait bound. These mechanisms do not provide CPU or memory quotas, full process isolation, or guaranteed termination of processes that deliberately detach into other process groups.
 
 The converter itself is behind a replaceable adapter boundary. When `MAYO_EXECUTABLE` is configured, the format router delegates `.glb` files to the structurally validating GLB pass-through adapter and `.step`/`.stp` files to MayoConv 0.10.0. The Mayo adapter stages STEP input in temporary files, runs the external converter, validates the resulting GLB, and cleans up temporary files. The resulting preview uses media type `model/gltf-binary`. Unsupported formats fail rather than being mislabeled as converted previews. When Mayo is unconfigured, the worker falls back to the previous content-based GLB pass-through behavior.
 
@@ -577,6 +584,12 @@ The HTTP response includes:
 * update time
 
 All nested project routes participate in the same PostgreSQL-backed session resolution as the project collection and project-detail APIs. Unsafe cross-origin browser requests to the conversion-job creation endpoint are rejected by the shared request protection.
+
+### Conversion Execution Hardening Verification
+
+Worker regression tests verify that conversion and output-storage deadlines record failed jobs, while application shutdown continues to requeue interrupted work. Linux command-runner tests launch a real shell and child process to verify process-group termination on cancellation. Process regressions passed ten consecutive runs, alongside the backend test suite, race detector, static analysis, and Windows cross-compilation.
+
+These tests verify the worker timeout and subprocess-cancellation mechanisms. They do not establish real-Mayo timeout behavior under every workload or enforce operating-system resource quotas.
 
 ### STEP-to-GLB Conversion Verification
 
@@ -806,7 +819,7 @@ milestone/glb-preview-pipeline
 milestone/threejs-preview-viewer
 ```
 
-Within each milestone, work remains divided into small logical commits. Completed milestones are merged into `main` through pull requests.
+Within each milestone, work remains divided into small logical commits. Completed milestones are merged into `main` through pull requests using **Rebase and merge**, preserving linear history and distinct implementation and documentation commits.
 
 The goal is to keep both the codebase and Git history understandable as the project grows.
 
@@ -887,6 +900,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] Three.js browser viewer
 * [x] authenticated routed project-file preview states and lazy loading
 * [x] STEP/STP-to-GLB conversion through MayoConv 0.10.0
+* [x] conversion-job execution deadline and Linux Mayo process-group cancellation
 * [ ] conversion support for additional native CAD formats
 * [ ] assembly/revision relationships
 
@@ -894,6 +908,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 
 * [ ] public project sharing
 * [ ] collaboration and permissions
+* [ ] revision-aware visual comparison
 * [ ] production deployment
 * [ ] monitoring
 * [ ] worker separation when justified
@@ -915,6 +930,12 @@ The rebuild is intentionally incremental rather than attempting to recreate the 
 As a portfolio project, 3Default demonstrates practical engineering across Go, PostgreSQL, SQL and schema design, REST APIs, authentication, Docker, generated code workflows, integration testing, content-addressed storage, streaming file uploads and downloads, durable background-job orchestration, concurrency-safe PostgreSQL work claiming, transactional derived-output persistence, authenticated GLB preview streaming, Git, and product-oriented architecture.
 
 As a potential product, the goal is to preserve a foundation that can evolve into a usable engineering collaboration platform without discarding the portfolio implementation and starting over.
+
+Longer-term, 3Default is intended to support version control and visual collaboration across mechanical CAD, printable meshes, creative 3D assets, and game-development models. Its central product goal is to help users identify what changed, where it changed, and which exact revisions contain those changes.
+
+Future comparison workflows should support selecting any two revisions, including revisions from different branches, with side-by-side rendering, synchronized cameras, optional overlays, and eventually format-appropriate geometric differences. Historical previews must be resolved from the exact source-file snapshots referenced by those revisions rather than treating the latest project-file preview as historical evidence.
+
+These are long-term product goals, not currently implemented capabilities or instructions to expand immediate development scope. Original source files remain authoritative; GLB browser previews remain derived artifacts, and conversion adapters remain replaceable.
 
 ---
 
