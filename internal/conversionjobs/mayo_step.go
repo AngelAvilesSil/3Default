@@ -45,6 +45,7 @@ func (execMayoCommandRunner) Run(
 		name,
 		args...,
 	)
+	configureMayoCommand(command)
 
 	return command.CombinedOutput()
 }
