@@ -47,7 +47,10 @@ var (
 	)
 )
 
-const workerFinalizationTimeout = 5 * time.Second
+const (
+	workerFinalizationTimeout         = 5 * time.Second
+	defaultConversionExecutionTimeout = 5 * time.Minute
+)
 
 type WorkerStore interface {
 	RequeueRunningConversionJobs(
@@ -94,10 +97,11 @@ type Converter interface {
 }
 
 type Worker struct {
-	store     WorkerStore
-	content   ContentStore
-	converter Converter
-	idleDelay time.Duration
+	store            WorkerStore
+	content          ContentStore
+	converter        Converter
+	idleDelay        time.Duration
+	executionTimeout time.Duration
 }
 
 func NewWorker(
@@ -123,10 +127,11 @@ func NewWorker(
 	}
 
 	return &Worker{
-		store:     store,
-		content:   content,
-		converter: converter,
-		idleDelay: idleDelay,
+		store:            store,
+		content:          content,
+		converter:        converter,
+		idleDelay:        idleDelay,
+		executionTimeout: defaultConversionExecutionTimeout,
 	}, nil
 }
 
@@ -188,7 +193,29 @@ func (w *Worker) RunOnce(
 		)
 	}
 
-	finalizeInput, err := w.processClaimedJob(ctx, job)
+	executionCtx, cancel := context.WithTimeout(
+		ctx,
+		w.executionTimeout,
+	)
+	finalizeInput, err := w.processClaimedJob(executionCtx, job)
+	deadlineExceeded := errors.Is(
+		executionCtx.Err(),
+		context.DeadlineExceeded,
+	)
+	cancel()
+
+	// Application shutdown takes precedence over the job deadline.
+	// The existing cancellation path requeues interrupted work.
+	if parentErr := ctx.Err(); parentErr != nil {
+		err = parentErr
+	} else if deadlineExceeded {
+		// Job-specific deadlines are persisted as ordinary failures.
+		err = fmt.Errorf(
+			"conversion job exceeded %s execution timeout: %w",
+			w.executionTimeout,
+			context.DeadlineExceeded,
+		)
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			if requeueErr := w.requeueAfterCancellation(
