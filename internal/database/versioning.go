@@ -213,6 +213,26 @@ func (s *ProjectStore) CreateRevisionOnBranch(
 		)
 	}
 
+	finalizedRows, err := queries.FinalizeProjectRevision(
+		ctx,
+		dbgen.FinalizeProjectRevisionParams{
+			ProjectID:  arg.ProjectID,
+			RevisionID: revision.ID,
+		},
+	)
+	if err != nil {
+		return dbgen.ProjectRevision{}, fmt.Errorf(
+			"finalize project revision: %w",
+			err,
+		)
+	}
+	if finalizedRows != 1 {
+		return dbgen.ProjectRevision{}, fmt.Errorf(
+			"finalize project revision: expected one row, got %d",
+			finalizedRows,
+		)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return dbgen.ProjectRevision{}, fmt.Errorf(
 			"commit revision creation transaction: %w",
@@ -220,6 +240,7 @@ func (s *ProjectStore) CreateRevisionOnBranch(
 		)
 	}
 
+	revision.MembershipFinalized = true
 	return revision, nil
 }
 

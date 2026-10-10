@@ -20,7 +20,8 @@ RETURNING
     message,
     parent_revision_id,
     merge_parent_revision_id,
-    created_at;
+    created_at,
+    membership_finalized;
 
 -- name: GetProjectRevisionByIDAndProject :one
 SELECT
@@ -30,7 +31,8 @@ SELECT
     message,
     parent_revision_id,
     merge_parent_revision_id,
-    created_at
+    created_at,
+    membership_finalized
 FROM project_revisions
 WHERE id = sqlc.arg(revision_id)
   AND project_id = sqlc.arg(project_id);
@@ -65,3 +67,10 @@ JOIN reachable_revision_ids AS reachable
   ON reachable.id = revision.id
 WHERE revision.project_id = sqlc.arg(project_id)
 ORDER BY revision.created_at DESC, revision.id ASC;
+
+-- name: FinalizeProjectRevision :execrows
+UPDATE project_revisions
+SET membership_finalized = TRUE
+WHERE project_id = sqlc.arg(project_id)
+  AND id = sqlc.arg(revision_id)
+  AND membership_finalized = FALSE;

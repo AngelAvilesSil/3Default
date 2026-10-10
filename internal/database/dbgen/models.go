@@ -81,6 +81,7 @@ type ProjectRevision struct {
 	ParentRevisionID      pgtype.UUID
 	MergeParentRevisionID pgtype.UUID
 	CreatedAt             time.Time
+	MembershipFinalized   bool
 }
 
 type ProjectRevisionFile struct {

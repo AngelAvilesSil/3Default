@@ -28,6 +28,7 @@ type Querier interface {
 	DeleteProjectBranch(ctx context.Context, arg DeleteProjectBranchParams) (int64, error)
 	DeleteSession(ctx context.Context, tokenHash []byte) error
 	EnsureContentObject(ctx context.Context, arg EnsureContentObjectParams) (ContentObject, error)
+	FinalizeProjectRevision(ctx context.Context, arg FinalizeProjectRevisionParams) (int64, error)
 	GetActiveSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveSessionByTokenHashRow, error)
 	GetContentObjectBySHA256(ctx context.Context, sha256 string) (ContentObject, error)
 	GetConversionJobByIDAndProject(ctx context.Context, arg GetConversionJobByIDAndProjectParams) (ConversionJob, error)
