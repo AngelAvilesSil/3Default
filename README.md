@@ -27,6 +27,9 @@ Implemented foundations include:
 * authenticated branch creation, rename, and deletion, branch listing and history traversal, revision reads, and revision creation
 * immutable SHA-256 content-addressed filesystem storage with physical deduplication
 * PostgreSQL project-file metadata and exact revision-file snapshot persistence
+* database-enforced immutability of project-file metadata and content references
+* transactionally finalized revision snapshots with immutable file membership
+* database protection of revision metadata, ancestry, and historical deletion
 * authenticated multipart source-file upload with project ownership checked before physical storage
 * authenticated project-file metadata listing and detail reads
 * authenticated streaming source-file download with integrity verification
@@ -58,7 +61,7 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The routed Vue application now consumes authenticated GLB previews through a Three.js browser viewer. Additional native CAD conversion formats, immutable-history hardening, and user-facing merge/conflict-resolution workflows remain future work.
+The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The routed Vue application now consumes authenticated GLB previews through a Three.js browser viewer. PostgreSQL now protects project-file metadata, finalized revision-file membership, and committed revision metadata and ancestry against direct historical rewrites. Comprehensive revision-graph cycle validation, additional native CAD conversion formats, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
 
 ---
 
@@ -362,7 +365,9 @@ Merge revision
 
 For a merge revision, both parents must belong to the same project, the merge parent must differ from the primary parent, and a merge parent cannot be supplied when the target branch has no expected head. The current merge model records revision ancestry only; 3Default does not yet perform automatic CAD-content merging or conflict resolution.
 
-Revision creation, exact revision-file references, and target-branch advancement happen atomically in one database transaction. The client must provide `expectedHeadRevisionId` as an optimistic-concurrency precondition:
+Revision creation, exact revision-file references, target-branch advancement, and revision finalization happen atomically in one database transaction. A newly inserted revision starts with `membership_finalized = false`. The service inserts the complete file membership, advances the target branch head if its expected value still matches, sets `membership_finalized = true`, and commits. A deferred database constraint prevents an unfinalized revision from remaining committed. If any required operation fails, the revision and its membership are rolled back.
+
+The client must provide `expectedHeadRevisionId` as an optimistic-concurrency precondition:
 
 * `null` means the caller explicitly observed an empty branch.
 * a UUID means the caller observed that revision as the branch head.
@@ -375,7 +380,7 @@ Revision creation also requires `projectFileIds`, which represents the complete 
 * omitting `projectFileIds` or supplying `null` is invalid at the HTTP API.
 * duplicate IDs and the nil UUID are invalid, and every referenced file must exist in the same project.
 
-The snapshot is not a delta from the primary parent and no files are inherited implicitly. There are no mutable attach or detach endpoints; after creation, the application and HTTP API treat the revision-file snapshot as immutable.
+The snapshot is not a delta from the primary parent and no files are inherited implicitly. There are no mutable attach or detach endpoints. PostgreSQL also prevents revision-file membership updates and independent deletions, rejects insertion into finalized revisions, and prevents truncation of the membership table. Once finalized, a revision cannot be reopened to change its snapshot.
 
 `GET /api/projects/{projectId}/revisions/{revisionId}/files` returns the project-file metadata referenced by that exact revision. The read is owner-scoped and verifies that the revision exists before listing its files, so a missing revision is distinguishable from a valid revision with an empty snapshot. Results use a deterministic presentation order of file creation time ascending and file ID ascending; that order has no semantic meaning within the snapshot.
 
@@ -422,9 +427,15 @@ Branch history is exposed through `GET /api/projects/{projectId}/branches/{branc
 
 History results use a deterministic presentation order of `createdAt` descending and revision ID ascending. That ordering does **not** define a linear commit chain. The parent IDs on each revision are the authoritative graph structure, so branching and merge ancestry remain explicit in the response.
 
-Historical revisions are treated as append-only by the application: there are no revision update or delete operations in the current service or HTTP API. The database schema enforces same-project parent references and several parent constraints, but it does **not** currently prevent arbitrary direct SQL updates to revision rows or fully enforce cycle prevention. Stronger immutable-history enforcement and graph validation remain future work.
+### Revision Integrity Guarantees
 
-Immutable-history hardening and cycle prevention, broader branch management, additional CAD-format support, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
+Historical revisions are append-only at both the application and database boundaries. The service and HTTP API expose no revision update or delete operations. PostgreSQL additionally rejects direct updates to stored revision identity, project association, author, message, creation timestamp, and first-parent or merge-parent references. The only permitted revision-row update is the initial transition from unfinalized to finalized without changing historical fields.
+
+Independent revision deletion and revision-table truncation are rejected. Deleting the owning project remains supported and cascades through its revision history. Existing constraints also require same-project parent references, prohibit self-parenting and duplicate parents, and require a primary parent when a merge parent is present.
+
+These safeguards protect committed history against subsequent rewrites, but they are not a separate comprehensive cycle validator for every possible graph created through direct SQL insertion. Explicit graph-cycle validation remains future work.
+
+Other future work includes broader branch management, additional CAD-format support, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows.
 
 ---
 
@@ -452,7 +463,9 @@ PostgreSQL stores the application metadata separately:
 * `project_revision_files` stores the exact project-file references that form each revision snapshot.
 * `conversion_job_outputs` records the derived content hash, media type, and creation time produced by a successful conversion job while reusing `content_objects` for the immutable physical bytes.
 
-The revision-file relation is now part of revision creation. The revision row, its exact project-file references, and the target branch-head update are persisted in one transaction. A missing or wrong-project file, a duplicate file ID, or a branch-head conflict rolls back the candidate revision and its file references.
+The revision-file relation is part of revision creation. The revision row, its exact project-file references, the target branch-head update, and revision finalization are persisted in one transaction. A missing or wrong-project file, a duplicate file ID, or a branch-head conflict rolls back the candidate revision and its file references.
+
+PostgreSQL rejects direct `UPDATE` operations on `project_files`, protecting the stored source-file metadata and content hash against rewriting. Project-file deletion remains subject to existing foreign-key and project-cleanup rules. Revision-file membership is frozen after finalization, and database triggers prevent standalone membership updates and deletions. Legitimate project deletion can still cascade through the associated records.
 
 Authenticated upload is exposed through:
 
@@ -712,6 +725,14 @@ Uploaded source content and generated preview content are intentionally stored o
 
 Database migrations live in `db/migrations/`.
 
+Revision-integrity enforcement is implemented through three migrations:
+
+* `00008_project_file_immutability.sql` rejects updates to existing project-file records.
+* `00009_revision_membership_finalization.sql` introduces commit-time revision finalization and protects revision-file membership.
+* `00010_revision_history_immutability.sql` protects historical revision metadata, ancestry, and deletion behavior.
+
+Migration 00009 marks pre-existing revisions as finalized. Newly inserted revisions must be finalized before their creation transaction commits.
+
 Check migration status:
 
 ```bash
@@ -788,6 +809,8 @@ go test -count=1 -tags=integration -v ./internal/database
 
 Current integration coverage includes user and project persistence, session lifecycle behavior, password credential persistence, versioning transactions and constraints, content-object and project-file persistence, cross-project content reuse, storage metadata conflicts, conversion-job creation and lifecycle transitions, concurrent-safe pending-job claiming, startup recovery, derived conversion-output persistence, successful reconversion selection, output-content reuse and conflicts, transaction rollback, and atomic multi-row persistence paths.
 
+Revision-integrity regressions additionally cover project-file update rejection, commit-time revision finalization, immutable revision-file membership, concurrent insertion and finalization races, metadata and ancestry rewrite rejection, independent revision deletion, truncation protection, and project-deletion cascades. The integrity migrations were also verified through rollback and reapplication against the development database.
+
 Before committing:
 
 ```bash
@@ -817,6 +840,7 @@ milestone/file-storage
 milestone/conversion-jobs
 milestone/glb-preview-pipeline
 milestone/threejs-preview-viewer
+milestone/revision-integrity-hardening
 ```
 
 Within each milestone, work remains divided into small logical commits. Completed milestones are merged into `main` through pull requests using **Rebase and merge**, preserving linear history and distinct implementation and documentation commits.
@@ -828,7 +852,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 ## Engineering Principles
 
 * **Original engineering data is authoritative.** Native CAD files are the source of truth; generated previews are derived artifacts.
-* **History should be immutable.** Historical revisions should not be rewritten.
+* **History should be immutable at the persistence boundary.** Project-file metadata, finalized revision membership, and revision metadata and ancestry must not be silently rewritten.
 * **Persistence should be atomic where correctness requires it.** Related database state is committed together or rolled back together.
 * **Immutable content should not be destructively compensated.** A failed metadata write must not delete a content-addressed object that may be shared by another reference or concurrent upload.
 * **Identity comes from authentication.** Clients should not declare ownership of authenticated resources.
@@ -886,7 +910,10 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] authenticated branch deletion API
 * [ ] broader branch management
 * [x] branch-head DAG traversal and history API
-* [ ] immutable-history hardening and cycle prevention
+* [x] immutable project-file metadata and content-reference update protection
+* [x] transactionally finalized, immutable revision-file snapshots
+* [x] immutable revision metadata and ancestry with independent-deletion protection
+* [ ] comprehensive revision-graph cycle validation
 * [ ] merge and conflict-resolution workflow
 * [x] content-addressed storage
 * [x] project-file metadata and content references
@@ -927,7 +954,7 @@ The rebuild is intentionally incremental rather than attempting to recreate the 
 
 ## Portfolio and Product Direction
 
-As a portfolio project, 3Default demonstrates practical engineering across Go, PostgreSQL, SQL and schema design, REST APIs, authentication, Docker, generated code workflows, integration testing, content-addressed storage, streaming file uploads and downloads, durable background-job orchestration, concurrency-safe PostgreSQL work claiming, transactional derived-output persistence, authenticated GLB preview streaming, Git, and product-oriented architecture.
+As a portfolio project, 3Default demonstrates practical engineering across Go, PostgreSQL, SQL and schema design, database-enforced revision immutability, REST APIs, authentication, Docker, generated code workflows, integration testing, content-addressed storage, streaming file uploads and downloads, durable background-job orchestration, concurrency-safe PostgreSQL work claiming, transactional derived-output persistence, authenticated GLB preview streaming, Git, and product-oriented architecture.
 
 As a potential product, the goal is to preserve a foundation that can evolve into a usable engineering collaboration platform without discarding the portfolio implementation and starting over.
 
