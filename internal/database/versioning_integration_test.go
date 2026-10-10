@@ -2016,37 +2016,17 @@ func createVersioningProjectFile(
 		)
 	}
 
+	// Finalized membership cannot be deleted independently. Delete the
+	// test project so PostgreSQL cascades its revision and file records.
 	t.Cleanup(func() {
 		_, err := pool.Exec(
 			context.Background(),
-			`DELETE FROM project_revision_files
-			 WHERE project_id = $1
-			   AND project_file_id = $2`,
+			"DELETE FROM projects WHERE id = $1",
 			projectID,
-			projectFile.ID,
 		)
 		if err != nil {
-			t.Errorf(
-				"delete revision-file references for %s: %v",
-				projectFile.ID,
-				err,
-			)
-		}
-
-		_, err = pool.Exec(
-			context.Background(),
-			`DELETE FROM project_files
-			 WHERE project_id = $1
-			   AND id = $2`,
-			projectID,
-			projectFile.ID,
-		)
-		if err != nil {
-			t.Errorf(
-				"delete versioning project file %s: %v",
-				projectFile.ID,
-				err,
-			)
+			t.Errorf("delete versioning fixture project: %v", err)
+			return
 		}
 
 		_, err = pool.Exec(
@@ -2055,11 +2035,8 @@ func createVersioningProjectFile(
 			contentSHA256,
 		)
 		if err != nil {
-			t.Errorf(
-				"delete versioning content object %q: %v",
-				contentSHA256,
-				err,
-			)
+			t.Errorf("delete versioning content object %q: %v",
+				contentSHA256, err)
 		}
 	})
 

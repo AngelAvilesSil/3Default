@@ -34,7 +34,8 @@ RETURNING
     message,
     parent_revision_id,
     merge_parent_revision_id,
-    created_at
+    created_at,
+    membership_finalized
 `
 
 type CreateProjectRevisionParams struct {
@@ -62,8 +63,30 @@ func (q *Queries) CreateProjectRevision(ctx context.Context, arg CreateProjectRe
 		&i.ParentRevisionID,
 		&i.MergeParentRevisionID,
 		&i.CreatedAt,
+		&i.MembershipFinalized,
 	)
 	return i, err
+}
+
+const finalizeProjectRevision = `-- name: FinalizeProjectRevision :execrows
+UPDATE project_revisions
+SET membership_finalized = TRUE
+WHERE project_id = $1
+  AND id = $2
+  AND membership_finalized = FALSE
+`
+
+type FinalizeProjectRevisionParams struct {
+	ProjectID  uuid.UUID
+	RevisionID uuid.UUID
+}
+
+func (q *Queries) FinalizeProjectRevision(ctx context.Context, arg FinalizeProjectRevisionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finalizeProjectRevision, arg.ProjectID, arg.RevisionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getProjectRevisionByIDAndProject = `-- name: GetProjectRevisionByIDAndProject :one
@@ -74,7 +97,8 @@ SELECT
     message,
     parent_revision_id,
     merge_parent_revision_id,
-    created_at
+    created_at,
+    membership_finalized
 FROM project_revisions
 WHERE id = $1
   AND project_id = $2
@@ -96,6 +120,7 @@ func (q *Queries) GetProjectRevisionByIDAndProject(ctx context.Context, arg GetP
 		&i.ParentRevisionID,
 		&i.MergeParentRevisionID,
 		&i.CreatedAt,
+		&i.MembershipFinalized,
 	)
 	return i, err
 }
@@ -124,7 +149,7 @@ WITH RECURSIVE reachable_revision_ids (id) AS (
          )
 )
 SELECT
-    revision.id, revision.project_id, revision.author_user_id, revision.message, revision.parent_revision_id, revision.merge_parent_revision_id, revision.created_at
+    revision.id, revision.project_id, revision.author_user_id, revision.message, revision.parent_revision_id, revision.merge_parent_revision_id, revision.created_at, revision.membership_finalized
 FROM project_revisions AS revision
 JOIN reachable_revision_ids AS reachable
   ON reachable.id = revision.id
@@ -154,6 +179,7 @@ func (q *Queries) ListReachableProjectRevisionsFromRevision(ctx context.Context,
 			&i.ParentRevisionID,
 			&i.MergeParentRevisionID,
 			&i.CreatedAt,
+			&i.MembershipFinalized,
 		); err != nil {
 			return nil, err
 		}
