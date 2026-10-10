@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1983,47 +1984,35 @@ func TestFileStorageQueries(t *testing.T) {
 		)
 	}
 
-	olderTime := time.Date(
-		2026,
-		time.January,
-		1,
-		12,
-		0,
-		0,
-		0,
-		time.UTC,
-	)
-	newerTime := olderTime.Add(time.Hour)
-
-	if _, err := tx.Exec(
-		ctx,
-		`UPDATE project_files
-		SET created_at = $1
-		WHERE id = $2`,
-		olderTime,
-		firstFile.ID,
-	); err != nil {
-		t.Fatalf("set first project file timestamp: %v", err)
+	// PostgreSQL now() is stable within this transaction, so the three
+	// query-created files have equal timestamps. Their IDs break the tie.
+	if !firstFile.CreatedAt.Equal(secondFile.CreatedAt) ||
+		!firstFile.CreatedAt.Equal(thirdFile.CreatedAt) {
+		t.Fatalf("expected equal timestamps for files created in one transaction")
 	}
 
-	for _, fileID := range []uuid.UUID{
-		secondFile.ID,
-		thirdFile.ID,
-	} {
-		if _, err := tx.Exec(
-			ctx,
-			`UPDATE project_files
-			SET created_at = $1
-			WHERE id = $2`,
-			newerTime,
-			fileID,
-		); err != nil {
-			t.Fatalf(
-				"set project file %s timestamp: %v",
-				fileID,
-				err,
-			)
-		}
+	// Insert an older fixture directly, rather than updating an immutable
+	// project-file record after creation.
+	olderFileID := uuid.New()
+	olderTime := firstFile.CreatedAt.Add(-time.Hour)
+	if _, err := tx.Exec(
+		ctx,
+		`INSERT INTO project_files (
+			id,
+			project_id,
+			uploaded_by_user_id,
+			content_sha256,
+			original_filename,
+			created_at
+		) VALUES ($1, $2, $3, $4, $5, $6)`,
+		olderFileID,
+		firstProject.ID,
+		firstUser.ID,
+		firstHash,
+		"older.step",
+		olderTime,
+	); err != nil {
+		t.Fatalf("insert older project-file fixture: %v", err)
 	}
 
 	files, err := queries.ListProjectFilesByProject(
@@ -2034,25 +2023,22 @@ func TestFileStorageQueries(t *testing.T) {
 		t.Fatalf("list project files: %v", err)
 	}
 
-	if len(files) != 3 {
+	expectedOrder := []uuid.UUID{
+		firstFile.ID,
+		secondFile.ID,
+		thirdFile.ID,
+	}
+	sort.Slice(expectedOrder, func(i, j int) bool {
+		return expectedOrder[i].String() > expectedOrder[j].String()
+	})
+	expectedOrder = append(expectedOrder, olderFileID)
+
+	if len(files) != len(expectedOrder) {
 		t.Fatalf(
-			"expected 3 first-project files, got %d",
+			"expected %d first-project files, got %d",
+			len(expectedOrder),
 			len(files),
 		)
-	}
-
-	expectedNewestFirst := secondFile.ID
-	expectedNewestSecond := thirdFile.ID
-
-	if secondFile.ID.String() < thirdFile.ID.String() {
-		expectedNewestFirst = thirdFile.ID
-		expectedNewestSecond = secondFile.ID
-	}
-
-	expectedOrder := []uuid.UUID{
-		expectedNewestFirst,
-		expectedNewestSecond,
-		firstFile.ID,
 	}
 
 	for i, expectedID := range expectedOrder {
