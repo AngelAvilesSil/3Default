@@ -1,0 +1,26 @@
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    font-family: var(--font-family-body);
+    font-size: var(--font-size-base);
+    color: var(--color-text);
+    background: var(--color-page);
+    color-scheme: light;
+}
+
+body {
+    min-width: 320px;
+    margin: 0;
+    line-height: var(--line-height-body);
+}
+
+button,
+input,
+textarea,
+select {
+    font: inherit;
+}
