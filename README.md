@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: project versioning, authenticated content storage, STEP/GLB conversion, and routed Three.js browser visualization**
+**Current phase: frontend authentication and protected navigation, building on project versioning, authenticated file storage, STEP/GLB conversion, and Three.js browser visualization**
 
 Implemented foundations include:
 
@@ -58,10 +58,19 @@ Implemented foundations include:
 * secure opaque session tokens and SHA-256 token hashing
 * secure host-only session cookies
 * login, logout, and authenticated-user HTTP flows
+* typed frontend authentication API client using same-origin session cookies
+* Pinia authentication state with session restoration, stale-response protection, and serialized login/logout operations
+* centralized frontend styling tokens and reusable button and text-field components
+* Vue login form with credential-error, rate-limit, request-error, and loading feedback
+* public entry and login routes, authenticated application and preview routes, and recoverable session-verification errors
+* safe post-login return navigation that preserves protected paths and query parameters
+* real-browser verification of registration, login, session persistence, logout, deep links, and temporary API-outage recovery
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
 The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The routed Vue application now consumes authenticated GLB previews through a Three.js browser viewer. PostgreSQL now protects project-file metadata, finalized revision-file membership, and committed revision metadata and ancestry against direct historical rewrites. Comprehensive revision-graph cycle validation, additional native CAD conversion formats, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
+
+**Current browser UI scope:** The public landing page and authenticated home are minimal foundations. The login form and protected navigation are functional, but browser registration, a real My Projects interface, public project discovery, and user-facing revision comparison are not implemented yet. The backend project and versioning APIs already exist independently of these future browser workflows.
 
 ---
 
@@ -119,6 +128,8 @@ Go HTTP server
 ```
 
 During development, Vite proxies `/api/*` requests to the Go service. The project-file preview route is lazy-loaded so the Three.js viewer and its rendering dependencies are fetched only when browser visualization is requested.
+
+Frontend authentication is divided between a typed same-origin HTTP client, a Pinia session store, Vue Router navigation guards, and small reusable view components. Session restoration is performed when navigation needs authentication, while public entry pages remain accessible without requiring a session. The browser stores authenticated user state in memory; the opaque session credential remains in the server-managed, HttpOnly cookie. Backend session resolution and project ownership checks remain authoritative for data access.
 
 The intended production shape is:
 
@@ -265,6 +276,32 @@ Login attempts are throttled by an in-memory limiter keyed by normalized email. 
 Logout is idempotent from the client's perspective: a missing, invalid, expired, or already-revoked session is treated as already logged out, while successful logout expires the browser cookie.
 
 Unsafe cross-origin browser requests are rejected by the HTTP layer. The detailed request and response contract remains defined in `api/openapi.yaml`.
+
+### Frontend Session and Navigation
+
+The frontend authentication client (`web/src/api/auth.ts`) calls the registration-independent login, current-user, and logout endpoints using same-origin browser credentials. The client translates expected authentication HTTP responses into typed results and errors rather than exposing session tokens to JavaScript.
+
+The Pinia session store (`web/src/stores/session.ts`) maintains the current authenticated user and a lifecycle state of `unknown`, `checking`, `authenticated`, `unauthenticated`, or `error`. It restores existing server sessions, distinguishes confirmed unauthenticated responses from network or server verification failures, prevents stale restoration responses from overwriting newer state, and serializes login and logout operations.
+
+Vue Router provides the following initial browser routes:
+
+| Route | Access | Current purpose |
+| --- | --- | --- |
+| `/` | Public | Minimal product entry page |
+| `/login` | Public | Login form; existing authenticated sessions are redirected to a safe application destination |
+| `/app` | Authenticated | Temporary signed-in home with a sign-out action |
+| `/session-unavailable` | Public | Recoverable session-verification error and retry action |
+| `/projects/:projectId/files/:projectFileId/preview` | Authenticated | Existing lazy-loaded Three.js preview |
+
+For protected navigation, the router waits for session restoration before deciding access. A confirmed unauthenticated result redirects to `/login` while preserving the requested protected URL. A session-verification failure instead opens `/session-unavailable`, where the user can retry without assuming that their session has been revoked.
+
+After successful login, the application returns to a validated, existing protected route, preserving its supported path and query parameters. Unrecognized, public, or external return destinations fall back to `/app`. The login form itself remains independent of route-navigation decisions.
+
+The UI foundation includes centralized CSS tokens, reusable `AppButton` and `AppTextField` components, and a `LoginForm` that handles invalid credentials, request throttling, general failures, and in-progress submissions. A successful login updates Pinia session state and navigates through the login view. Logout revokes the server session and clears the browser's authenticated state.
+
+Registration remains available through `POST /api/auth/register`, but a browser registration form has not yet been implemented. `/app` is not yet a project listing or project management screen.
+
+Frontend navigation guards are a user-experience boundary, not a substitute for API authorization. The Go backend continues to enforce session validity and owner-scoped access to project resources.
 
 ---
 
@@ -648,6 +685,8 @@ Vue Router lazy-loads the preview feature only when this route is visited. The `
 
 The route currently depends on an existing authenticated session and a successful persisted GLB conversion output. With Mayo configured, STEP and STP files can produce browser-viewable GLB previews after their conversion jobs succeed. Uploading a source file and requesting a conversion job remain separate API operations; the preview route does not start conversion jobs. Other native CAD formats remain unsupported.
 
+The frontend router now also guards this preview route. An unauthenticated visitor is sent to the login screen and can return to the originally requested preview URL after authentication. This routing behavior does not itself prove that a particular file has a valid conversion output; a successful preview still requires an existing, accessible project file and persisted GLB content.
+
 ---
 
 ## Development Environment
@@ -706,6 +745,14 @@ Development services:
 * immutable source and derived preview content: persistent `storage-data` Docker volume mounted at `/var/lib/3default/storage`
 
 For browser development, open [http://localhost:5173](http://localhost:5173).
+
+The current browser entry points are:
+
+* `http://localhost:5173/` for the minimal public landing page.
+* `http://localhost:5173/login` for signing in.
+* `http://localhost:5173/app` for the authenticated home placeholder.
+
+The browser currently provides login and logout but not a registration form. On a new local database, create a development account through `POST /api/auth/register` using the API contract's `email`, `displayName`, and `password` fields, then sign in through `/login`. Registration does not automatically establish a session. Do not commit development credentials or session-cookie values to the repository.
 
 A source upload does not automatically enqueue conversion. After uploading a `.step` or `.stp` file, create a conversion job through the authenticated conversion-job POST endpoint and wait for its status to become `succeeded`. The generated GLB can then be retrieved through the authenticated preview endpoint.
 
@@ -801,6 +848,24 @@ docker compose run --rm --no-deps web npm run build-only
 
 The preview route is lazy-loaded. A production build therefore keeps the initial application bundle separate from the larger on-demand Three.js preview chunk.
 
+Frontend Vitest coverage includes the typed authentication client, Pinia session lifecycle, reusable UI primitives, login-form behavior, protected navigation, safe return-path handling, view-level login/logout integration, and session-verification retry behavior. Existing GLB preview and Three.js component tests remain part of the same suite.
+
+For manual local-browser authentication acceptance:
+
+1. Start `db`, `api`, and `web`, then open a fresh browser session at `http://localhost:5173/`.
+2. Verify that `/` and `/login` render and that unauthenticated `/app` navigation redirects to login.
+3. Register a disposable development user through the API, then sign in through the browser.
+4. Verify the `__Host-3default_session` cookie's `Secure` and `HttpOnly` attributes without copying its value.
+5. Refresh `/app` and verify that the authenticated session is restored.
+6. Verify that the public landing page remains accessible while authenticated.
+7. Sign out and confirm that direct navigation to `/app` again requires authentication.
+8. From a signed-out session, request a protected preview deep link and verify that login returns to the requested path with its query string intact.
+9. For local failure-recovery verification, stop only the API service, refresh a protected page, confirm the recoverable session-error screen, restart the API, and use **Try again** to restore the existing session.
+
+A fabricated preview URL is sufficient to check post-login navigation, but it does not constitute successful CAD rendering verification. Actual preview rendering requires an existing project file and successful conversion output.
+
+These normal-session, deep-link, and temporary API-outage scenarios passed manual browser acceptance during the frontend-authentication milestone.
+
 Run PostgreSQL integration tests:
 
 ```bash
@@ -841,6 +906,7 @@ milestone/conversion-jobs
 milestone/glb-preview-pipeline
 milestone/threejs-preview-viewer
 milestone/revision-integrity-hardening
+milestone/frontend-authentication
 ```
 
 Within each milestone, work remains divided into small logical commits. Completed milestones are merged into `main` through pull requests using **Rebase and merge**, preserving linear history and distinct implementation and documentation commits.
@@ -859,6 +925,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * **Infrastructure stays simple until complexity is justified.** PostgreSQL and a modular monolith are preferred over premature distributed services.
 * **Durable background work belongs in durable state.** Conversion jobs are persisted before execution and recovered explicitly rather than relying on in-memory queues.
 * **Derived artifacts remain replaceable.** Conversion and preview outputs must be reproducible from authoritative source files and should not become the source of truth.
+* **Frontend session state is not the session credential.** The browser stores user-facing authentication state in Pinia while the opaque credential stays in an HttpOnly, server-managed cookie.
+* **Navigation is not authorization.** Protected routes provide correct browser flow, while backend session validation and owner-scoped API checks enforce access to engineering data.
 * **Browser responsibilities stay separated.** HTTP loading and UI state belong to the preview coordinator, while WebGL parsing, camera control, rendering, and GPU-resource cleanup belong to the Three.js canvas component.
 * **Heavy browser features load only when needed.** The preview route is lazy-loaded so Three.js does not inflate the initial application bundle.
 * **Development should resemble production.** The development architecture intentionally follows the expected production shape.
@@ -890,6 +958,15 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] logout flow
 * [x] authenticated-user endpoint
 * [x] login-attempt rate limiting
+* [x] typed frontend authentication API client
+* [x] Pinia session restoration and lifecycle management
+* [x] reusable UI tokens, button, and text-field components
+* [x] browser login form with loading and error states
+* [x] public and authenticated route foundation
+* [x] safe return navigation to protected pages
+* [x] recoverable session-verification failure handling
+* [x] browser acceptance of login, refresh, logout, and session recovery
+* [ ] user-facing registration and account recovery workflows
 
 ### Projects
 
@@ -898,6 +975,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] authenticated project creation
 * [x] project listing and details
 * [x] metadata updates
+* [ ] authenticated My Projects browser listing and project management UI
 
 ### Versioning, Storage, and CAD
 
