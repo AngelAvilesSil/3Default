@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: frontend authentication and protected navigation, building on project versioning, authenticated file storage, STEP/GLB conversion, and Three.js browser visualization**
+**Current phase: authenticated My Projects listing and project creation, building on frontend authentication, project versioning, authenticated file storage, STEP/GLB conversion, and Three.js browser visualization**
 
 Implemented foundations include:
 
@@ -22,6 +22,11 @@ Implemented foundations include:
 * OpenAPI-first HTTP contracts
 * health and readiness endpoints
 * project persistence and authenticated project creation, listing, detail reads, and metadata updates
+* owner-scoped, case-insensitive project-name uniqueness enforced by PostgreSQL, with HTTP `409 Conflict` for duplicate creation or renaming
+* typed frontend project listing and creation API client
+* authenticated My Projects browser listing with loading, empty, retryable-error, and expired-session handling
+* protected Create Project form with required-name validation, optional description, duplicate-name feedback, cancellation, and return to My Projects
+* frontend project creation and listing integration tests, plus real-browser verification of persistence and duplicate-name handling
 * project revision and branch persistence with automatic `main` branch creation
 * atomic revision creation with optimistic branch-head updates
 * authenticated branch creation, rename, and deletion, branch listing and history traversal, revision reads, and revision creation
@@ -60,9 +65,9 @@ Implemented foundations include:
 * login, logout, and authenticated-user HTTP flows
 * typed frontend authentication API client using same-origin session cookies
 * Pinia authentication state with session restoration, stale-response protection, and serialized login/logout operations
-* centralized frontend styling tokens and reusable button and text-field components
+* centralized frontend styling tokens, shared form-field styles, and reusable button, text-field, and textarea components
 * Vue login form with credential-error, rate-limit, request-error, and loading feedback
-* public entry and login routes, authenticated application and preview routes, and recoverable session-verification errors
+* public entry and login routes, authenticated application, My Projects, Create Project, and preview routes, and recoverable session-verification errors
 * safe post-login return navigation that preserves protected paths and query parameters
 * real-browser verification of registration, login, session persistence, logout, deep links, and temporary API-outage recovery
 * unsafe cross-origin browser request protection
@@ -70,7 +75,7 @@ Implemented foundations include:
 
 The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The routed Vue application now consumes authenticated GLB previews through a Three.js browser viewer. PostgreSQL now protects project-file metadata, finalized revision-file membership, and committed revision metadata and ancestry against direct historical rewrites. Comprehensive revision-graph cycle validation, additional native CAD conversion formats, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
 
-**Current browser UI scope:** The public landing page and authenticated home are minimal foundations. The login form and protected navigation are functional, but browser registration, a real My Projects interface, public project discovery, and user-facing revision comparison are not implemented yet. The backend project and versioning APIs already exist independently of these future browser workflows.
+**Current browser UI scope:** The public landing page and authenticated home remain minimal foundations. The browser supports login, protected navigation, an authenticated My Projects listing, project creation, and direct authenticated GLB preview routes. Project creation returns to a refreshed listing. Browser registration, project detail/workspace screens, project metadata editing, public project discovery, and user-facing revision comparison or merge workflows are not implemented yet. The backend project, file, and versioning APIs provide capabilities beyond the current browser UI.
 
 ---
 
@@ -127,7 +132,7 @@ Go HTTP server
       STORAGE_ROOT filesystem
 ```
 
-During development, Vite proxies `/api/*` requests to the Go service. The project-file preview route is lazy-loaded so the Three.js viewer and its rendering dependencies are fetched only when browser visualization is requested.
+During development, Vite proxies `/api/*` requests to the Go service. The typed frontend project client uses this same-origin path to list and create projects, while the existing Vue Router lifecycle reloads My Projects after successful creation without a separate project state store. The project-file preview route is lazy-loaded so the Three.js viewer and its rendering dependencies are fetched only when browser visualization is requested.
 
 Frontend authentication is divided between a typed same-origin HTTP client, a Pinia session store, Vue Router navigation guards, and small reusable view components. Session restoration is performed when navigation needs authentication, while public entry pages remain accessible without requiring a session. The browser stores authenticated user state in memory; the opaque session credential remains in the server-managed, HttpOnly cookie. Backend session resolution and project ownership checks remain authoritative for data access.
 
@@ -290,6 +295,8 @@ Vue Router provides the following initial browser routes:
 | `/` | Public | Minimal product entry page |
 | `/login` | Public | Login form; existing authenticated sessions are redirected to a safe application destination |
 | `/app` | Authenticated | Temporary signed-in home with a sign-out action |
+| `/projects` | Authenticated | My Projects listing with empty, loading, and error/retry states |
+| `/projects/new` | Authenticated | Create Project form with name validation and optional description |
 | `/session-unavailable` | Public | Recoverable session-verification error and retry action |
 | `/projects/:projectId/files/:projectFileId/preview` | Authenticated | Existing lazy-loaded Three.js preview |
 
@@ -297,9 +304,9 @@ For protected navigation, the router waits for session restoration before decidi
 
 After successful login, the application returns to a validated, existing protected route, preserving its supported path and query parameters. Unrecognized, public, or external return destinations fall back to `/app`. The login form itself remains independent of route-navigation decisions.
 
-The UI foundation includes centralized CSS tokens, reusable `AppButton` and `AppTextField` components, and a `LoginForm` that handles invalid credentials, request throttling, general failures, and in-progress submissions. A successful login updates Pinia session state and navigates through the login view. Logout revokes the server session and clears the browser's authenticated state.
+The UI foundation includes centralized CSS tokens, reusable `AppButton`, `AppTextField`, and `AppTextArea` components, and shared text-control styling in `web/src/styles/form-fields.css`. `LoginForm` handles invalid credentials, request throttling, general failures, and in-progress submissions. A successful login updates Pinia session state and navigates through the login view. Logout revokes the server session and clears the browser's authenticated state.
 
-Registration remains available through `POST /api/auth/register`, but a browser registration form has not yet been implemented. `/app` is not yet a project listing or project management screen.
+Registration remains available through `POST /api/auth/register`, but a browser registration form has not yet been implemented. `/app` remains a temporary authenticated home; `/projects` provides the project listing and `/projects/new` provides project creation. Project detail/workspace screens and browser metadata editing remain future work.
 
 Frontend navigation guards are a user-experience boundary, not a substitute for API authorization. The Go backend continues to enforce session validity and owner-scoped access to project resources.
 
@@ -310,6 +317,10 @@ Frontend navigation guards are a user-experience boundary, not a substitute for 
 Projects are private by default and currently include an ID, owner user ID, name, optional description, visibility, and timestamps.
 
 For authenticated project operations, ownership is derived from the server-side session rather than accepted from the request.
+
+Project names must be nonblank and are unique within each owner's projects, ignoring letter case. PostgreSQL enforces this through the `projects_owner_name_case_insensitive_unique` index on `(owner_user_id, lower(name))`. The application maps a duplicate name during `POST /api/projects` or `PATCH /api/projects/{projectId}` to HTTP `409 Conflict`. Different owners may use the same project name. Creating a project also creates its initially empty `main` branch in the same database transaction.
+
+The Vue creation form trims the submitted name and optional description. An empty name is rejected before the HTTP request, while a duplicate name is reported beside the name field without discarding the entered values. A successful HTTP `201 Created` returns the browser to My Projects, which fetches the current listing again.
 
 ```text
 POST /api/projects
@@ -364,6 +375,7 @@ GET  /api/projects/{projectId}/files
 POST /api/projects/{projectId}/files
 GET  /api/projects/{projectId}/files/{projectFileId}
 GET  /api/projects/{projectId}/files/{projectFileId}/content
+GET  /api/projects/{projectId}/files/{projectFileId}/preview
 GET  /api/projects/{projectId}/files/{projectFileId}/conversion-jobs
 POST /api/projects/{projectId}/files/{projectFileId}/conversion-jobs
 GET  /api/projects/{projectId}/conversion-jobs/{conversionJobId}
@@ -751,8 +763,14 @@ The current browser entry points are:
 * `http://localhost:5173/` for the minimal public landing page.
 * `http://localhost:5173/login` for signing in.
 * `http://localhost:5173/app` for the authenticated home placeholder.
+* `http://localhost:5173/projects` for the authenticated My Projects listing.
+* `http://localhost:5173/projects/new` for creating a project.
 
 The browser currently provides login and logout but not a registration form. On a new local database, create a development account through `POST /api/auth/register` using the API contract's `email`, `displayName`, and `password` fields, then sign in through `/login`. Registration does not automatically establish a session. Do not commit development credentials or session-cookie values to the repository.
+
+After signing in, open `/projects` to see your projects or navigate to `/projects/new` to create one. A new project starts private and has an empty `main` branch. The creation form requires a project name and accepts an optional description. After a successful submission, the browser returns to My Projects. Duplicate names within the same account, including differently capitalized names, are rejected.
+
+In this Docker development setup, Vite serves the Vue source, while the API service launches the Go application with `go run`. When Go source changes, restart the `api` service so the running process compiles and loads those changes. If the browser unexpectedly continues showing an older Vue template, restarting `web` can refresh the development server. These restarts do not delete the named PostgreSQL or storage volumes.
 
 A source upload does not automatically enqueue conversion. After uploading a `.step` or `.stp` file, create a conversion job through the authenticated conversion-job POST endpoint and wait for its status to become `succeeded`. The generated GLB can then be retrieved through the authenticated preview endpoint.
 
@@ -779,6 +797,8 @@ Revision-integrity enforcement is implemented through three migrations:
 * `00010_revision_history_immutability.sql` protects historical revision metadata, ancestry, and deletion behavior.
 
 Migration 00009 marks pre-existing revisions as finalized. Newly inserted revisions must be finalized before their creation transaction commits.
+
+Migration `00011_project_name_uniqueness.sql` adds owner-scoped, case-insensitive project-name uniqueness. The project store translates violations of its specific unique index into application-level name conflicts rather than treating them as generic persistence failures.
 
 Check migration status:
 
@@ -841,14 +861,16 @@ Use the explicit `./cmd/... ./internal/...` package scopes from the Dev Containe
 Run the frontend unit suite, TypeScript check, and production build from the host through the dedicated `web` service:
 
 ```powershell
-docker compose run --rm --no-deps web npm run test:unit -- --run
-docker compose run --rm --no-deps web npm run type-check
-docker compose run --rm --no-deps web npm run build-only
+docker compose exec -T web npm run test:unit -- --run
+docker compose exec -T web npm run type-check
+docker compose exec -T web npm run build
 ```
 
 The preview route is lazy-loaded. A production build therefore keeps the initial application bundle separate from the larger on-demand Three.js preview chunk.
 
-Frontend Vitest coverage includes the typed authentication client, Pinia session lifecycle, reusable UI primitives, login-form behavior, protected navigation, safe return-path handling, view-level login/logout integration, and session-verification retry behavior. Existing GLB preview and Three.js component tests remain part of the same suite.
+Frontend Vitest coverage includes the typed authentication and project API clients, Pinia session lifecycle, reusable UI primitives, login-form behavior, My Projects loading/error/retry behavior, Create Project validation and error handling, protected navigation, safe return-path handling, view-level login/logout integration, and session-verification retry behavior. A real-router integration test verifies navigation from an empty listing through project creation and back to a refreshed listing. Existing GLB preview and Three.js component tests remain part of the same suite.
+
+For non-mutating frontend quality checks, use `npx prettier --check src`, `npx oxlint .`, and `npx eslint . --no-cache` inside the `web` service. The repository's `npm run lint` scripts use automatic fixes; do not run them during a read-only review. Repository-wide lint has pre-existing findings unrelated to project creation, so a passing test suite and production build must not be described as a clean repository-wide lint result.
 
 For manual local-browser authentication acceptance:
 
@@ -865,6 +887,19 @@ For manual local-browser authentication acceptance:
 A fabricated preview URL is sufficient to check post-login navigation, but it does not constitute successful CAD rendering verification. Actual preview rendering requires an existing project file and successful conversion output.
 
 These normal-session, deep-link, and temporary API-outage scenarios passed manual browser acceptance during the frontend-authentication milestone.
+
+For manual My Projects and Create Project acceptance:
+
+1. Sign in and open `/projects`; verify the list or empty state and its Create Project navigation.
+2. Open `/projects/new` and confirm that an empty name produces inline validation without creating a project.
+3. Create a private project with a unique name and optional description, then verify that navigation returns to My Projects.
+4. Refresh the listing and confirm that the new project and its metadata persist.
+5. Attempt a duplicate name with different capitalization; verify HTTP `409 Conflict` and the field-specific message.
+6. Edit the rejected name and confirm that the stale duplicate-name error disappears without resubmission.
+7. Cancel and verify that the browser returns to My Projects without creating another project.
+8. Check the form, shared text controls, and navigation at normal and narrow browser widths.
+
+These project creation, persistence, duplicate-name, recovery, cancellation, and visual checks passed real-browser acceptance during the My Projects milestone. The frontend suite also passed 161 tests across 18 suites at the milestone checkpoint.
 
 Run PostgreSQL integration tests:
 
@@ -907,9 +942,12 @@ milestone/glb-preview-pipeline
 milestone/threejs-preview-viewer
 milestone/revision-integrity-hardening
 milestone/frontend-authentication
+milestone/frontend-my-projects
 ```
 
-Within each milestone, work remains divided into small logical commits. Completed milestones are merged into `main` through pull requests using **Rebase and merge**, preserving linear history and distinct implementation and documentation commits.
+Within each milestone, work remains divided into small logical commits. Implementation commits are followed by a separate README/documentation audit and documentation commit when updates are needed. Completed milestones are merged into `main` through pull requests using **Rebase and merge**, preserving linear history.
+
+For this Windows 11 development workflow, use **Windows Git Bash** for Git staging, diff review, commits, branch operations, and pushes; the **Go Dev Container** for source changes and Go tooling; and **Windows PowerShell** for Docker Compose commands and frontend tooling in the `web` service.
 
 The goal is to keep both the codebase and Git history understandable as the project grows.
 
@@ -930,6 +968,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * **Browser responsibilities stay separated.** HTTP loading and UI state belong to the preview coordinator, while WebGL parsing, camera control, rendering, and GPU-resource cleanup belong to the Three.js canvas component.
 * **Heavy browser features load only when needed.** The preview route is lazy-loaded so Three.js does not inflate the initial application bundle.
 * **Development should resemble production.** The development architecture intentionally follows the expected production shape.
+* **New substantial UI work requires a design checkpoint.** Review the intended user path and visual references before implementation, then prefer reusable primitives, semantic design tokens, and maintainable Vue components over scattered styling or premature UI frameworks.
 
 ---
 
@@ -972,10 +1011,17 @@ The goal is to keep both the codebase and Git history understandable as the proj
 
 * [x] project persistence
 * [x] project application service
-* [x] authenticated project creation
-* [x] project listing and details
-* [x] metadata updates
-* [ ] authenticated My Projects browser listing and project management UI
+* [x] authenticated project creation API
+* [x] project listing and detail APIs
+* [x] metadata update API
+* [x] owner-scoped, case-insensitive project-name uniqueness with HTTP conflict handling
+* [x] typed frontend project listing and creation client
+* [x] authenticated My Projects listing with loading, empty, and retryable-error states
+* [x] protected Create Project form with name/description validation and duplicate-name feedback
+* [x] real-browser project creation, persistence, and duplicate-name recovery verification
+* [ ] user-facing project detail and workspace screens
+* [ ] browser project metadata editing
+* [ ] broader project management and collaboration interfaces
 
 ### Versioning, Storage, and CAD
 
