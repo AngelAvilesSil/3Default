@@ -37,7 +37,7 @@
         <p v-if="session.user">Signed in as {{ session.user.displayName }}.</p>
 
         <p class="app-home__description">
-            Browse your projects. Creation and workspaces are coming next.
+            Browse and create your projects. Project workspaces are coming next.
         </p>
 
         <div class="app-home__actions">

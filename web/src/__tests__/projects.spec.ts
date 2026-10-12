@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { listProjects, ProjectRequestError, ProjectResponseError } from '../api/projects'
+import {
+    createProject,
+    listProjects,
+    ProjectRequestError,
+    ProjectResponseError,
+} from '../api/projects'
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -167,5 +172,121 @@ describe('projects API client', () => {
         fetchMock.mockRejectedValueOnce(failure)
 
         await expect(listProjects()).rejects.toBe(failure)
+    })
+
+    it('creates a project with a name and description', async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(project, 201))
+
+        await expect(
+            createProject({
+                name: 'Robotic Gripper',
+                description: 'Mechanical gripper development',
+            }),
+        ).resolves.toEqual(project)
+
+        expect(fetchMock).toHaveBeenCalledWith('/api/projects', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                name: 'Robotic Gripper',
+                description: 'Mechanical gripper development',
+            }),
+            signal: undefined,
+        })
+    })
+
+    it('omits the optional description when creating a project', async () => {
+        const createdProject = {
+            ...project,
+            description: null,
+        }
+
+        fetchMock.mockResolvedValueOnce(jsonResponse(createdProject, 201))
+
+        await expect(createProject({ name: 'Robotic Gripper' })).resolves.toEqual(createdProject)
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/projects',
+            expect.objectContaining({
+                body: JSON.stringify({
+                    name: 'Robotic Gripper',
+                }),
+            }),
+        )
+    })
+
+    it.each([
+        [400, 'Bad Request'],
+        [401, 'Unauthorized'],
+        [409, 'Conflict'],
+        [500, 'Internal Server Error'],
+    ])('preserves HTTP %i project-creation failures', async (status, statusText) => {
+        fetchMock.mockResolvedValueOnce(new Response(null, { status, statusText }))
+
+        await expect(createProject({ name: 'Robotic Gripper' })).rejects.toMatchObject({
+            name: 'ProjectRequestError',
+            status,
+            statusText,
+        })
+    })
+
+    it('rejects an unexpected successful creation status', async () => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(project, 200))
+
+        await expect(createProject({ name: 'Robotic Gripper' })).rejects.toBeInstanceOf(
+            ProjectResponseError,
+        )
+    })
+
+    it('rejects invalid JSON in a successful creation response', async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response('not valid JSON', {
+                status: 201,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            }),
+        )
+
+        await expect(createProject({ name: 'Robotic Gripper' })).rejects.toBeInstanceOf(
+            ProjectResponseError,
+        )
+    })
+
+    it.each([
+        ['an array', [project]],
+        ['a missing ID', { ...project, id: undefined }],
+        ['invalid visibility', { ...project, visibility: 'shared' }],
+    ])('rejects a creation response containing %s', async (_reason, body) => {
+        fetchMock.mockResolvedValueOnce(jsonResponse(body, 201))
+
+        await expect(createProject({ name: 'Robotic Gripper' })).rejects.toBeInstanceOf(
+            ProjectResponseError,
+        )
+    })
+
+    it('passes project-creation cancellation to fetch', async () => {
+        const controller = new AbortController()
+        fetchMock.mockResolvedValueOnce(jsonResponse(project, 201))
+
+        await createProject({ name: 'Robotic Gripper' }, controller.signal)
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            '/api/projects',
+            expect.objectContaining({
+                signal: controller.signal,
+            }),
+        )
+    })
+
+    it('preserves project-creation network failures', async () => {
+        const failure = new TypeError('Failed to fetch')
+        fetchMock.mockRejectedValueOnce(failure)
+
+        await expect(createProject({ name: 'Robotic Gripper' })).rejects.toBe(failure)
     })
 })

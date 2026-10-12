@@ -1,0 +1,43 @@
+/* Shared presentation for text inputs and textareas. */
+.ui-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.ui-field__label {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text);
+}
+
+.ui-field__input {
+    width: 100%;
+    min-height: 2.5rem;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text);
+    background: var(--color-page);
+}
+
+.ui-field__input:focus-visible {
+    outline: 3px solid var(--color-focus-ring);
+    outline-offset: 1px;
+}
+
+.ui-field__input:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+    background: var(--color-surface);
+}
+
+.ui-field__input--invalid {
+    border-color: var(--color-danger);
+}
+
+.ui-field__error {
+    margin: 0;
+    color: var(--color-danger);
+    font-size: var(--font-size-sm);
+}
