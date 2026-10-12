@@ -705,6 +705,11 @@ func (s *Server) UpdateProject(
 				Error: "project name is required",
 			}, nil
 
+		case errors.Is(err, projects.ErrNameConflict):
+			return api.UpdateProject409JSONResponse{
+				Error: "project name already exists",
+			}, nil
+
 		case errors.Is(err, projects.ErrProjectNotFound):
 			return api.UpdateProject404JSONResponse{
 				Error: "project not found",
@@ -762,6 +767,12 @@ func (s *Server) CreateProject(
 		if errors.Is(err, projects.ErrNameRequired) {
 			return api.CreateProject400JSONResponse{
 				Error: "project name is required",
+			}, nil
+		}
+
+		if errors.Is(err, projects.ErrNameConflict) {
+			return api.CreateProject409JSONResponse{
+				Error: "project name already exists",
 			}, nil
 		}
 

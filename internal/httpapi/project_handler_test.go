@@ -2537,3 +2537,117 @@ func TestUpdateProjectReturnsUpdatedProject(t *testing.T) {
 		)
 	}
 }
+
+func TestCreateProjectMapsNameConflict(t *testing.T) {
+	userID := uuid.New()
+
+	projectService := &fakeProjectCreator{
+		err: projects.ErrNameConflict,
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/projects",
+		strings.NewReader(`{"name":"robot gripper"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf(
+			"status = %d, want %d; body = %s",
+			response.Code,
+			http.StatusConflict,
+			response.Body.String(),
+		)
+	}
+
+	if !projectService.called {
+		t.Fatal("expected project service Create to be called")
+	}
+	if projectService.input.OwnerUserID != userID {
+		t.Fatal("expected authenticated user to be the project owner")
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "project name already exists" {
+		t.Fatalf(
+			"error = %q, want project name already exists",
+			body.Error,
+		)
+	}
+}
+
+func TestUpdateProjectMapsNameConflict(t *testing.T) {
+	userID := uuid.New()
+	projectID := uuid.New()
+
+	projectService := &fakeProjectCreator{
+		updateErr: projects.ErrNameConflict,
+	}
+
+	handler := NewHandler(
+		NewServer(
+			fakeDatabase{},
+			projectService,
+			nil,
+			nil,
+			nil,
+			nil,
+		),
+		nil,
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/api/projects/"+projectID.String(),
+		strings.NewReader(`{"name":"ROBOT GRIPPER"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request = requestWithSession(request, userID)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf(
+			"status = %d, want %d; body = %s",
+			response.Code,
+			http.StatusConflict,
+			response.Body.String(),
+		)
+	}
+
+	if !projectService.updateCalled {
+		t.Fatal("expected project service Update to be called")
+	}
+	if projectService.updateInput.OwnerUserID != userID {
+		t.Fatal("expected authenticated user to be the project owner")
+	}
+	if projectService.updateInput.ProjectID != projectID {
+		t.Fatal("expected requested project ID to be forwarded")
+	}
+
+	body := decodeErrorResponse(t, response)
+	if body.Error != "project name already exists" {
+		t.Fatalf(
+			"error = %q, want project name already exists",
+			body.Error,
+		)
+	}
+}
