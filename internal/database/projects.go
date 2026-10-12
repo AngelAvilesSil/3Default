@@ -2,10 +2,12 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/AngelAvilesSil/3Default/internal/database/dbgen"
 	"github.com/AngelAvilesSil/3Default/internal/projects"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -45,7 +47,7 @@ func (s *ProjectStore) CreateProject(
 	if err != nil {
 		return dbgen.Project{}, fmt.Errorf(
 			"create project row: %w",
-			err,
+			mapProjectNameError(err),
 		)
 	}
 
@@ -73,4 +75,33 @@ func (s *ProjectStore) CreateProject(
 	return project, nil
 }
 
+func (s *ProjectStore) UpdateProjectMetadataByIDAndOwner(
+	ctx context.Context,
+	arg dbgen.UpdateProjectMetadataByIDAndOwnerParams,
+) (dbgen.Project, error) {
+	project, err := s.Queries.UpdateProjectMetadataByIDAndOwner(ctx, arg)
+	if err != nil {
+		return dbgen.Project{}, fmt.Errorf(
+			"update project row: %w",
+			mapProjectNameError(err),
+		)
+	}
+
+	return project, nil
+}
+
 var _ projects.ProjectStore = (*ProjectStore)(nil)
+
+const projectNameUniqueIndex = "projects_owner_name_case_insensitive_unique"
+
+func mapProjectNameError(err error) error {
+	var pgErr *pgconn.PgError
+
+	if errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == projectNameUniqueIndex {
+		return projects.ErrNameConflict
+	}
+
+	return err
+}

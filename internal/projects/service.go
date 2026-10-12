@@ -12,6 +12,7 @@ import (
 )
 
 var (
+	ErrNameConflict      = errors.New("project name already exists")
 	ErrOwnerRequired     = errors.New("project owner is required")
 	ErrProjectIDRequired = errors.New("project ID is required")
 	ErrProjectNotFound   = errors.New("project not found")

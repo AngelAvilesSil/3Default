@@ -818,3 +818,49 @@ func TestUpdateWrapsDatabaseError(t *testing.T) {
 		)
 	}
 }
+
+func TestCreatePreservesNameConflict(t *testing.T) {
+	store := &fakeProjectCreator{
+		err: ErrNameConflict,
+	}
+
+	service := NewService(store)
+
+	_, err := service.Create(context.Background(), CreateInput{
+		OwnerUserID: uuid.New(),
+		Name:        "Robot Gripper",
+	})
+
+	if !errors.Is(err, ErrNameConflict) {
+		t.Fatalf("expected ErrNameConflict, got %v", err)
+	}
+
+	if !store.called {
+		t.Fatal("expected project store to be called")
+	}
+}
+
+func TestUpdatePreservesNameConflict(t *testing.T) {
+	name := "Robot Gripper"
+
+	store := &fakeProjectCreator{
+		updateErr: ErrNameConflict,
+	}
+
+	service := NewService(store)
+
+	_, err := service.Update(context.Background(), UpdateInput{
+		OwnerUserID: uuid.New(),
+		ProjectID:   uuid.New(),
+		NameSet:     true,
+		Name:        &name,
+	})
+
+	if !errors.Is(err, ErrNameConflict) {
+		t.Fatalf("expected ErrNameConflict, got %v", err)
+	}
+
+	if !store.updateCalled {
+		t.Fatal("expected project store update to be called")
+	}
+}

@@ -1604,6 +1604,20 @@ func (response CreateProject403JSONResponse) VisitCreateProjectResponse(w http.R
 	return err
 }
 
+type CreateProject409JSONResponse ErrorResponse
+
+func (response CreateProject409JSONResponse) VisitCreateProjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type CreateProject500JSONResponse ErrorResponse
 
 func (response CreateProject500JSONResponse) VisitCreateProjectResponse(w http.ResponseWriter) error {
@@ -1771,6 +1785,20 @@ func (response UpdateProject404JSONResponse) VisitUpdateProjectResponse(w http.R
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateProject409JSONResponse ErrorResponse
+
+func (response UpdateProject409JSONResponse) VisitUpdateProjectResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
 }
