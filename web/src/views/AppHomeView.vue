@@ -37,10 +37,11 @@
         <p v-if="session.user">Signed in as {{ session.user.displayName }}.</p>
 
         <p class="app-home__description">
-            Project management will be available here in a later development milestone.
+            Browse your projects. Creation and workspaces are coming next.
         </p>
 
         <div class="app-home__actions">
+            <RouterLink :to="{ name: 'my-projects' }">My Projects</RouterLink>
             <RouterLink to="/">Visit public home</RouterLink>
 
             <AppButton variant="secondary" :loading="signingOut" @click="handleSignOut">
