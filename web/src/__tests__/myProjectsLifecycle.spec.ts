@@ -64,6 +64,22 @@ describe('My Projects request failures and lifecycle', () => {
         vi.resetAllMocks()
     })
 
+    it('navigates to Create Project from the listing header', async () => {
+        vi.mocked(listProjects).mockResolvedValueOnce([project])
+
+        const { wrapper, router } = await mountAuthenticatedView()
+        await flushPromises()
+
+        await wrapper.get('header a[href="/projects/new"]').trigger('click')
+
+        await vi.waitFor(() => {
+            expect(router.currentRoute.value.name).toBe('create-project')
+            expect(router.currentRoute.value.path).toBe('/projects/new')
+        })
+
+        wrapper.unmount()
+    })
+
     it('preserves the session after an HTTP 500 failure', async () => {
         vi.mocked(listProjects).mockRejectedValueOnce(
             new ProjectRequestError(500, 'Internal Server Error'),

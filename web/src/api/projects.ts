@@ -7,6 +7,11 @@ export type Project = {
     updatedAt: string
 }
 
+export type CreateProjectInput = {
+    name: string
+    description?: string
+}
+
 export class ProjectRequestError extends Error {
     readonly status: number
     readonly statusText: string
@@ -67,6 +72,22 @@ async function readProjects(response: Response): Promise<Project[]> {
     return body
 }
 
+async function readProject(response: Response): Promise<Project> {
+    let body: unknown
+
+    try {
+        body = await response.json()
+    } catch {
+        throw new ProjectResponseError('Project response did not contain valid JSON')
+    }
+
+    if (!isProject(body)) {
+        throw new ProjectResponseError('Project response did not contain a valid project')
+    }
+
+    return body
+}
+
 export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
     const response = await fetch('/api/projects', {
         method: 'GET',
@@ -86,4 +107,35 @@ export async function listProjects(signal?: AbortSignal): Promise<Project[]> {
     }
 
     return readProjects(response)
+}
+
+export async function createProject(
+    input: CreateProjectInput,
+    signal?: AbortSignal,
+): Promise<Project> {
+    const response = await fetch('/api/projects', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            name: input.name,
+            description: input.description,
+        }),
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new ProjectRequestError(response.status, response.statusText)
+    }
+
+    if (response.status !== 201) {
+        throw new ProjectResponseError(
+            `Unexpected project creation response status: ${response.status}`,
+        )
+    }
+
+    return readProject(response)
 }

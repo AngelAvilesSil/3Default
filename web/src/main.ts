@@ -6,6 +6,7 @@ import router from './router'
 
 import './styles/tokens.css'
 import './styles/global.css'
+import './styles/form-fields.css'
 
 const app = createApp(App)
 

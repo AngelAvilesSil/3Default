@@ -123,6 +123,37 @@ describe('My Projects view', () => {
         wrapper.unmount()
     })
 
+    it('offers project creation when projects already exist', async () => {
+        vi.mocked(listProjects).mockResolvedValueOnce([newerProject])
+
+        const wrapper = mountView()
+        await flushPromises()
+
+        const createLink = wrapper.get('header a[href="/projects/new"]')
+
+        expect(createLink.text()).toBe('Create project')
+        expect(wrapper.get('ul[aria-label="Your projects"]').text()).toContain('Robotic Gripper')
+
+        wrapper.unmount()
+    })
+
+    it('offers project creation in the empty state', async () => {
+        vi.mocked(listProjects).mockResolvedValueOnce([])
+
+        const wrapper = mountView()
+        await flushPromises()
+
+        expect(wrapper.get('header a[href="/projects/new"]').text()).toBe('Create project')
+
+        const emptyStateLink = wrapper.get('.my-projects__feedback a[href="/projects/new"]')
+
+        expect(emptyStateLink.text()).toBe('Create your first project')
+        expect(wrapper.text()).toContain('No projects yet')
+        expect(wrapper.text()).not.toContain('Project creation is coming next.')
+
+        wrapper.unmount()
+    })
+
     it('shows a helpful empty state when no projects exist', async () => {
         vi.mocked(listProjects).mockResolvedValueOnce([])
 

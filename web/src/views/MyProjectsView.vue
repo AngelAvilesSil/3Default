@@ -92,8 +92,14 @@
 <template>
     <section class="my-projects" aria-labelledby="my-projects-heading">
         <header class="my-projects__header">
-            <h2 id="my-projects-heading">My Projects</h2>
-            <p>Your engineering projects, in one place.</p>
+            <div>
+                <h2 id="my-projects-heading">My Projects</h2>
+                <p>Your engineering projects, in one place.</p>
+            </div>
+
+            <RouterLink class="my-projects__create-link" :to="{ name: 'create-project' }">
+                Create project
+            </RouterLink>
         </header>
 
         <p v-if="loading" class="my-projects__feedback" role="status">Loading projects...</p>
@@ -106,7 +112,11 @@
 
         <div v-else-if="projects.length === 0" class="my-projects__feedback">
             <h3>No projects yet.</h3>
-            <p>Project creation is coming next.</p>
+            <p>Create your first project to start organizing your engineering work.</p>
+
+            <RouterLink class="my-projects__empty-link" :to="{ name: 'create-project' }">
+                Create your first project
+            </RouterLink>
         </div>
 
         <ul v-else class="my-projects__list" aria-label="Your projects">
@@ -140,6 +150,38 @@
         padding: var(--space-6) var(--space-4);
     }
 
+    .my-projects__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: var(--space-4);
+    }
+
+    .my-projects__create-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.5rem;
+        padding: var(--space-2) var(--space-4);
+        border-radius: var(--radius-sm);
+        background: var(--color-action);
+        color: var(--color-on-action);
+        font-size: var(--font-size-sm);
+        font-weight: var(--font-weight-semibold);
+        text-decoration: none;
+    }
+
+    .my-projects__create-link:hover {
+        background: var(--color-action-hover);
+    }
+
+    .my-projects__create-link:focus-visible,
+    .my-projects__empty-link:focus-visible {
+        outline: 3px solid var(--color-focus-ring);
+        outline-offset: 2px;
+    }
+
     .my-projects__header h2 {
         margin: 0;
     }
@@ -154,6 +196,18 @@
         padding: var(--space-5);
         border-radius: var(--radius-md);
         background: var(--color-surface);
+    }
+
+    .my-projects__empty-link {
+        display: inline-block;
+        margin-top: var(--space-4);
+        color: var(--color-action);
+        font-weight: var(--font-weight-semibold);
+        text-underline-offset: 0.2em;
+    }
+
+    .my-projects__empty-link:hover {
+        color: var(--color-action-hover);
     }
 
     .my-projects__feedback h3 {
