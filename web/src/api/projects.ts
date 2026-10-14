@@ -139,3 +139,99 @@ export async function createProject(
 
     return readProject(response)
 }
+
+export type ProjectBranch = {
+    id: string
+    projectId: string
+    name: string
+    headRevisionId: string | null
+    createdAt: string
+    updatedAt: string
+}
+
+function isProjectBranch(value: unknown): value is ProjectBranch {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return false
+    }
+
+    const candidate = value as Record<string, unknown>
+
+    return (
+        typeof candidate.id === 'string' &&
+        candidate.id.length > 0 &&
+        typeof candidate.projectId === 'string' &&
+        candidate.projectId.length > 0 &&
+        typeof candidate.name === 'string' &&
+        candidate.name.trim().length > 0 &&
+        (candidate.headRevisionId === null ||
+            (typeof candidate.headRevisionId === 'string' &&
+                candidate.headRevisionId.length > 0)) &&
+        typeof candidate.createdAt === 'string' &&
+        candidate.createdAt.length > 0 &&
+        typeof candidate.updatedAt === 'string' &&
+        candidate.updatedAt.length > 0
+    )
+}
+
+async function readProjectBranches(response: Response): Promise<ProjectBranch[]> {
+    let body: unknown
+
+    try {
+        body = await response.json()
+    } catch {
+        throw new ProjectResponseError('Branch response did not contain valid JSON')
+    }
+
+    if (!Array.isArray(body) || !body.every(isProjectBranch)) {
+        throw new ProjectResponseError('Branch response did not contain a valid branch list')
+    }
+
+    return body
+}
+
+export async function getProject(projectId: string, signal?: AbortSignal): Promise<Project> {
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}`, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+        },
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new ProjectRequestError(response.status, response.statusText)
+    }
+
+    if (response.status !== 200) {
+        throw new ProjectResponseError(
+            `Unexpected project detail response status: ${response.status}`,
+        )
+    }
+
+    return readProject(response)
+}
+
+export async function listProjectBranches(
+    projectId: string,
+    signal?: AbortSignal,
+): Promise<ProjectBranch[]> {
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/branches`, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+        },
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new ProjectRequestError(response.status, response.statusText)
+    }
+
+    if (response.status !== 200) {
+        throw new ProjectResponseError(`Unexpected branch-list response status: ${response.status}`)
+    }
+
+    return readProjectBranches(response)
+}
