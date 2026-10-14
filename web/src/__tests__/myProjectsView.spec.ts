@@ -94,7 +94,7 @@ describe('My Projects view', () => {
         wrapper.unmount()
     })
 
-    it('renders project metadata without creating premature workspace links', async () => {
+    it('renders project metadata with workspace links', async () => {
         vi.mocked(listProjects).mockResolvedValueOnce([newerProject, olderProject])
 
         const wrapper = mountView()
@@ -117,7 +117,8 @@ describe('My Projects view', () => {
         expect(rows[1]!.get('time').attributes('datetime')).toBe(olderProject.createdAt)
         expect(rows[1]!.get('time').text()).toMatch(/^Created .*2026$/)
 
-        expect(wrapper.find('ul[aria-label="Your projects"] a').exists()).toBe(false)
+        expect(rows[0]!.get('h3 a').attributes('href')).toBe(`/projects/${newerProject.id}`)
+        expect(rows[1]!.get('h3 a').attributes('href')).toBe(`/projects/${olderProject.id}`)
         expect(wrapper.find('ul[aria-label="Your projects"] button').exists()).toBe(false)
 
         wrapper.unmount()
