@@ -126,7 +126,14 @@
                 </div>
 
                 <div class="my-projects__details">
-                    <h3>{{ project.name }}</h3>
+                    <h3>
+                        <RouterLink
+                            class="my-projects__project-link"
+                            :to="{ name: 'project-overview', params: { projectId: project.id } }"
+                        >
+                            {{ project.name }}
+                        </RouterLink>
+                    </h3>
 
                     <p v-if="project.description" class="my-projects__description">
                         {{ project.description }}
@@ -276,5 +283,20 @@
         margin: var(--space-2) 0 0;
         color: var(--color-text-muted);
         font-size: var(--font-size-sm);
+    }
+
+    .my-projects__project-link {
+        color: var(--color-action);
+        text-decoration: none;
+    }
+
+    .my-projects__project-link:hover {
+        text-decoration: underline;
+        text-underline-offset: 0.2em;
+    }
+
+    .my-projects__project-link:focus-visible {
+        outline: 3px solid var(--color-focus-ring);
+        outline-offset: 2px;
     }
 </style>
