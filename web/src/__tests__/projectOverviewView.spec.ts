@@ -4,7 +4,7 @@ import { createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getCurrentUser } from '../api/auth'
-import { getProject, ProjectRequestError, type Project } from '../api/projects'
+import { getProject, listProjectBranches, ProjectRequestError, type Project } from '../api/projects'
 import { createAppRouter } from '../router'
 import { useSessionStore } from '../stores/session'
 import ProjectOverviewView from '../views/ProjectOverviewView.vue'
@@ -24,6 +24,7 @@ vi.mock('../api/projects', async (importOriginal) => {
     return {
         ...original,
         getProject: vi.fn<typeof original.getProject>(),
+        listProjectBranches: vi.fn<typeof original.listProjectBranches>(),
     }
 })
 
@@ -70,6 +71,7 @@ async function mountOverview(projectId = project.id) {
 describe('project overview view', () => {
     beforeEach(() => {
         vi.resetAllMocks()
+        vi.mocked(listProjectBranches).mockResolvedValue([])
         pinia = createPinia()
         setActivePinia(pinia)
 
