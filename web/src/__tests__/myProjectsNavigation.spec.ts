@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getCurrentUser, loginUser } from '../api/auth'
 import { createAppRouter } from '../router'
-import AppHomeView from '../views/AppHomeView.vue'
+import { useSessionStore } from '../stores/session'
+import SiteHeader from '../components/SiteHeader.vue'
 import LoginView from '../views/LoginView.vue'
 
 vi.mock('../api/auth', async (importOriginal) => {
@@ -35,16 +36,21 @@ describe('My Projects navigation', () => {
         setActivePinia(pinia)
     })
 
-    it('navigates from the authenticated home to My Projects', async () => {
+    it('navigates from the shared header to My Projects', async () => {
         vi.mocked(getCurrentUser).mockResolvedValue({
             status: 'authenticated',
             user,
         })
 
         const router = createAppRouter(createMemoryHistory())
-        await router.push('/app')
+        await router.push('/')
 
-        const wrapper = mount(AppHomeView, {
+        await useSessionStore().restore()
+
+        expect(useSessionStore().status).toBe('authenticated')
+        expect(getCurrentUser).toHaveBeenCalledTimes(1)
+
+        const wrapper = mount(SiteHeader, {
             global: { plugins: [pinia, router] },
         })
 
