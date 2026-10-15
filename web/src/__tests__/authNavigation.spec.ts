@@ -63,17 +63,17 @@ describe('authentication navigation', () => {
         expect(getCurrentUser).toHaveBeenCalledTimes(1)
     })
 
-    it('redirects an unauthenticated user from the app home', async () => {
+    it('redirects an unauthenticated user from My Projects', async () => {
         vi.mocked(getCurrentUser).mockResolvedValue({
             status: 'unauthenticated',
         })
 
         const router = createAppRouter(createMemoryHistory())
 
-        await router.push('/app')
+        await router.push('/projects')
 
         expect(router.currentRoute.value.name).toBe('login')
-        expect(router.currentRoute.value.query.redirect).toBe('/app')
+        expect(router.currentRoute.value.query.redirect).toBe('/projects')
         expect(useSessionStore().status).toBe('unauthenticated')
     })
 
@@ -117,7 +117,7 @@ describe('authentication navigation', () => {
 
         const router = createAppRouter(createMemoryHistory())
 
-        await router.push('/app')
+        await router.push('/projects')
         await router.push('/projects/project-123/files/file-456/preview')
 
         expect(getCurrentUser).toHaveBeenCalledTimes(1)
@@ -131,7 +131,7 @@ describe('authentication navigation', () => {
 
         const router = createAppRouter(createMemoryHistory())
 
-        const navigation = router.push('/app')
+        const navigation = router.push('/projects')
 
         // Allow the asynchronous guard to start.
         await vi.waitFor(() => {
@@ -147,7 +147,7 @@ describe('authentication navigation', () => {
 
         await navigation
 
-        expect(router.currentRoute.value.name).toBe('app-home')
+        expect(router.currentRoute.value.name).toBe('my-projects')
         expect(useSessionStore().status).toBe('authenticated')
     })
 
@@ -156,10 +156,10 @@ describe('authentication navigation', () => {
 
         const router = createAppRouter(createMemoryHistory())
 
-        await router.push('/app')
+        await router.push('/projects')
 
         expect(router.currentRoute.value.name).toBe('session-unavailable')
-        expect(router.currentRoute.value.query.redirect).toBe('/app')
+        expect(router.currentRoute.value.query.redirect).toBe('/projects')
         expect(useSessionStore().status).toBe('error')
         expect(useSessionStore().user).toBeNull()
     })
@@ -180,6 +180,35 @@ describe('authentication navigation', () => {
 
         expect(router.currentRoute.value.name).toBe('project-file-preview')
         expect(router.currentRoute.value.params.projectId).toBe('p')
+    })
+
+    it('redirects anonymous legacy /app bookmarks to the landing page', async () => {
+        const router = createAppRouter(createMemoryHistory())
+
+        await router.push('/app')
+
+        expect(router.currentRoute.value.name).toBe('landing')
+        expect(router.currentRoute.value.path).toBe('/')
+        expect(useSessionStore().status).toBe('unknown')
+        expect(getCurrentUser).not.toHaveBeenCalled()
+    })
+
+    it('redirects authenticated legacy /app bookmarks to the landing page', async () => {
+        vi.mocked(loginUser).mockResolvedValue(user)
+
+        await useSessionStore().login({
+            email: 'person@example.com',
+            password: 'my password',
+        })
+
+        const router = createAppRouter(createMemoryHistory())
+
+        await router.push('/app')
+
+        expect(router.currentRoute.value.name).toBe('landing')
+        expect(router.currentRoute.value.path).toBe('/')
+        expect(useSessionStore().status).toBe('authenticated')
+        expect(getCurrentUser).not.toHaveBeenCalled()
     })
 
     it('rejects external return destinations', async () => {

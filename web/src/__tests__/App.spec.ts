@@ -48,7 +48,7 @@ describe('App', () => {
         const header = wrapper.getComponent(SiteHeader)
 
         expect(header.get('a[href="/"]').text()).toBe('3Default')
-        expect(wrapper.get('main').get('[data-testid="router-view"]').exists()).toBe(true)
+        expect(wrapper.get('main').find('[data-testid="router-view"]').exists()).toBe(true)
         expect(useSessionStore().status).toBe('checking')
         expect(router.currentRoute.value.path).toBe('/')
 

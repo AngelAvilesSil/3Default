@@ -19,9 +19,7 @@ export function createAppRouter(history: RouterHistory): Router {
             },
             {
                 path: '/app',
-                name: 'app-home',
-                component: () => import('../views/AppHomeView.vue'),
-                meta: { requiresAuth: true },
+                redirect: { name: 'landing' },
             },
             {
                 path: '/projects',

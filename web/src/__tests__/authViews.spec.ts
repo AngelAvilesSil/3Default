@@ -3,11 +3,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getCurrentUser, loginUser, logoutUser } from '../api/auth'
+import { getCurrentUser, loginUser } from '../api/auth'
 import { safeReturnPath } from '../router/authRedirect'
 import { createAppRouter } from '../router'
 import { useSessionStore } from '../stores/session'
-import AppHomeView from '../views/AppHomeView.vue'
 import LoginView from '../views/LoginView.vue'
 import SessionUnavailableView from '../views/SessionUnavailableView.vue'
 
@@ -18,7 +17,6 @@ vi.mock('../api/auth', async (importOriginal) => {
         ...original,
         getCurrentUser: vi.fn(),
         loginUser: vi.fn(),
-        logoutUser: vi.fn(),
     }
 })
 
@@ -115,7 +113,7 @@ describe('authentication views', () => {
             })
 
         const router = createAppRouter(createMemoryHistory())
-        await router.push('/app')
+        await router.push('/projects')
 
         expect(router.currentRoute.value.name).toBe('session-unavailable')
 
@@ -127,7 +125,15 @@ describe('authentication views', () => {
         await flushPromises()
 
         expect(getCurrentUser).toHaveBeenCalledTimes(2)
-        expect(router.currentRoute.value.name).toBe('app-home')
+
+        await vi.waitFor(
+            () => {
+                expect(router.currentRoute.value.name).toBe('my-projects')
+            },
+            { timeout: 3000 },
+        )
+
+        expect(router.currentRoute.value.path).toBe('/projects')
         expect(useSessionStore().user).toEqual(user)
 
         wrapper.unmount()
@@ -141,7 +147,7 @@ describe('authentication views', () => {
             })
 
         const router = createAppRouter(createMemoryHistory())
-        await router.push('/app')
+        await router.push('/projects')
 
         const wrapper = mount(SessionUnavailableView, {
             global: { plugins: [pinia, router] },
@@ -151,7 +157,7 @@ describe('authentication views', () => {
         await flushPromises()
 
         expect(router.currentRoute.value.name).toBe('login')
-        expect(router.currentRoute.value.query.redirect).toBe('/app')
+        expect(router.currentRoute.value.query.redirect).toBe('/projects')
         expect(useSessionStore().status).toBe('unauthenticated')
 
         wrapper.unmount()
@@ -161,7 +167,7 @@ describe('authentication views', () => {
         vi.mocked(getCurrentUser).mockRejectedValue(new TypeError('Failed to fetch'))
 
         const router = createAppRouter(createMemoryHistory())
-        await router.push('/app')
+        await router.push('/projects')
 
         const wrapper = mount(SessionUnavailableView, {
             global: { plugins: [pinia, router] },
@@ -179,56 +185,6 @@ describe('authentication views', () => {
         wrapper.unmount()
     })
 
-    it('signs out from the authenticated home', async () => {
-        vi.mocked(loginUser).mockResolvedValue(user)
-        vi.mocked(logoutUser).mockResolvedValue(undefined)
-
-        await useSessionStore().login(credentials)
-
-        const router = createAppRouter(createMemoryHistory())
-        await router.push('/app')
-
-        const wrapper = mount(AppHomeView, {
-            global: { plugins: [pinia, router] },
-        })
-
-        await wrapper.get('button').trigger('click')
-        await flushPromises()
-
-        expect(logoutUser).toHaveBeenCalledTimes(1)
-        expect(useSessionStore().status).toBe('unauthenticated')
-        expect(useSessionStore().user).toBeNull()
-        expect(router.currentRoute.value.name).toBe('login')
-
-        wrapper.unmount()
-    })
-
-    it('preserves the session when sign-out fails', async () => {
-        vi.mocked(loginUser).mockResolvedValue(user)
-        vi.mocked(logoutUser).mockRejectedValue(new TypeError('Failed to fetch'))
-
-        await useSessionStore().login(credentials)
-
-        const router = createAppRouter(createMemoryHistory())
-        await router.push('/app')
-
-        const wrapper = mount(AppHomeView, {
-            global: { plugins: [pinia, router] },
-        })
-
-        await wrapper.get('button').trigger('click')
-        await flushPromises()
-
-        expect(router.currentRoute.value.name).toBe('app-home')
-        expect(useSessionStore().status).toBe('authenticated')
-        expect(useSessionStore().user).toEqual(user)
-        expect(wrapper.get('[role="alert"]').text()).toBe(
-            'Sign out is temporarily unavailable. Please try again.',
-        )
-
-        wrapper.unmount()
-    })
-
     it('rejects unsafe and non-protected return destinations', () => {
         const router = createAppRouter(createMemoryHistory())
 
@@ -238,6 +194,7 @@ describe('authentication views', () => {
             '/\\evil.example',
             '/login',
             '/session-unavailable',
+            '/app',
             '/',
             '/unknown',
             '/%2F%2Fevil.example',
