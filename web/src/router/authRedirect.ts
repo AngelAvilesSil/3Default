@@ -1,6 +1,6 @@
 import type { Router } from 'vue-router'
 
-const DEFAULT_DESTINATION = '/app'
+const DEFAULT_DESTINATION = '/'
 
 export function safeReturnPath(router: Router, redirect: unknown): string {
     if (
@@ -21,7 +21,7 @@ export function safeReturnPath(router: Router, redirect: unknown): string {
             return destination.fullPath
         }
     } catch {
-        // Invalid destinations fall back to the authenticated home.
+        // Invalid destinations fall back to the public landing page.
     }
 
     return DEFAULT_DESTINATION

@@ -76,7 +76,7 @@ describe('authentication views', () => {
         wrapper.unmount()
     })
 
-    it('uses the authenticated home when login has no return URL', async () => {
+    it('returns to the shared landing page when login has no return URL', async () => {
         vi.mocked(getCurrentUser).mockResolvedValue({
             status: 'unauthenticated',
         })
@@ -94,8 +94,14 @@ describe('authentication views', () => {
         await wrapper.get('form').trigger('submit')
         await flushPromises()
 
-        expect(router.currentRoute.value.name).toBe('app-home')
-        expect(router.currentRoute.value.path).toBe('/app')
+        await vi.waitFor(
+            () => {
+                expect(router.currentRoute.value.name).toBe('landing')
+            },
+            { timeout: 3000 },
+        )
+        expect(router.currentRoute.value.path).toBe('/')
+        expect(useSessionStore().status).toBe('authenticated')
 
         wrapper.unmount()
     })
@@ -238,7 +244,7 @@ describe('authentication views', () => {
         ]
 
         for (const path of unsafePaths) {
-            expect(safeReturnPath(router, path)).toBe('/app')
+            expect(safeReturnPath(router, path)).toBe('/')
         }
 
         expect(safeReturnPath(router, '/projects/p/files/f/preview?camera=front')).toBe(

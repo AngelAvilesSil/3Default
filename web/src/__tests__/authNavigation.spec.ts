@@ -194,7 +194,7 @@ describe('authentication navigation', () => {
 
         await router.push('/login?redirect=%2F%2Fevil.example')
 
-        expect(router.currentRoute.value.name).toBe('app-home')
-        expect(router.currentRoute.value.path).toBe('/app')
+        expect(router.currentRoute.value.name).toBe('landing')
+        expect(router.currentRoute.value.path).toBe('/')
     })
 })
