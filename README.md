@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: authenticated project overview and read-only branch summaries, building on My Projects, project creation, frontend authentication, and the existing versioning, file-storage, conversion, and Three.js preview foundations**
+**Current phase: unified public/authenticated navigation, building on the read-only project overview, branch summaries, My Projects, project creation, and the existing backend and 3D-preview foundations**
 
 Implemented foundations include:
 
@@ -68,17 +68,19 @@ Implemented foundations include:
 * login, logout, and authenticated-user HTTP flows
 * typed frontend authentication API client using same-origin session cookies
 * Pinia authentication state with session restoration, stale-response protection, and serialized login/logout operations
+* shared session-aware site header with a 3Default home link, My Projects navigation, authenticated user identity, and Sign out
+* shared landing page at `/` for visitors and authenticated users, with nonblocking session restoration and neutral navigation while verification is pending
 * centralized frontend styling tokens, shared form-field styles, and reusable button, text-field, and textarea components
 * Vue login form with credential-error, rate-limit, request-error, and loading feedback
-* public entry and login routes, protected application, My Projects, Create Project, Project Overview, and preview routes, and recoverable session-verification errors
-* safe post-login return navigation that preserves protected paths and query parameters
+* public landing and login routes, protected My Projects, Create Project, Project Overview, and preview routes, recoverable session-verification errors, and a legacy `/app` redirect to `/`
+* safe post-login return navigation that preserves protected paths and query parameters, falling back to `/`
 * real-browser verification of registration, login, session persistence, logout, deep links, and temporary API-outage recovery
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
 The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The routed Vue application now consumes authenticated GLB previews through a Three.js browser viewer. PostgreSQL now protects project-file metadata, finalized revision-file membership, and committed revision metadata and ancestry against direct historical rewrites. Comprehensive revision-graph cycle validation, additional native CAD conversion formats, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
 
-**Current browser UI scope:** The public landing page and authenticated home remain minimal foundations. The browser supports login, protected navigation, an authenticated My Projects listing, project creation, a read-only project overview at `/projects/:projectId`, and direct authenticated GLB preview routes. Project names in My Projects link to the overview, which displays owner-scoped project metadata and actual branches with their current head-revision identifiers or an explicit empty-head state. Project creation returns to a refreshed listing. Browser registration, project metadata editing, integrated project-file browsing and upload, interactive branch switching, historical revision navigation and comparison, merge/conflict-resolution workflows, and public project discovery remain future work. The existing Three.js preview is a separate direct route and is not yet integrated into the project overview. The backend project, file, and versioning APIs provide capabilities beyond the current browser UI.
+**Current browser UI scope:** The shared landing page at `/` serves both visitors and authenticated users. A session-aware header provides My Projects navigation, authenticated user identity, and Sign out. The browser supports login, protected navigation, an authenticated My Projects listing, project creation, a read-only project overview at `/projects/:projectId`, and direct authenticated GLB preview routes. Project names in My Projects link to the overview, which displays owner-scoped project metadata and actual branches with their current head-revision identifiers or an explicit empty-head state. Project creation returns to a refreshed listing. Browser registration, project metadata editing, integrated project-file browsing and upload, interactive branch switching, historical revision navigation and comparison, merge/conflict-resolution workflows, and public project discovery remain future work. The existing Three.js preview is a separate direct route and is not yet integrated into the project overview. The backend project, file, and versioning APIs provide capabilities beyond the current browser UI.
 
 ---
 
@@ -137,7 +139,7 @@ Go HTTP server
 
 During development, Vite proxies `/api/*` requests to the Go service. The typed frontend project client uses this same-origin path to list and create projects, retrieve individual project details, and list project branches. The existing Vue Router lifecycle reloads My Projects after successful creation without a separate project state store. The protected project overview first retrieves project metadata, then independently loads its branches. Project and branch requests use abort controllers and stale-response protection; branch failures can be retried without discarding successfully loaded project metadata. Backend ownership checks remain authoritative, and the overview rejects branch records associated with another project. The separate project-file preview route remains lazy-loaded so the Three.js viewer and its rendering dependencies are fetched only when browser visualization is requested.
 
-Frontend authentication is divided between a typed same-origin HTTP client, a Pinia session store, Vue Router navigation guards, and small reusable view components. Session restoration is performed when navigation needs authentication, while public entry pages remain accessible without requiring a session. The browser stores authenticated user state in memory; the opaque session credential remains in the server-managed, HttpOnly cookie. Backend session resolution and project ownership checks remain authoritative for data access.
+Frontend authentication is divided between a typed same-origin HTTP client, a Pinia session store, Vue Router navigation guards, and small reusable view components. Protected routes await session restoration before deciding access. The shared application shell also starts a nonblocking session check after mounting when the session state is unknown, allowing the public landing page to render regardless of API availability. The header remains neutral during verification, and a verification failure leaves public content accessible with manual Sign in available. The browser stores authenticated user state in memory; the opaque session credential remains in the server-managed, HttpOnly cookie. Backend session resolution and project ownership checks remain authoritative for data access.
 
 The intended production shape is:
 
@@ -295,9 +297,9 @@ Vue Router provides the following browser routes:
 
 | Route | Access | Current purpose |
 | --- | --- | --- |
-| `/` | Public | Minimal product entry page |
-| `/login` | Public | Login form; existing authenticated sessions are redirected to a safe application destination |
-| `/app` | Authenticated | Temporary signed-in home with a sign-out action |
+| `/` | Public | Shared landing page for visitors and authenticated users, with session-aware navigation |
+| `/login` | Public | Login form; authenticated users return to a valid protected destination or `/` |
+| `/app` | Public compatibility redirect | Client-side Vue Router redirect to `/`, for signed-in and signed-out visitors |
 | `/projects` | Authenticated | My Projects listing with empty, loading, and error/retry states |
 | `/projects/new` | Authenticated | Create Project form with name validation and optional description |
 | `/projects/:projectId` | Authenticated | Read-only project overview with project metadata and actual branch/head-revision summaries |
@@ -306,11 +308,11 @@ Vue Router provides the following browser routes:
 
 For protected navigation, the router waits for session restoration before deciding access. A confirmed unauthenticated result redirects to `/login` while preserving the requested protected URL. A session-verification failure instead opens `/session-unavailable`, where the user can retry without assuming that their session has been revoked.
 
-After successful login, the application returns to a validated, existing protected route, preserving its supported path and query parameters. Unrecognized, public, or external return destinations fall back to `/app`. The login form itself remains independent of route-navigation decisions.
+After successful login, the application returns to the requested destination only when it is a validated, existing protected route, preserving its supported path and query parameters. Ordinary login without a return destination, and unrecognized, public, or external return destinations, lead to `/`. An already-authenticated visitor opening `/login` follows the same safe return-path rule. The login form itself remains independent of route-navigation decisions.
 
-The UI foundation includes centralized CSS tokens, reusable `AppButton`, `AppTextField`, and `AppTextArea` components, and shared text-control styling in `web/src/styles/form-fields.css`. `LoginForm` handles invalid credentials, request throttling, general failures, and in-progress submissions. A successful login updates Pinia session state and navigates through the login view. Logout revokes the server session and clears the browser's authenticated state.
+The UI foundation includes centralized CSS tokens, reusable `AppButton`, `AppTextField`, and `AppTextArea` components, and shared text-control styling in `web/src/styles/form-fields.css`. `LoginForm` handles invalid credentials, request throttling, general failures, and in-progress submissions. A successful login updates Pinia session state and navigates through the login view. The shared `SiteHeader` displays My Projects and the authenticated user's display name, and provides the common Sign out action across application pages. Successful logout revokes the server session, clears authenticated browser state, and returns to `/`. A failed logout retains the existing authenticated state and displays retryable feedback.
 
-Registration remains available through `POST /api/auth/register`, but a browser registration form has not yet been implemented. `/app` remains a temporary authenticated home; `/projects` provides the project listing and `/projects/new` provides project creation. The read-only project overview is now implemented, but integrated file browsing, interactive branch and revision navigation, and browser metadata editing remain future work.
+Registration remains available through `POST /api/auth/register`, but a browser registration form has not yet been implemented. The shared landing page remains public, `/projects` provides the authenticated project listing, and `/projects/new` provides project creation. The read-only project overview is now implemented, but integrated file browsing, interactive branch and revision navigation, and browser metadata editing remain future work.
 
 Frontend navigation guards are a user-experience boundary, not a substitute for API authorization. The Go backend continues to enforce session validity and owner-scoped access to project resources.
 
@@ -768,16 +770,16 @@ For browser development, open [http://localhost:5173](http://localhost:5173).
 
 The current browser entry points are:
 
-* `http://localhost:5173/` for the minimal public landing page.
+* `http://localhost:5173/` for the shared landing page, available to visitors and authenticated users.
 * `http://localhost:5173/login` for signing in.
-* `http://localhost:5173/app` for the authenticated home placeholder.
+* `http://localhost:5173/app` as a compatibility URL that redirects to `/`.
 * `http://localhost:5173/projects` for the authenticated My Projects listing.
 * `http://localhost:5173/projects/new` for creating a project.
 * `http://localhost:5173/projects/<projectId>` for an authenticated, read-only project overview and its current branches.
 
 The browser currently provides login and logout but not a registration form. On a new local database, create a development account through `POST /api/auth/register` using the API contract's `email`, `displayName`, and `password` fields, then sign in through `/login`. Registration does not automatically establish a session. Do not commit development credentials or session-cookie values to the repository.
 
-After signing in, open `/projects` to see your projects or navigate to `/projects/new` to create one. A new project starts private and has an empty `main` branch. The creation form requires a project name and accepts an optional description. After a successful submission, the browser returns to My Projects. Duplicate names within the same account, including differently capitalized names, are rejected.
+Ordinary sign-in returns to `/`, where the shared header provides a My Projects link. Open `/projects` to see your projects or navigate to `/projects/new` to create one. A new project starts private and has an empty `main` branch. The creation form requires a project name and accepts an optional description. After a successful submission, the browser returns to My Projects. Duplicate names within the same account, including differently capitalized names, are rejected.
 
 From My Projects, select a project name to open its overview. A newly created project's `main` branch initially has no head revision and appears as **No revisions yet**. Existing branch heads display their revision identifiers. The overview reads actual backend data and does not yet offer project-file browsing, branch switching, or revision comparison. The separate authenticated GLB preview route continues to work independently.
 
@@ -879,25 +881,29 @@ docker compose exec -T web npm run build
 
 The preview route is lazy-loaded. A production build therefore keeps the initial application bundle separate from the larger on-demand Three.js preview chunk.
 
-Frontend Vitest coverage includes typed authentication and project APIs (including project detail and branch listing), Pinia session lifecycle, reusable UI primitives, login-form behavior, My Projects loading/error/retry behavior, Create Project validation and error handling, protected navigation, safe return-path handling, view-level login/logout integration, and session-verification retry behavior. Project overview tests verify metadata loading, unavailable projects, expired sessions, retry, and stale-request cancellation. Separate branch-summary tests cover empty and populated heads, multiple branches, loading, independent retry, inconsistent project IDs, unauthorized responses, and switching projects while branch requests remain pending. A real-router integration test verifies navigation from an empty listing through project creation and back to a refreshed listing. Existing GLB preview and Three.js component tests remain part of the same suite.
+Frontend Vitest coverage includes typed authentication and project APIs (including project detail and branch listing), Pinia session lifecycle, reusable UI primitives, login-form behavior, My Projects loading/error/retry behavior, Create Project validation and error handling, protected navigation, safe return-path handling, login-view behavior, shared-header logout integration, nonblocking public-session restoration, legacy `/app` compatibility, and session-verification retry behavior. Project overview tests verify metadata loading, unavailable projects, expired sessions, retry, and stale-request cancellation. Separate branch-summary tests cover empty and populated heads, multiple branches, loading, independent retry, inconsistent project IDs, unauthorized responses, and switching projects while branch requests remain pending. A real-router integration test verifies navigation from an empty listing through project creation and back to a refreshed listing. Existing GLB preview and Three.js component tests remain part of the same suite.
+
+At the Unified Navigation milestone checkpoint, the complete frontend suite passed **219 tests across 23 test files**, with successful TypeScript checking and production build. The shared navigation has dedicated coverage for authenticated, unauthenticated, pending, and failed-verification states; successful and failed logout; and legacy `/app` redirects.
 
 For non-mutating frontend quality checks, use `npx prettier --check src`, `npx oxlint .`, and `npx eslint . --no-cache` inside the `web` service. The repository's `npm run lint` scripts use automatic fixes; do not run them during a read-only review. Repository-wide lint has pre-existing findings outside this milestone. Passing tests, a production build, and focused changed-file lint checks must not be described as a clean repository-wide lint result.
 
 For manual local-browser authentication acceptance:
 
 1. Start `db`, `api`, and `web`, then open a fresh browser session at `http://localhost:5173/`.
-2. Verify that `/` and `/login` render and that unauthenticated `/app` navigation redirects to login.
-3. Register a disposable development user through the API, then sign in through the browser.
+2. Verify that `/` renders for visitors, `/login` provides the login form, and a direct visit to `/app` redirects to `/`.
+3. Register a disposable development user through the API, then sign in through the browser. Confirm ordinary login returns to `/` and the header shows My Projects, the user's display name, and Sign out.
 4. Verify the `__Host-3default_session` cookie's `Secure` and `HttpOnly` attributes without copying its value.
-5. Refresh `/app` and verify that the authenticated session is restored.
-6. Verify that the public landing page remains accessible while authenticated.
-7. Sign out and confirm that direct navigation to `/app` again requires authentication.
+5. Refresh `/` and verify that the authenticated header returns after session restoration without a misleading Sign in flash.
+6. Verify that the shared landing page remains accessible while authenticated and that My Projects is reachable through the header.
+7. Sign out and confirm that the browser returns to `/` with Sign in visible. Verify `/app` still redirects to `/`, while direct navigation to the protected `/projects` route requires login.
 8. From a signed-out session, request a protected preview deep link and verify that login returns to the requested path with its query string intact.
 9. For local failure-recovery verification, stop only the API service, refresh a protected page, confirm the recoverable session-error screen, restart the API, and use **Try again** to restore the existing session.
 
 A fabricated preview URL is sufficient to check post-login navigation, but it does not constitute successful CAD rendering verification. Actual preview rendering requires an existing project file and successful conversion output.
 
 These normal-session, deep-link, and temporary API-outage scenarios passed manual browser acceptance during the frontend-authentication milestone.
+
+During the Unified Navigation milestone, **11 functional browser checks** passed, covering public and authenticated landing behavior, session restoration, My Projects and project-overview navigation, the 3Default home link, legacy `/app` redirects, logout, protected-route login, and ordinary login. **Five additional responsive and accessibility checks** passed at approximately 394 px mobile, 768 px tablet, and desktop widths, including keyboard navigation and browser-console verification. No unexpected console errors or horizontal-overflow issues were reported.
 
 For manual My Projects and Create Project acceptance:
 
@@ -966,6 +972,7 @@ milestone/revision-integrity-hardening
 milestone/frontend-authentication
 milestone/frontend-my-projects
 milestone/frontend-project-workspace
+milestone/frontend-unified-navigation
 ```
 
 Within each milestone, work remains divided into small logical commits. Implementation commits are followed by a separate README/documentation audit and documentation commit when updates are needed. Completed milestones are merged into `main` through pull requests using **Rebase and merge**, preserving linear history.
@@ -1026,7 +1033,11 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] Pinia session restoration and lifecycle management
 * [x] reusable UI tokens, button, and text-field components
 * [x] browser login form with loading and error states
-* [x] public and authenticated route foundation
+* [x] public landing and protected route foundation
+* [x] shared landing page with nonblocking session restoration
+* [x] shared session-aware header with My Projects navigation and logout
+* [x] legacy `/app` compatibility redirect to `/`
+* [x] real-browser unified navigation, responsive, and keyboard acceptance
 * [x] safe return navigation to protected pages
 * [x] recoverable session-verification failure handling
 * [x] browser acceptance of login, refresh, logout, and session recovery
