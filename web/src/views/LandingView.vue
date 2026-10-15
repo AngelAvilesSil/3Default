@@ -1,7 +1,3 @@
-<script setup lang="ts">
-    import { RouterLink } from 'vue-router'
-</script>
-
 <template>
     <section class="landing">
         <h2>Engineering projects, with revision history.</h2>
@@ -9,7 +5,6 @@
             3Default is being rebuilt around engineering project version control and browser-based
             3D visualization.
         </p>
-        <RouterLink to="/login">Sign in</RouterLink>
     </section>
 </template>
 
@@ -26,9 +21,5 @@
 
     .landing p {
         color: var(--color-text-muted);
-    }
-
-    .landing a {
-        color: var(--color-action);
     }
 </style>
