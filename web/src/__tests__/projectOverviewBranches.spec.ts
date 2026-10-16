@@ -82,6 +82,9 @@ async function mountOverview(projectId = project.id) {
     const wrapper = mount(ProjectOverviewView, {
         global: {
             plugins: [pinia, router],
+            stubs: {
+                ProjectFilesPanel: true,
+            },
         },
     })
 
