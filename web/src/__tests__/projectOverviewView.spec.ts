@@ -62,6 +62,9 @@ async function mountOverview(projectId = project.id) {
     const wrapper = mount(ProjectOverviewView, {
         global: {
             plugins: [pinia, router],
+            stubs: {
+                ProjectFilesPanel: true,
+            },
         },
     })
 
@@ -90,7 +93,7 @@ describe('project overview view', () => {
         expect(getProject).toHaveBeenCalledWith(project.id, expect.any(AbortSignal))
         expect(wrapper.get('h2').text()).toBe('Robotic Gripper')
         expect(wrapper.text()).toContain('Mechanical gripper development')
-        expect(wrapper.get('a[href="/projects"]').text()).toContain('My Projects')
+        expect(wrapper.find('a[href="/projects"]').exists()).toBe(false)
         expect(wrapper.find('[role="status"]').exists()).toBe(false)
 
         wrapper.unmount()

@@ -9,6 +9,7 @@
         type Project,
         type ProjectBranch,
     } from '../api/projects'
+    import ProjectFilesPanel from '../components/ProjectFilesPanel.vue'
     import AppButton from '../components/ui/AppButton.vue'
     import { useSessionStore } from '../stores/session'
 
@@ -27,6 +28,17 @@
 
     let activeController: AbortController | null = null
     let activeBranchController: AbortController | null = null
+
+    async function redirectToLogin(): Promise<void> {
+        const returnPath = route.fullPath
+
+        session.invalidate()
+
+        await router.replace({
+            name: 'login',
+            query: { redirect: returnPath },
+        })
+    }
 
     function resetBranches(): void {
         activeBranchController?.abort()
@@ -67,15 +79,7 @@
             }
 
             if (error instanceof ProjectRequestError && error.status === 401) {
-                const returnPath = route.fullPath
-
-                session.invalidate()
-
-                await router.replace({
-                    name: 'login',
-                    query: { redirect: returnPath },
-                })
-
+                await redirectToLogin()
                 return
             }
 
@@ -130,15 +134,7 @@
 
             if (error instanceof ProjectRequestError) {
                 if (error.status === 401) {
-                    const returnPath = route.fullPath
-
-                    session.invalidate()
-
-                    await router.replace({
-                        name: 'login',
-                        query: { redirect: returnPath },
-                    })
-
+                    await redirectToLogin()
                     return
                 }
 
@@ -188,10 +184,6 @@
 
 <template>
     <section class="project-overview" aria-labelledby="project-overview-heading">
-        <RouterLink class="project-overview__back" :to="{ name: 'my-projects' }">
-            ← My Projects
-        </RouterLink>
-
         <header class="project-overview__header">
             <h2 id="project-overview-heading">
                 {{ project?.name ?? 'Project overview' }}
@@ -264,6 +256,12 @@
                 </li>
             </ul>
         </section>
+
+        <ProjectFilesPanel
+            v-if="project && !loading"
+            :project-id="project.id"
+            @unauthorized="redirectToLogin"
+        />
     </section>
 </template>
 
@@ -272,25 +270,6 @@
         box-sizing: border-box;
         width: 100%;
         padding: var(--space-6) var(--space-4);
-    }
-
-    .project-overview__back {
-        color: var(--color-action);
-        font-weight: var(--font-weight-medium);
-        text-decoration: none;
-    }
-
-    .project-overview__back:hover {
-        text-decoration: underline;
-    }
-
-    .project-overview__back:focus-visible {
-        outline: 3px solid var(--color-focus-ring);
-        outline-offset: 2px;
-    }
-
-    .project-overview__header {
-        margin-top: var(--space-5);
     }
 
     .project-overview__header h2 {
@@ -317,7 +296,7 @@
     }
 
     .project-overview__branches {
-        margin-top: var(--space-6);
+        margin-top: var(--space-5);
     }
 
     .project-overview__branches-header {
@@ -330,6 +309,7 @@
 
     .project-overview__branches-header h3 {
         margin: 0;
+        font-size: var(--font-size-base);
     }
 
     .project-overview__count,
@@ -340,7 +320,7 @@
     }
 
     .project-overview__branch-list {
-        margin: var(--space-4) 0 0;
+        margin: var(--space-2) 0 0;
         padding: 0;
         list-style: none;
         border: 1px solid var(--color-border);
@@ -348,7 +328,7 @@
     }
 
     .project-overview__branch-item {
-        padding: var(--space-4);
+        padding: var(--space-2) var(--space-3);
         overflow-wrap: anywhere;
     }
 
