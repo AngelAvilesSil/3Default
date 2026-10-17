@@ -10,10 +10,12 @@
 
     const props = defineProps<{
         projectId: string
+        selectedFileId?: string | null
     }>()
 
     const emit = defineEmits<{
         unauthorized: []
+        'select-file': [file: ProjectFile]
     }>()
 
     type LoadState = 'loading' | 'ready' | 'error' | 'unauthorized'
@@ -123,20 +125,46 @@
             No files uploaded yet.
         </p>
 
-        <ul v-else class="project-files-panel__list" aria-label="Project files">
-            <li v-for="file in files" :key="file.id" class="project-files-panel__item">
-                <div class="project-files-panel__name">
-                    {{ file.originalFilename }}
-                </div>
+        <div v-else class="project-files-panel__directory">
+            <div class="project-files-panel__columns" aria-hidden="true">
+                <span>Name</span>
+                <span>Uploaded</span>
+            </div>
 
-                <div class="project-files-panel__metadata">
-                    <span>{{ file.mediaType ?? 'File type unavailable' }}</span>
-                    <time :datetime="file.createdAt">
-                        {{ formatUploadedAt(file.createdAt) }}
-                    </time>
-                </div>
-            </li>
-        </ul>
+            <ul class="project-files-panel__list" aria-label="Project files">
+                <li v-for="file in files" :key="file.id" class="project-files-panel__item">
+                    <button
+                        type="button"
+                        class="project-files-panel__select"
+                        :aria-pressed="props.selectedFileId === file.id"
+                        @click="emit('select-file', file)"
+                    >
+                        <span class="project-files-panel__name">
+                            <svg
+                                class="project-files-panel__icon"
+                                aria-hidden="true"
+                                viewBox="0 0 16 16"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <path
+                                    d="M4 1.75h5l3 3v8.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1Z"
+                                />
+                                <path d="M9 1.75v3h3" />
+                            </svg>
+                            <span>{{ file.originalFilename }}</span>
+                        </span>
+
+                        <time class="project-files-panel__metadata" :datetime="file.createdAt">
+                            {{ formatUploadedAt(file.createdAt) }}
+                        </time>
+                    </button>
+                </li>
+            </ul>
+        </div>
     </section>
 </template>
 
@@ -165,22 +193,63 @@
         font-size: var(--font-size-sm);
     }
 
-    .project-files-panel__list {
-        margin: var(--space-4) 0 0;
-        padding: 0;
-        list-style: none;
+    .project-files-panel__directory {
+        margin-top: var(--space-4);
         border: 1px solid var(--color-border);
         border-radius: var(--radius-md);
+        overflow: hidden;
+    }
+
+    .project-files-panel__columns {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: var(--space-3);
+        padding: var(--space-2) var(--space-3);
+        border-bottom: 1px solid var(--color-border);
+        background: var(--color-surface);
+        color: var(--color-text-muted);
+        font-size: var(--font-size-sm);
+        font-weight: var(--font-weight-medium);
+    }
+
+    .project-files-panel__list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
     }
 
     .project-files-panel__item {
-        display: flex;
-        align-items: start;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: var(--space-2) var(--space-4);
-        padding: var(--space-4);
         min-width: 0;
+    }
+
+    .project-files-panel__select {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: var(--space-3);
+        width: 100%;
+        min-width: 0;
+        padding: var(--space-2) var(--space-3);
+        border: 0;
+        color: inherit;
+        background: transparent;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .project-files-panel__select:hover {
+        background: var(--color-surface);
+    }
+
+    .project-files-panel__select[aria-pressed='true'] {
+        background: var(--color-surface);
+        box-shadow: inset var(--space-1) 0 0 var(--color-action);
+    }
+
+    .project-files-panel__select:focus-visible {
+        outline: 3px solid var(--color-focus-ring);
+        outline-offset: -3px;
     }
 
     .project-files-panel__item + .project-files-panel__item {
@@ -188,18 +257,28 @@
     }
 
     .project-files-panel__name {
-        font-weight: var(--font-weight-medium);
-        overflow-wrap: anywhere;
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
         min-width: 0;
+        font-weight: var(--font-weight-medium);
+    }
+
+    .project-files-panel__name > span {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .project-files-panel__icon {
+        width: 1rem;
+        height: 1rem;
+        flex-shrink: 0;
+        color: var(--color-text-muted);
     }
 
     .project-files-panel__metadata {
-        display: flex;
-        align-items: start;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: var(--space-2) var(--space-4);
-        overflow-wrap: anywhere;
+        white-space: nowrap;
+        text-align: right;
     }
 
     .project-files-panel__feedback,
@@ -209,5 +288,25 @@
 
     .project-files-panel__feedback p {
         color: var(--color-danger);
+    }
+
+    @media (max-width: 52rem) {
+        .project-files-panel__columns {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .project-files-panel__columns span:last-child {
+            display: none;
+        }
+
+        .project-files-panel__select {
+            grid-template-columns: minmax(0, 1fr);
+            gap: var(--space-1);
+        }
+
+        .project-files-panel__metadata {
+            padding-left: calc(var(--space-4) + var(--space-2));
+            text-align: left;
+        }
     }
 </style>
