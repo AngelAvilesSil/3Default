@@ -59,6 +59,31 @@ describe('project files panel', () => {
         wrapper.unmount()
     })
 
+    it('shows a repository-style file row with an icon and upload date', async () => {
+        vi.mocked(listProjectFiles).mockResolvedValueOnce([firstFile])
+
+        const wrapper = mount(ProjectFilesPanel, {
+            props: { projectId },
+        })
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('ul[aria-label="Project files"] button')).toHaveLength(1)
+        })
+
+        const headings = wrapper.get('.project-files-panel__columns')
+        expect(headings.text()).toContain('Name')
+        expect(headings.text()).toContain('Uploaded')
+
+        const fileButton = wrapper.get('ul[aria-label="Project files"] button')
+
+        expect(fileButton.text()).toContain('gripper.step')
+        expect(fileButton.text()).toContain('Uploaded')
+        expect(fileButton.text()).not.toContain('model/step')
+        expect(fileButton.find('svg[aria-hidden="true"]').exists()).toBe(true)
+
+        wrapper.unmount()
+    })
+
     it('shows a loading state while files are being retrieved', async () => {
         vi.mocked(listProjectFiles).mockReturnValueOnce(new Promise<ProjectFile[]>(() => {}))
 
@@ -191,6 +216,63 @@ describe('project files panel', () => {
 
         expect(wrapper.text()).toContain('gearbox.glb')
         expect(wrapper.text()).not.toContain('gripper.step')
+
+        wrapper.unmount()
+    })
+
+    it('emits the selected file only after a user clicks it', async () => {
+        vi.mocked(listProjectFiles).mockResolvedValueOnce([firstFile, secondFile])
+
+        const wrapper = mount(ProjectFilesPanel, {
+            props: { projectId },
+        })
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('ul[aria-label="Project files"] > li')).toHaveLength(2)
+        })
+
+        expect(wrapper.emitted('select-file')).toBeUndefined()
+
+        const buttons = wrapper.findAll('ul[aria-label="Project files"] button')
+
+        expect(buttons).toHaveLength(2)
+        expect(buttons[0]!.attributes('type')).toBe('button')
+
+        await buttons[0]!.trigger('click')
+        await buttons[1]!.trigger('click')
+
+        expect(wrapper.emitted('select-file')).toEqual([[firstFile], [secondFile]])
+
+        wrapper.unmount()
+    })
+
+    it('identifies the selected file accessibly', async () => {
+        vi.mocked(listProjectFiles).mockResolvedValueOnce([firstFile, secondFile])
+
+        const wrapper = mount(ProjectFilesPanel, {
+            props: {
+                projectId,
+                selectedFileId: firstFile.id,
+            },
+        })
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('ul[aria-label="Project files"] > li')).toHaveLength(2)
+        })
+
+        const buttons = wrapper.findAll('ul[aria-label="Project files"] button')
+
+        expect(buttons.map((button) => button.attributes('aria-pressed'))).toEqual([
+            'true',
+            'false',
+        ])
+
+        await wrapper.setProps({ selectedFileId: secondFile.id })
+
+        expect(buttons.map((button) => button.attributes('aria-pressed'))).toEqual([
+            'false',
+            'true',
+        ])
 
         wrapper.unmount()
     })

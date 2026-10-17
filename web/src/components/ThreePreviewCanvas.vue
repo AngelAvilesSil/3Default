@@ -1,11 +1,13 @@
 <script setup lang="ts">
     import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
     import {
-        AmbientLight,
         Box3,
         DirectionalLight,
         MathUtils,
+        NeutralToneMapping,
+        PMREMGenerator,
         PerspectiveCamera,
+        Quaternion,
         Scene,
         Sphere,
         WebGLRenderer,
@@ -14,7 +16,9 @@
         type Mesh,
         type Object3D,
         type Texture,
+        type WebGLRenderTarget,
     } from 'three'
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 
@@ -39,6 +43,7 @@
     let scene: Scene | null = null
     let camera: PerspectiveCamera | null = null
     let renderer: WebGLRenderer | null = null
+    let environmentTarget: WebGLRenderTarget | null = null
     let controls: OrbitControls | null = null
     let resizeObserver: ResizeObserver | null = null
     let currentModel: Object3D | null = null
@@ -216,6 +221,9 @@
             alpha: true,
         })
 
+        nextRenderer.toneMapping = NeutralToneMapping
+        nextRenderer.toneMappingExposure = 1
+
         nextCamera.position.set(3, 3, 3)
 
         nextRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
@@ -227,12 +235,33 @@
         nextControls.target.set(0, 0, 0)
         nextControls.update()
 
-        const ambientLight = new AmbientLight(0xffffff, 1.25)
-        const directionalLight = new DirectionalLight(0xffffff, 2)
+        // Camera-mounted inspection lights remain separate from model geometry.
+        // Both lights illuminate the scene along the camera's viewing direction.
+        const inspectionKey = new DirectionalLight(0xffffff, 0.7)
+        inspectionKey.position.set(-1.5, 2, 2.5)
+        inspectionKey.target.position.set(0, 0, -1)
 
-        directionalLight.position.set(4, 6, 4)
+        const inspectionFill = new DirectionalLight(0xffffff, 0.3)
+        inspectionFill.position.set(1.5, -0.75, 2)
+        inspectionFill.target.position.set(0, 0, -1)
 
-        nextScene.add(ambientLight, directionalLight)
+        nextCamera.add(inspectionKey, inspectionKey.target, inspectionFill, inspectionFill.target)
+
+        // Three.js updates camera-attached light transforms through the scene.
+        nextScene.add(nextCamera)
+
+        // Provide image-based lighting for glTF physically based materials.
+        const pmremGenerator = new PMREMGenerator(nextRenderer)
+        const roomEnvironment = new RoomEnvironment()
+
+        try {
+            environmentTarget = pmremGenerator.fromScene(roomEnvironment)
+            nextScene.environment = environmentTarget.texture
+            nextScene.environmentIntensity = 0.45
+        } finally {
+            roomEnvironment.dispose()
+            pmremGenerator.dispose()
+        }
 
         const resize = () => {
             const width = Math.max(host.clientWidth, 1)
@@ -249,8 +278,16 @@
         nextResizeObserver.observe(host)
         resize()
 
+        // Keep studio illumination aligned with the inspection camera.
+        // Reuse the quaternion to avoid allocations during rendering.
+        const inverseCameraRotation = new Quaternion()
+
         nextRenderer.setAnimationLoop(() => {
             nextControls.update()
+
+            inverseCameraRotation.copy(nextCamera.quaternion).invert()
+            nextScene.environmentRotation.setFromQuaternion(inverseCameraRotation)
+
             nextRenderer.render(nextScene, nextCamera)
         })
 
@@ -273,6 +310,14 @@
         resizeObserver?.disconnect()
         renderer?.setAnimationLoop(null)
         controls?.dispose()
+
+        if (scene) {
+            scene.environment = null
+        }
+
+        environmentTarget?.dispose()
+        environmentTarget = null
+
         scene?.clear()
 
         const canvas = renderer?.domElement

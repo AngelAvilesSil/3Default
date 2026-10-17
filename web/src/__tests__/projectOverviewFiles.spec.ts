@@ -1,4 +1,5 @@
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
+import { defineComponent } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -54,6 +55,13 @@ const projectFile: ProjectFile = {
     createdAt: '2026-10-15T12:00:00Z',
 }
 
+const secondFile: ProjectFile = {
+    ...projectFile,
+    id: '66666666-6666-4666-8666-666666666666',
+    originalFilename: 'housing.glb',
+    contentSha256: 'b'.repeat(64),
+}
+
 const branch = {
     id: '44444444-4444-4444-8444-444444444444',
     projectId: project.id,
@@ -73,6 +81,21 @@ const user = {
 
 let pinia: Pinia
 
+const ProjectFilePreviewStub = defineComponent({
+    name: 'ProjectFilePreview',
+    props: {
+        projectId: { type: String, required: true },
+        projectFileId: { type: String, required: true },
+    },
+    template: `
+        <div
+            data-testid="inline-preview"
+            :data-project-id="projectId"
+            :data-file-id="projectFileId"
+        ></div>
+    `,
+})
+
 async function mountOverview() {
     const router = createAppRouter(createMemoryHistory())
     await router.push(`/projects/${project.id}`)
@@ -80,6 +103,9 @@ async function mountOverview() {
     const wrapper = mount(ProjectOverviewView, {
         global: {
             plugins: [pinia, router],
+            stubs: {
+                ProjectFilePreview: ProjectFilePreviewStub,
+            },
         },
     })
 
@@ -114,6 +140,144 @@ describe('project overview file integration', () => {
         expect(wrapper.text()).toContain('Uploaded')
         expect(wrapper.text()).toContain('No revisions yet')
         expect(listProjectFiles).toHaveBeenCalledWith(project.id, expect.any(AbortSignal))
+
+        wrapper.unmount()
+    })
+
+    it('opens the inline preview on selection and switches files', async () => {
+        vi.mocked(listProjectFiles).mockResolvedValueOnce([projectFile, secondFile])
+
+        const { wrapper } = await mountOverview()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('ul[aria-label="Project files"] button')).toHaveLength(2)
+        })
+
+        // No file should be selected automatically.
+        expect(wrapper.find('[data-testid="inline-preview"]').exists()).toBe(false)
+        expect(wrapper.find('.project-file-workspace--split').exists()).toBe(false)
+
+        const buttons = wrapper.findAll('ul[aria-label="Project files"] button')
+
+        await buttons[0]!.trigger('click')
+
+        expect(wrapper.get('[data-testid="inline-preview"]').attributes('data-project-id')).toBe(
+            project.id,
+        )
+        expect(wrapper.get('[data-testid="inline-preview"]').attributes('data-file-id')).toBe(
+            projectFile.id,
+        )
+        expect(wrapper.find('.project-file-workspace--split').exists()).toBe(true)
+
+        expect(buttons[0]!.attributes('aria-pressed')).toBe('true')
+        expect(buttons[1]!.attributes('aria-pressed')).toBe('false')
+
+        await buttons[1]!.trigger('click')
+
+        expect(wrapper.get('[data-testid="inline-preview"]').attributes('data-file-id')).toBe(
+            secondFile.id,
+        )
+        expect(buttons[0]!.attributes('aria-pressed')).toBe('false')
+        expect(buttons[1]!.attributes('aria-pressed')).toBe('true')
+
+        wrapper.unmount()
+    })
+
+    it('clears the selected preview when navigating to another project', async () => {
+        const otherProject: Project = {
+            ...project,
+            id: '77777777-7777-4777-8777-777777777777',
+            name: 'Second Project',
+        }
+
+        const otherFile: ProjectFile = {
+            ...secondFile,
+            projectId: otherProject.id,
+        }
+
+        vi.mocked(getProject).mockImplementation(async (id) =>
+            id === project.id ? project : otherProject,
+        )
+
+        vi.mocked(listProjectBranches).mockImplementation(async (id) => [
+            { ...branch, projectId: id },
+        ])
+
+        vi.mocked(listProjectFiles).mockImplementation(async (id) =>
+            id === project.id ? [projectFile] : [otherFile],
+        )
+
+        const { wrapper, router } = await mountOverview()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('ul[aria-label="Project files"] button')).toHaveLength(1)
+        })
+
+        await wrapper.get('ul[aria-label="Project files"] button').trigger('click')
+
+        expect(wrapper.get('[data-testid="inline-preview"]').attributes('data-file-id')).toBe(
+            projectFile.id,
+        )
+
+        await router.push(`/projects/${otherProject.id}`)
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('h2').text()).toBe(otherProject.name)
+            expect(wrapper.text()).toContain(otherFile.originalFilename)
+        })
+
+        expect(wrapper.find('[data-testid="inline-preview"]').exists()).toBe(false)
+        expect(wrapper.find('.project-file-workspace--split').exists()).toBe(false)
+
+        const otherButton = wrapper.get('ul[aria-label="Project files"] button')
+        expect(otherButton.attributes('aria-pressed')).toBe('false')
+
+        await otherButton.trigger('click')
+
+        expect(wrapper.get('[data-testid="inline-preview"]').attributes('data-file-id')).toBe(
+            otherFile.id,
+        )
+
+        expect(wrapper.get('[data-testid="inline-preview"]').attributes('data-project-id')).toBe(
+            otherProject.id,
+        )
+
+        wrapper.unmount()
+    })
+
+    it('closes the inline preview without reloading the project or files', async () => {
+        const { wrapper, router } = await mountOverview()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('ul[aria-label="Project files"] button')).toHaveLength(1)
+        })
+
+        const initialPath = router.currentRoute.value.fullPath
+        const fileButton = wrapper.get('ul[aria-label="Project files"] button')
+
+        await fileButton.trigger('click')
+
+        await vi.waitFor(() => {
+            expect(wrapper.find('.project-file-workspace--split').exists()).toBe(true)
+        })
+
+        await wrapper.get('button[aria-label="Close preview"]').trigger('click')
+
+        expect(wrapper.find('.project-file-workspace--split').exists()).toBe(false)
+        expect(wrapper.find('.project-file-workspace__preview').exists()).toBe(false)
+        expect(
+            wrapper.get('ul[aria-label="Project files"] button').attributes('aria-pressed'),
+        ).toBe('false')
+
+        expect(router.currentRoute.value.fullPath).toBe(initialPath)
+        expect(getProject).toHaveBeenCalledTimes(1)
+        expect(listProjectFiles).toHaveBeenCalledTimes(1)
+
+        await wrapper.get('ul[aria-label="Project files"] button').trigger('click')
+
+        await vi.waitFor(() => {
+            expect(wrapper.find('.project-file-workspace--split').exists()).toBe(true)
+        })
 
         wrapper.unmount()
     })

@@ -9,7 +9,7 @@
         type Project,
         type ProjectBranch,
     } from '../api/projects'
-    import ProjectFilesPanel from '../components/ProjectFilesPanel.vue'
+    import ProjectFileWorkspace from '../components/ProjectFileWorkspace.vue'
     import AppButton from '../components/ui/AppButton.vue'
     import { useSessionStore } from '../stores/session'
 
@@ -257,8 +257,9 @@
             </ul>
         </section>
 
-        <ProjectFilesPanel
+        <ProjectFileWorkspace
             v-if="project && !loading"
+            :key="project.id"
             :project-id="project.id"
             @unauthorized="redirectToLogin"
         />

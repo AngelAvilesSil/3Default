@@ -63,7 +63,7 @@ async function mountOverview(projectId = project.id) {
         global: {
             plugins: [pinia, router],
             stubs: {
-                ProjectFilesPanel: true,
+                ProjectFileWorkspace: true,
             },
         },
     })
