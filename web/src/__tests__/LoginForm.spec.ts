@@ -75,8 +75,7 @@ describe('LoginForm', () => {
         await wrapper.get('form').trigger('submit')
         await flushPromises()
 
-        expect(loginUser).toHaveBeenCalledOnce()
-        expect(loginUser).toHaveBeenCalledWith({
+        expect(loginUser).toHaveBeenCalledExactlyOnceWith({
             email: 'person@example.com',
             password: 'my password',
         })
