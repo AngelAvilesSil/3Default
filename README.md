@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: unified public/authenticated navigation, building on the read-only project overview, branch summaries, My Projects, project creation, and the existing backend and 3D-preview foundations**
+**Current phase: authenticated project file workspace with inline GLB inspection, building on project browsing, branch summaries, conversion jobs, and the existing versioning and authentication foundations**
 
 Implemented foundations include:
 
@@ -54,10 +54,15 @@ Implemented foundations include:
 * Docker-packaged Mayo executable with optional `MAYO_EXECUTABLE` application configuration
 * authenticated latest-successful GLB preview streaming through `/api/projects/{projectId}/files/{projectFileId}/preview`
 * routed Three.js browser preview through `/projects/{projectId}/files/{projectFileId}/preview`
+* typed frontend project-file listing with authenticated loading and error handling
+* compact project-file directory with upload dates, accessible selection, and responsive layout
+* inline project-file workspace with file switching, close/reopen behavior, and project-change selection reset
+* on-demand inline GLB preview using the existing authenticated preview coordinator
+* camera-attached key and fill lights, camera-relative PBR studio illumination, neutral tone mapping, and environment-resource cleanup
 * same-origin authenticated preview loading with explicit loading, unavailable, request-error, and render-error states
 * GLTFLoader-based GLB parsing with OrbitControls, automatic camera fitting, resize handling, animation-loop lifecycle management, and deterministic model-resource disposal
 * abortable preview requests with stale-response protection when the selected project or file changes
-* lazy-loaded preview route so Three.js stays out of the initial application bundle
+* lazy-loaded direct preview route and on-demand inline preview so Three.js stays out of the initial application bundle
 * persistent Docker storage configured through `STORAGE_ROOT`
 * atomic user registration and password-credential creation
 * password creation policy and local weak-password screening
@@ -78,9 +83,9 @@ Implemented foundations include:
 * unsafe cross-origin browser request protection
 * unit and PostgreSQL integration tests
 
-The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The routed Vue application now consumes authenticated GLB previews through a Three.js browser viewer. PostgreSQL now protects project-file metadata, finalized revision-file membership, and committed revision metadata and ancestry against direct historical rewrites. Comprehensive revision-graph cycle validation, additional native CAD conversion formats, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
+The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The Vue application now consumes authenticated GLB previews through both a protected direct route and an inline project-file workspace using the existing Three.js browser viewer. PostgreSQL now protects project-file metadata, finalized revision-file membership, and committed revision metadata and ancestry against direct historical rewrites. Comprehensive revision-graph cycle validation, additional native CAD conversion formats, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
 
-**Current browser UI scope:** The shared landing page at `/` serves both visitors and authenticated users. A session-aware header provides My Projects navigation, authenticated user identity, and Sign out. The browser supports login, protected navigation, an authenticated My Projects listing, project creation, a read-only project overview at `/projects/:projectId`, and direct authenticated GLB preview routes. Project names in My Projects link to the overview, which displays owner-scoped project metadata and actual branches with their current head-revision identifiers or an explicit empty-head state. Project creation returns to a refreshed listing. Browser registration, project metadata editing, integrated project-file browsing and upload, interactive branch switching, historical revision navigation and comparison, merge/conflict-resolution workflows, and public project discovery remain future work. The existing Three.js preview is a separate direct route and is not yet integrated into the project overview. The backend project, file, and versioning APIs provide capabilities beyond the current browser UI.
+**Current browser UI scope:** The shared landing page at `/` serves visitors and authenticated users, with session-aware navigation. Authenticated users can view My Projects, create projects, open a protected project overview, inspect read-only branch/head-revision summaries, and browse the project's uploaded files. Selecting a file opens an inline GLB preview beside the file directory when a successful conversion output is available; users can switch files or close the preview without leaving the overview. The existing protected direct preview route remains available. Browser registration, source-file upload/download controls, project metadata editing, interactive branch switching, historical revision navigation and comparison, merge/conflict-resolution workflows, and public project discovery remain future work. The backend offers file, revision, and conversion APIs beyond the current browser UI.
 
 ---
 
@@ -137,7 +142,7 @@ Go HTTP server
       STORAGE_ROOT filesystem
 ```
 
-During development, Vite proxies `/api/*` requests to the Go service. The typed frontend project client uses this same-origin path to list and create projects, retrieve individual project details, and list project branches. The existing Vue Router lifecycle reloads My Projects after successful creation without a separate project state store. The protected project overview first retrieves project metadata, then independently loads its branches. Project and branch requests use abort controllers and stale-response protection; branch failures can be retried without discarding successfully loaded project metadata. Backend ownership checks remain authoritative, and the overview rejects branch records associated with another project. The separate project-file preview route remains lazy-loaded so the Three.js viewer and its rendering dependencies are fetched only when browser visualization is requested.
+During development, Vite proxies `/api/*` requests to the Go service. The typed frontend project client uses this same-origin path to list and create projects, retrieve individual project details, and list project branches. The existing Vue Router lifecycle reloads My Projects after successful creation without a separate project state store. The protected project overview first retrieves project metadata, then independently loads its branches. Project and branch requests use abort controllers and stale-response protection; branch failures can be retried without discarding successfully loaded project metadata. Backend ownership checks remain authoritative, and the overview rejects branch records associated with another project. The project-file list uses the typed authenticated file API client. `ProjectFileWorkspace` owns the selected-file state, composes `ProjectFilesPanel` and `ProjectFilePreview`, and clears selection when the project changes. The inline preview is imported asynchronously; the existing direct preview route remains lazy-loaded. Both defer loading Three.js until visualization is requested.
 
 Frontend authentication is divided between a typed same-origin HTTP client, a Pinia session store, Vue Router navigation guards, and small reusable view components. Protected routes await session restoration before deciding access. The shared application shell also starts a nonblocking session check after mounting when the session state is unknown, allowing the public landing page to render regardless of API availability. The header remains neutral during verification, and a verification failure leaves public content accessible with manual Sign in available. The browser stores authenticated user state in memory; the opaque session credential remains in the server-managed, HttpOnly cookie. Backend session resolution and project ownership checks remain authoritative for data access.
 
@@ -302,7 +307,7 @@ Vue Router provides the following browser routes:
 | `/app` | Public compatibility redirect | Client-side Vue Router redirect to `/`, for signed-in and signed-out visitors |
 | `/projects` | Authenticated | My Projects listing with empty, loading, and error/retry states |
 | `/projects/new` | Authenticated | Create Project form with name validation and optional description |
-| `/projects/:projectId` | Authenticated | Read-only project overview with project metadata and actual branch/head-revision summaries |
+| `/projects/:projectId` | Authenticated | Project metadata, read-only branch summaries, file directory, and optional inline GLB preview |
 | `/session-unavailable` | Public | Recoverable session-verification error and retry action |
 | `/projects/:projectId/files/:projectFileId/preview` | Authenticated | Existing lazy-loaded Three.js preview |
 
@@ -312,7 +317,7 @@ After successful login, the application returns to the requested destination onl
 
 The UI foundation includes centralized CSS tokens, reusable `AppButton`, `AppTextField`, and `AppTextArea` components, and shared text-control styling in `web/src/styles/form-fields.css`. `LoginForm` handles invalid credentials, request throttling, general failures, and in-progress submissions. A successful login updates Pinia session state and navigates through the login view. The shared `SiteHeader` displays My Projects and the authenticated user's display name, and provides the common Sign out action across application pages. Successful logout revokes the server session, clears authenticated browser state, and returns to `/`. A failed logout retains the existing authenticated state and displays retryable feedback.
 
-Registration remains available through `POST /api/auth/register`, but a browser registration form has not yet been implemented. The shared landing page remains public, `/projects` provides the authenticated project listing, and `/projects/new` provides project creation. The read-only project overview is now implemented, but integrated file browsing, interactive branch and revision navigation, and browser metadata editing remain future work.
+Registration remains available through `POST /api/auth/register`, but a browser registration form has not yet been implemented. The shared landing page remains public, `/projects` provides the authenticated project listing, and `/projects/new` provides project creation. The project overview now includes authenticated file browsing and inline preview selection. Browser source-file actions, interactive branch and revision navigation, and project metadata editing remain future work.
 
 Frontend navigation guards are a user-experience boundary, not a substitute for API authorization. The Go backend continues to enforce session validity and owner-scoped access to project resources.
 
@@ -701,9 +706,11 @@ The Vue application exposes a direct browser route for a project-file preview:
 /projects/{projectId}/files/{projectFileId}/preview
 ```
 
-Vue Router lazy-loads the preview feature only when this route is visited. The `ProjectFilePreview` coordinator starts an abortable same-origin request to the authenticated backend preview endpoint, maps `404` to a normal unavailable state, maps other request failures to an error state, and passes a successful GLB `ArrayBuffer` to the rendering component. Changing either route identifier aborts the previous request and prevents a stale response from replacing the newly selected file.
+Vue Router lazy-loads the direct preview feature only when this route is visited. The project overview also offers an inline preview through `ProjectFileWorkspace`, which imports `ProjectFilePreview` asynchronously when a file is selected. Its compact directory displays original filenames and upload dates, exposes selection using accessible buttons, and shows a side-by-side file list and preview on wider screens. The layout stacks on narrow screens. Closing the preview or switching files does not require route navigation. The `ProjectFilePreview` coordinator starts an abortable same-origin request to the authenticated backend preview endpoint, maps `404` to a normal unavailable state, maps other request failures to an error state, and passes a successful GLB `ArrayBuffer` to the rendering component. Changing either route identifier aborts the previous request and prevents a stale response from replacing the newly selected file.
 
 `ThreePreviewCanvas` owns the WebGL-specific lifecycle. It parses binary GLB data with `GLTFLoader`, renders it with Three.js, provides orbit/pan/zoom interaction through `OrbitControls`, and automatically fits the camera to the loaded model. The component also observes container resizing, caps device pixel ratio, runs damped controls through the renderer animation loop, rejects stale asynchronous model loads, and releases model geometry, materials, textures, closeable texture sources, controls, the animation loop, and the renderer when models are replaced or the component unmounts.
+
+For engineering inspection, `ThreePreviewCanvas` uses a primary and weaker fill directional light attached to the camera, so they follow the viewing perspective while the model remains stationary. A procedurally generated PBR studio environment supports glTF materials, follows camera orientation, and uses calibrated intensity with neutral tone mapping. The generated environment render target is disposed when the viewer unmounts. GLB geometry and authored materials are not modified to achieve the lighting effect.
 
 The route currently depends on an existing authenticated session and a successful persisted GLB conversion output. With Mayo configured, STEP and STP files can produce browser-viewable GLB previews after their conversion jobs succeed. Uploading a source file and requesting a conversion job remain separate API operations; the preview route does not start conversion jobs. Other native CAD formats remain unsupported.
 
@@ -781,7 +788,7 @@ The browser currently provides login and logout but not a registration form. On 
 
 Ordinary sign-in returns to `/`, where the shared header provides a My Projects link. Open `/projects` to see your projects or navigate to `/projects/new` to create one. A new project starts private and has an empty `main` branch. The creation form requires a project name and accepts an optional description. After a successful submission, the browser returns to My Projects. Duplicate names within the same account, including differently capitalized names, are rejected.
 
-From My Projects, select a project name to open its overview. A newly created project's `main` branch initially has no head revision and appears as **No revisions yet**. Existing branch heads display their revision identifiers. The overview reads actual backend data and does not yet offer project-file browsing, branch switching, or revision comparison. The separate authenticated GLB preview route continues to work independently.
+From My Projects, select a project name to open its overview. A newly created project's `main` branch initially has no head revision and appears as **No revisions yet**. Existing branch heads display their revision identifiers. The overview also lists uploaded project files. Selecting a file opens an inline preview using its latest successful persisted GLB conversion output; if no preview is available, the viewer reports that state. Users can switch files or close the preview without leaving the project overview. Branch switching and revision comparison remain future work. The separate authenticated GLB preview route continues to work independently.
 
 In this Docker development setup, Vite serves the Vue source, while the API service launches the Go application with `go run`. When Go source changes, restart the `api` service so the running process compiles and loads those changes. If the browser unexpectedly continues showing an older Vue template, restarting `web` can refresh the development server. These restarts do not delete the named PostgreSQL or storage volumes.
 
@@ -879,13 +886,15 @@ docker compose exec -T web npm run type-check
 docker compose exec -T web npm run build
 ```
 
-The preview route is lazy-loaded. A production build therefore keeps the initial application bundle separate from the larger on-demand Three.js preview chunk.
+The direct preview route and the inline project-file preview are loaded on demand. The production build keeps the initial application bundle separate from the larger Three.js visualization chunk.
 
 Frontend Vitest coverage includes typed authentication and project APIs (including project detail and branch listing), Pinia session lifecycle, reusable UI primitives, login-form behavior, My Projects loading/error/retry behavior, Create Project validation and error handling, protected navigation, safe return-path handling, login-view behavior, shared-header logout integration, nonblocking public-session restoration, legacy `/app` compatibility, and session-verification retry behavior. Project overview tests verify metadata loading, unavailable projects, expired sessions, retry, and stale-request cancellation. Separate branch-summary tests cover empty and populated heads, multiple branches, loading, independent retry, inconsistent project IDs, unauthorized responses, and switching projects while branch requests remain pending. A real-router integration test verifies navigation from an empty listing through project creation and back to a refreshed listing. Existing GLB preview and Three.js component tests remain part of the same suite.
 
+At the Project File Workspace milestone checkpoint, the complete frontend suite passed **266 tests across 26 test files**, with successful TypeScript checking, production build, Prettier verification, and scoped Oxlint/ESLint checks. File workspace coverage includes selection, switching, accessible pressed state, closing/reopening without redundant API requests, and resetting selection when navigating to another project. Three.js tests cover camera-attached inspection lights, camera-relative studio lighting, and environment-resource cleanup. The production build reports an advisory for the on-demand Three.js chunk size.
+
 At the Unified Navigation milestone checkpoint, the complete frontend suite passed **219 tests across 23 test files**, with successful TypeScript checking and production build. The shared navigation has dedicated coverage for authenticated, unauthenticated, pending, and failed-verification states; successful and failed logout; and legacy `/app` redirects.
 
-For non-mutating frontend quality checks, use `npx prettier --check src`, `npx oxlint .`, and `npx eslint . --no-cache` inside the `web` service. The repository's `npm run lint` scripts use automatic fixes; do not run them during a read-only review. Repository-wide lint has pre-existing findings outside this milestone. Passing tests, a production build, and focused changed-file lint checks must not be described as a clean repository-wide lint result.
+For non-mutating frontend quality checks, use `npx prettier --check src`, `npx oxlint .`, and `npx eslint . --no-cache` inside the `web` service. The repository's `npm run lint` scripts use automatic fixes; do not run them during a read-only review. At the project-file-workspace checkpoint, repository-wide ESLint passed after a separate login-form test assertion cleanup. Repository-wide Oxlint still reported 13 pre-existing findings outside F.3. Passing tests, a production build, and scoped lint checks must not be described as a clean repository-wide Oxlint result.
 
 For manual local-browser authentication acceptance:
 
@@ -928,6 +937,16 @@ For manual Project Workspace acceptance:
 6. Check the browser console, keyboard focus and activation of navigation links, and layout at narrow and tablet widths.
 
 These Project Workspace checks passed real-browser acceptance. The tested project displayed its persisted metadata and empty `main` branch correctly; the project and branch API requests returned HTTP `200`; direct refresh and back navigation worked; no unexpected console errors were observed; keyboard navigation worked; and document-level horizontal overflow was absent at approximately 394 px and 768 px. The full frontend suite passed **213 tests across 22 test files** at this milestone checkpoint. This acceptance covers the read-only overview, not integrated CAD file browsing, historical revision comparison, or merge workflows.
+
+For manual Project File Workspace acceptance:
+
+1. Sign in, open an existing project, and verify that uploaded filenames and upload dates appear in the file directory.
+2. Select a file with a successful GLB preview and verify that the inline viewer opens without route navigation.
+3. Orbit, zoom, and pan the model; verify the geometry remains distinguishable from initial and opposite viewing angles under camera-attached inspection lighting.
+4. Close and reopen the preview; verify the file list remains available without unnecessary project or file-list reloads.
+5. Check selection, keyboard navigation, narrow layouts, and browser-console behavior.
+
+The F.3 browser acceptance covered integrated file selection, responsive listing, preview closing/reopening, and the final camera-attached lighting behavior using a development GLB cube. Initial and opposite views remained visible, orbit controls worked smoothly, and no unexpected browser-console errors were observed. This is not yet an exhaustive appearance verification of all supported CAD files or a revision-aware visual-comparison workflow.
 
 Run PostgreSQL integration tests:
 
@@ -973,6 +992,7 @@ milestone/frontend-authentication
 milestone/frontend-my-projects
 milestone/frontend-project-workspace
 milestone/frontend-unified-navigation
+milestone/frontend-project-file-workspace
 ```
 
 Within each milestone, work remains divided into small logical commits. Implementation commits are followed by a separate README/documentation audit and documentation commit when updates are needed. Completed milestones are merged into `main` through pull requests using **Rebase and merge**, preserving linear history.
@@ -998,7 +1018,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * **Branch pointers are not immutable revisions.** A branch identifies its current head; historical file membership belongs to exact revisions. The browser must not imply file-level history or changes that its data cannot establish.
 * **Project and branch loading remain independently recoverable.** An unavailable branch list should not erase valid project metadata, and obsolete requests must not overwrite a newly selected project's state.
 * **Browser responsibilities stay separated.** HTTP loading and UI state belong to the preview coordinator, while WebGL parsing, camera control, rendering, and GPU-resource cleanup belong to the Three.js canvas component.
-* **Heavy browser features load only when needed.** The preview route is lazy-loaded so Three.js does not inflate the initial application bundle.
+* **Heavy browser features load only when needed.** Both the direct preview route and inline project-file preview defer Three.js loading until visualization is requested.
 * **Development should resemble production.** The development architecture intentionally follows the expected production shape.
 * **New substantial UI work requires a design checkpoint.** Review the intended user path and visual references before implementation, then prefer reusable primitives, semantic design tokens, and maintainable Vue components over scattered styling or premature UI frameworks.
 
@@ -1058,7 +1078,9 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] protected, read-only project overview with owner-scoped metadata
 * [x] project overview navigation, loading/error/retry states, and real-browser acceptance
 * [x] read-only branch summaries with truthful head-revision states
-* [ ] integrated project-file browsing, source-file actions, and CAD preview workspace
+* [x] authenticated project-file listing in the project overview
+* [x] inline, on-demand GLB preview with file selection, switching, and closing
+* [ ] browser source-file upload/download actions and richer file management
 * [ ] browser project metadata editing
 * [ ] broader project management and collaboration interfaces
 
