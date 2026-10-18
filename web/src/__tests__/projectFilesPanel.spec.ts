@@ -125,7 +125,7 @@ describe('project files panel', () => {
             expect(wrapper.get('[role="alert"]').text()).toContain('Unable to load files')
         })
 
-        await wrapper.get('button').trigger('click')
+        await wrapper.get('.project-files-panel__feedback button').trigger('click')
 
         await vi.waitFor(() => {
             expect(wrapper.text()).toContain('gripper.step')

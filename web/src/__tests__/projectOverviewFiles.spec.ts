@@ -144,6 +144,24 @@ describe('project overview file integration', () => {
         wrapper.unmount()
     })
 
+    it('navigates from the project directory to its upload page', async () => {
+        const { wrapper, router } = await mountOverview()
+
+        await vi.waitFor(() => {
+            expect(wrapper.find('button[aria-label="Add file"]').exists()).toBe(true)
+        })
+
+        await wrapper.get('button[aria-label="Add file"]').trigger('click')
+
+        await vi.waitFor(() => {
+            expect(router.currentRoute.value.name).toBe('project-file-upload')
+        })
+
+        expect(router.currentRoute.value.params.projectId).toBe(project.id)
+
+        wrapper.unmount()
+    })
+
     it('opens the inline preview on selection and switches files', async () => {
         vi.mocked(listProjectFiles).mockResolvedValueOnce([projectFile, secondFile])
 
