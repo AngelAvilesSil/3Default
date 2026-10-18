@@ -99,3 +99,50 @@ export async function listProjectFiles(
 
     return readProjectFiles(response, projectId)
 }
+
+export async function uploadProjectFile(
+    projectId: string,
+    file: File,
+    signal?: AbortSignal,
+): Promise<ProjectFile> {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+        },
+        body: formData,
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new ProjectFileRequestError(response.status, response.statusText)
+    }
+
+    if (response.status !== 201) {
+        throw new ProjectFileResponseError(
+            `Unexpected project file upload response status: ${response.status}`,
+        )
+    }
+
+    let body: unknown
+
+    try {
+        body = await response.json()
+    } catch {
+        throw new ProjectFileResponseError(
+            'Project file upload response did not contain valid JSON',
+        )
+    }
+
+    if (!isProjectFile(body) || body.projectId !== projectId) {
+        throw new ProjectFileResponseError(
+            'Project file upload response did not contain a valid project file',
+        )
+    }
+
+    return body
+}
