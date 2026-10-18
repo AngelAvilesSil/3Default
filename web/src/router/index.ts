@@ -40,6 +40,13 @@ export function createAppRouter(history: RouterHistory): Router {
                 meta: { requiresAuth: true },
             },
             {
+                path: '/projects/:projectId/files/upload',
+                name: 'project-file-upload',
+                component: () => import('../views/ProjectFileUploadView.vue'),
+                props: true,
+                meta: { requiresAuth: true },
+            },
+            {
                 path: '/session-unavailable',
                 name: 'session-unavailable',
                 component: () => import('../views/SessionUnavailableView.vue'),

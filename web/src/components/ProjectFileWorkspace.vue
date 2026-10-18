@@ -13,6 +13,7 @@
 
     const emit = defineEmits<{
         unauthorized: []
+        'add-file': []
     }>()
 
     const selectedFile = ref<ProjectFile | null>(null)
@@ -48,6 +49,7 @@
                 :selected-file-id="selectedFile?.id ?? null"
                 @select-file="selectFile"
                 @unauthorized="emit('unauthorized')"
+                @add-file="emit('add-file')"
             />
         </div>
 

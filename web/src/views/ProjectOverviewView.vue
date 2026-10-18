@@ -161,6 +161,17 @@
         }
     }
 
+    function openFileUpload(): void {
+        if (project.value === null) {
+            return
+        }
+
+        void router.push({
+            name: 'project-file-upload',
+            params: { projectId: project.value.id },
+        })
+    }
+
     function retryBranches(): void {
         if (project.value !== null) {
             void loadBranches(project.value.id)
@@ -262,6 +273,7 @@
             :key="project.id"
             :project-id="project.id"
             @unauthorized="redirectToLogin"
+            @add-file="openFileUpload"
         />
     </section>
 </template>

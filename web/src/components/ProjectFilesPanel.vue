@@ -16,6 +16,7 @@
     const emit = defineEmits<{
         unauthorized: []
         'select-file': [file: ProjectFile]
+        'add-file': []
     }>()
 
     type LoadState = 'loading' | 'ready' | 'error' | 'unauthorized'
@@ -103,9 +104,15 @@
         <div class="project-files-panel__header">
             <h3 id="project-files-heading">Project files</h3>
 
-            <span v-if="state === 'ready'" class="project-files-panel__count">
-                {{ files.length }} {{ files.length === 1 ? 'file' : 'files' }}
-            </span>
+            <div class="project-files-panel__header-actions">
+                <span v-if="state === 'ready'" class="project-files-panel__count">
+                    {{ files.length }} {{ files.length === 1 ? 'file' : 'files' }}
+                </span>
+
+                <AppButton variant="secondary" aria-label="Add file" @click="emit('add-file')">
+                    Add file
+                </AppButton>
+            </div>
         </div>
 
         <p v-if="state === 'loading'" role="status">Loading files...</p>
@@ -184,6 +191,13 @@
 
     .project-files-panel__header h3 {
         margin: 0;
+    }
+
+    .project-files-panel__header-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: var(--space-3);
     }
 
     .project-files-panel__count,
