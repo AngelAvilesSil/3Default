@@ -1,14 +1,161 @@
 <script setup lang="ts">
-    import { ref, watch } from 'vue'
+    import { computed, onUnmounted, ref, watch } from 'vue'
+    import { useRouter } from 'vue-router'
 
+    import { ProjectFileRequestError, uploadProjectFile } from '../api/projectFiles'
     import AppButton from '../components/ui/AppButton.vue'
+    import { useSessionStore } from '../stores/session'
 
     const props = defineProps<{
         projectId: string
     }>()
 
+    const router = useRouter()
+
     const fileInput = ref<HTMLInputElement | null>(null)
     const selectedFiles = ref<File[]>([])
+    const uploading = ref(false)
+
+    type UploadStatus = 'selected' | 'uploading' | 'uploaded' | 'failed' | 'needs-review'
+
+    const fileStatuses = ref<Record<string, UploadStatus>>({})
+
+    let activeController: AbortController | null = null
+
+    const hasPendingFiles = computed(() =>
+        selectedFiles.value.some((file) => fileStatus(file) === 'selected'),
+    )
+
+    const hasFailedFiles = computed(() =>
+        selectedFiles.value.some((file) => fileStatus(file) === 'failed'),
+    )
+
+    const hasUncertainFiles = computed(() =>
+        selectedFiles.value.some((file) => fileStatus(file) === 'needs-review'),
+    )
+
+    const hasUploadResults = computed(() =>
+        selectedFiles.value.some((file) => {
+            const status = fileStatus(file)
+
+            return status === 'uploaded' || status === 'failed' || status === 'needs-review'
+        }),
+    )
+
+    function fileStatus(file: File): UploadStatus {
+        return fileStatuses.value[fileKey(file)] ?? 'selected'
+    }
+
+    function setFileStatus(file: File, status: UploadStatus): void {
+        fileStatuses.value[fileKey(file)] = status
+    }
+
+    function statusLabel(file: File): string {
+        switch (fileStatus(file)) {
+            case 'uploading':
+                return 'Uploading'
+            case 'uploaded':
+                return 'Uploaded'
+            case 'failed':
+                return 'Failed'
+            case 'needs-review':
+                return 'Needs review'
+            default:
+                return 'Ready to upload'
+        }
+    }
+
+    async function startUploads(retryFailed = false): Promise<void> {
+        if (uploading.value) {
+            return
+        }
+
+        const requiredStatus: UploadStatus = retryFailed ? 'failed' : 'selected'
+
+        const candidates = selectedFiles.value.filter((file) => fileStatus(file) === requiredStatus)
+
+        if (candidates.length === 0) {
+            return
+        }
+
+        const projectId = props.projectId
+        const controller = new AbortController()
+
+        activeController = controller
+        uploading.value = true
+
+        try {
+            for (const file of candidates) {
+                if (
+                    controller.signal.aborted ||
+                    activeController !== controller ||
+                    props.projectId !== projectId
+                ) {
+                    return
+                }
+
+                setFileStatus(file, 'uploading')
+
+                try {
+                    await uploadProjectFile(projectId, file, controller.signal)
+
+                    if (
+                        controller.signal.aborted ||
+                        activeController !== controller ||
+                        props.projectId !== projectId
+                    ) {
+                        return
+                    }
+
+                    setFileStatus(file, 'uploaded')
+                } catch (error) {
+                    if (
+                        controller.signal.aborted ||
+                        activeController !== controller ||
+                        props.projectId !== projectId
+                    ) {
+                        return
+                    }
+
+                    if (error instanceof ProjectFileRequestError && error.status === 401) {
+                        // The server confirmed that the session is invalid.
+                        // Stop this batch and preserve the intended page.
+                        useSessionStore().invalidate()
+
+                        const returnPath = router.resolve({
+                            name: 'project-file-upload',
+                            params: { projectId },
+                        }).fullPath
+
+                        void router.push({
+                            name: 'login',
+                            query: { redirect: returnPath },
+                        })
+
+                        return
+                    }
+
+                    if (error instanceof ProjectFileRequestError && error.status === 400) {
+                        // Confirmed rejection: safe to offer a retry.
+                        setFileStatus(file, 'failed')
+                        continue
+                    }
+
+                    // An unexpected response or network interruption
+                    // does not prove that the server rejected the file.
+                    // Stop this batch rather than producing more
+                    // uncertain outcomes.
+                    setFileStatus(file, 'needs-review')
+                    return
+                }
+            }
+        } finally {
+            if (activeController === controller) {
+                activeController = null
+                uploading.value = false
+            }
+        }
+    }
 
     // Selection identity is a convenience heuristic, not a content hash.
     function fileKey(file: File): string {
@@ -16,7 +163,7 @@
     }
 
     function addFiles(files: FileList | File[] | null): void {
-        if (files === null) {
+        if (files === null || uploading.value) {
             return
         }
 
@@ -61,9 +208,15 @@
     }
 
     function removeFile(file: File): void {
+        if (uploading.value || (fileStatus(file) !== 'selected' && fileStatus(file) !== 'failed')) {
+            return
+        }
+
         const key = fileKey(file)
 
         selectedFiles.value = selectedFiles.value.filter((candidate) => fileKey(candidate) !== key)
+
+        delete fileStatuses.value[key]
     }
 
     function formatFileSize(bytes: number): string {
@@ -84,13 +237,23 @@
     watch(
         () => props.projectId,
         () => {
+            activeController?.abort()
+            activeController = null
+            uploading.value = false
+
             selectedFiles.value = []
+            fileStatuses.value = {}
 
             if (fileInput.value !== null) {
                 fileInput.value.value = ''
             }
         },
     )
+
+    onUnmounted(() => {
+        activeController?.abort()
+        activeController = null
+    })
 </script>
 
 <template>
@@ -122,7 +285,12 @@
             >
                 <p class="project-file-upload__drop-title">Drag files here or choose files</p>
 
-                <AppButton variant="secondary" aria-label="Choose files" @click="openPicker">
+                <AppButton
+                    variant="secondary"
+                    aria-label="Choose files"
+                    :disabled="uploading"
+                    @click="openPicker"
+                >
                     Choose files
                 </AppButton>
 
@@ -131,6 +299,7 @@
                     class="project-file-upload__file-input"
                     type="file"
                     multiple
+                    :disabled="uploading"
                     tabindex="-1"
                     aria-label="Select files"
                     @change="handlePickerChange"
@@ -163,10 +332,20 @@
                     <div class="project-file-upload__file-details">
                         <strong>{{ file.name }}</strong>
                         <span>{{ formatFileSize(file.size) }}</span>
+                        <span
+                            v-if="fileStatus(file) !== 'selected'"
+                            class="project-file-upload__status"
+                            :class="`project-file-upload__status--${fileStatus(file)}`"
+                            aria-live="polite"
+                        >
+                            {{ statusLabel(file) }}
+                        </span>
                     </div>
 
                     <AppButton
+                        v-if="fileStatus(file) === 'selected' || fileStatus(file) === 'failed'"
                         variant="secondary"
+                        :disabled="uploading"
                         :aria-label="`Remove ${file.name}`"
                         @click="removeFile(file)"
                     >
@@ -175,8 +354,47 @@
                 </li>
             </ul>
 
+            <p v-if="hasUncertainFiles" class="project-file-upload__review-message" role="alert">
+                Some uploads have an uncertain result. Check the project file directory before
+                attempting those files again.
+            </p>
+
+            <div class="project-file-upload__actions">
+                <RouterLink
+                    v-if="!uploading && hasUploadResults"
+                    class="project-file-upload__view-files"
+                    :to="{
+                        name: 'project-overview',
+                        params: { projectId: props.projectId },
+                    }"
+                    aria-label="View project files"
+                >
+                    View project files
+                </RouterLink>
+
+                <AppButton
+                    v-if="hasFailedFiles"
+                    variant="secondary"
+                    aria-label="Retry failed uploads"
+                    :disabled="uploading || hasUncertainFiles"
+                    @click="startUploads(true)"
+                >
+                    Retry failed uploads
+                </AppButton>
+
+                <AppButton
+                    aria-label="Upload selected files"
+                    :disabled="uploading || !hasPendingFiles || hasUncertainFiles"
+                    :loading="uploading"
+                    @click="startUploads()"
+                >
+                    {{ uploading ? 'Uploading files…' : 'Upload files' }}
+                </AppButton>
+            </div>
+
             <p class="project-file-upload__notice">
-                Selecting files does not upload them or create a project revision.
+                Selecting files does not upload them. Uploading stores source files without creating
+                revisions or generating previews.
             </p>
         </div>
     </section>
@@ -317,6 +535,57 @@
 
     .project-file-upload__notice {
         margin-top: var(--space-4);
+    }
+
+    .project-file-upload__status {
+        font-weight: var(--font-weight-medium);
+    }
+
+    .project-file-upload__status--uploaded {
+        color: var(--color-text);
+    }
+
+    .project-file-upload__status--failed,
+    .project-file-upload__status--needs-review {
+        color: var(--color-danger);
+    }
+
+    .project-file-upload__review-message {
+        margin-top: var(--space-4);
+        color: var(--color-danger);
+    }
+
+    .project-file-upload__actions {
+        display: flex;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: var(--space-3);
+        margin-top: var(--space-5);
+    }
+
+    .project-file-upload__view-files {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.5rem;
+        padding: var(--space-2) var(--space-4);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm);
+        color: var(--color-text);
+        background: var(--color-surface);
+        font-size: var(--font-size-sm);
+        font-weight: var(--font-weight-semibold);
+        line-height: var(--line-height-body);
+        text-decoration: none;
+    }
+
+    .project-file-upload__view-files:hover {
+        background: var(--color-page);
+    }
+
+    .project-file-upload__view-files:focus-visible {
+        outline: 3px solid var(--color-focus-ring);
+        outline-offset: 2px;
     }
 
     @media (max-width: 35rem) {
