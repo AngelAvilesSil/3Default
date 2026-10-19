@@ -24,9 +24,14 @@ const previewApiMocks = vi.hoisted(() => ({
         >(),
 }))
 
-vi.mock('../api/projectFilePreview', () => ({
-    fetchProjectFilePreview: previewApiMocks.fetchProjectFilePreview,
-}))
+vi.mock('../api/projectFilePreview', async (importOriginal) => {
+    const original = await importOriginal<typeof import('../api/projectFilePreview')>()
+
+    return {
+        ...original,
+        fetchProjectFilePreview: previewApiMocks.fetchProjectFilePreview,
+    }
+})
 
 const ThreePreviewCanvasStub = defineComponent({
     name: 'ThreePreviewCanvas',

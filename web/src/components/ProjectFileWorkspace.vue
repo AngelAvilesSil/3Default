@@ -67,7 +67,12 @@
                 </AppButton>
             </header>
 
-            <ProjectFilePreview :project-id="props.projectId" :project-file-id="selectedFile.id" />
+            <ProjectFilePreview
+                :project-id="props.projectId"
+                :project-file-id="selectedFile.id"
+                :source-filename="selectedFile.originalFilename"
+                @unauthorized="emit('unauthorized')"
+            />
         </section>
     </div>
 </template>
