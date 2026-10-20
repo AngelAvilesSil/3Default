@@ -29,7 +29,7 @@ export class ProjectFileResponseError extends Error {
     }
 }
 
-function isProjectFile(value: unknown): value is ProjectFile {
+export function isProjectFile(value: unknown): value is ProjectFile {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         return false
     }
