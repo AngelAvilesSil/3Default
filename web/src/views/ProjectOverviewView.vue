@@ -172,6 +172,24 @@
         })
     }
 
+    function openCreateRevision(branch: ProjectBranch): void {
+        if (
+            project.value === null ||
+            branch.projectId !== project.value.id ||
+            !branches.value.some((candidate) => candidate.id === branch.id)
+        ) {
+            return
+        }
+
+        void router.push({
+            name: 'create-project-revision',
+            params: {
+                projectId: project.value.id,
+                branchId: branch.id,
+            },
+        })
+    }
+
     function retryBranches(): void {
         if (project.value !== null) {
             void loadBranches(project.value.id)
@@ -263,6 +281,14 @@
                             Head revision:
                             <code>{{ branch.headRevisionId }}</code>
                         </span>
+
+                        <AppButton
+                            variant="secondary"
+                            :aria-label="`Create revision on ${branch.name}`"
+                            @click="openCreateRevision(branch)"
+                        >
+                            Create revision
+                        </AppButton>
                     </div>
                 </li>
             </ul>
