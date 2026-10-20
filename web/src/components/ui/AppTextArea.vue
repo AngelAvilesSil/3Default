@@ -8,10 +8,12 @@
             placeholder?: string
             error?: string
             rows?: number
+            required?: boolean
             disabled?: boolean
         }>(),
         {
             rows: 4,
+            required: false,
             disabled: false,
         },
     )
@@ -40,6 +42,7 @@
             :value="props.modelValue"
             :placeholder="props.placeholder"
             :rows="props.rows"
+            :required="props.required"
             :disabled="props.disabled"
             :aria-invalid="props.error ? 'true' : undefined"
             :aria-describedby="props.error ? `${props.id}-error` : undefined"
