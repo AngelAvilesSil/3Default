@@ -6,7 +6,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getCurrentUser } from '../api/auth'
 import { listProjectFiles, ProjectFileRequestError, type ProjectFile } from '../api/projectFiles'
 import { getProject, listProjectBranches, type Project, type ProjectBranch } from '../api/projects'
-import { createProjectRevision, listProjectRevisionFiles } from '../api/revisions'
+import {
+    createProjectRevision,
+    listProjectRevisionFiles,
+    RevisionRequestError,
+    RevisionResponseError,
+} from '../api/revisions'
 import { createAppRouter } from '../router'
 import CreateRevisionView from '../views/CreateRevisionView.vue'
 
@@ -241,7 +246,7 @@ describe('Create Revision draft initialization', () => {
         wrapper.unmount()
     })
 
-    it('shows the required message field and disabled creation action', async () => {
+    it('shows the required message field and an available submit action', async () => {
         const { wrapper } = await renderView()
 
         await vi.waitFor(() => {
@@ -253,9 +258,9 @@ describe('Create Revision draft initialization', () => {
         expect(wrapper.get('#revision-message').element.tagName).toBe('TEXTAREA')
         expect(wrapper.get('#revision-message').attributes('required')).toBeDefined()
 
-        const button = wrapper.get('button[aria-label="Create revision unavailable"]')
+        const button = wrapper.get('button[type="submit"]')
 
-        expect(button.attributes('disabled')).toBeDefined()
+        expect(button.attributes('disabled')).toBeUndefined()
         expect(createProjectRevision).not.toHaveBeenCalled()
 
         wrapper.unmount()
@@ -468,5 +473,467 @@ describe('Create Revision draft initialization', () => {
         resolveSnapshot([secondFile])
         await flushPromises()
         expect(createProjectRevision).not.toHaveBeenCalled()
+    })
+
+    it('creates an initial revision with null expected head and an empty snapshot', async () => {
+        const createdRevision = {
+            id: '99999999-9999-4999-8999-999999999999',
+            projectId,
+            authorUserId: user.id,
+            message: 'Initial CAD baseline',
+            parentRevisionId: null,
+            mergeParentRevisionId: null,
+            createdAt: '2026-10-20T12:00:00Z',
+        }
+
+        vi.mocked(createProjectRevision).mockResolvedValueOnce(createdRevision)
+
+        const { wrapper, router } = await renderView()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(2)
+        })
+
+        await wrapper.get('#revision-message').setValue('  Initial CAD baseline  ')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(createProjectRevision).toHaveBeenCalledTimes(1)
+            expect(router.currentRoute.value.name).toBe('project-overview')
+        })
+
+        expect(createProjectRevision).toHaveBeenCalledWith(
+            projectId,
+            branchId,
+            {
+                message: 'Initial CAD baseline',
+                expectedHeadRevisionId: null,
+                projectFileIds: [],
+            },
+            expect.any(AbortSignal),
+        )
+
+        wrapper.unmount()
+    })
+
+    it('submits exactly selected files with the observed branch head', async () => {
+        const createdRevision = {
+            id: '99999999-9999-4999-8999-999999999999',
+            projectId,
+            authorUserId: user.id,
+            message: 'Update gripper geometry',
+            parentRevisionId: revisionId,
+            mergeParentRevisionId: null,
+            createdAt: '2026-10-20T12:00:00Z',
+        }
+
+        vi.mocked(createProjectRevision).mockResolvedValueOnce(createdRevision)
+
+        const { wrapper, router } = await renderView(branchWithHead)
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(2)
+        })
+
+        await fileCheckbox(wrapper, firstFile.id).setValue(true)
+        await fileCheckbox(wrapper, secondFile.id).setValue(false)
+        await wrapper.get('#revision-message').setValue('Update gripper geometry')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(createProjectRevision).toHaveBeenCalledTimes(1)
+            expect(router.currentRoute.value.name).toBe('project-overview')
+        })
+
+        expect(createProjectRevision).toHaveBeenCalledWith(
+            projectId,
+            branchId,
+            {
+                message: 'Update gripper geometry',
+                expectedHeadRevisionId: revisionId,
+                projectFileIds: [firstFile.id],
+            },
+            expect.any(AbortSignal),
+        )
+
+        wrapper.unmount()
+    })
+
+    it('rejects a blank revision message without sending a POST', async () => {
+        const { wrapper } = await renderView()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(2)
+        })
+
+        await wrapper.get('#revision-message').setValue('    ')
+        await wrapper.get('form').trigger('submit')
+
+        expect(wrapper.get('#revision-message-error').text()).toContain(
+            'Revision message is required',
+        )
+        expect(createProjectRevision).not.toHaveBeenCalled()
+
+        wrapper.unmount()
+    })
+
+    it('prevents duplicate revision creation while a POST is pending', async () => {
+        vi.mocked(createProjectRevision).mockReturnValueOnce(
+            new Promise<Awaited<ReturnType<typeof createProjectRevision>>>(() => {}),
+        )
+
+        const { wrapper } = await renderView()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(2)
+        })
+
+        await wrapper.get('#revision-message').setValue('Initial CAD baseline')
+
+        await wrapper.get('form').trigger('submit')
+        await wrapper.get('form').trigger('submit')
+
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+
+        expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+
+        wrapper.unmount()
+    })
+
+    it('blocks a stale-head conflict and directs the user to review the branch', async () => {
+        vi.mocked(createProjectRevision).mockRejectedValueOnce(
+            new RevisionRequestError(409, 'Conflict'),
+        )
+
+        const { wrapper } = await renderView(branchWithHead)
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(2)
+        })
+
+        await wrapper.get('#revision-message').setValue('Update gripper geometry')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('[role="alert"]').text()).toMatch(/branch head changed/i)
+        })
+
+        expect(wrapper.get('[role="alert"]').text()).toMatch(/return to the project/i)
+        expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+        expect(wrapper.get('a.create-revision__back').attributes('href')).toBe(
+            `/projects/${projectId}`,
+        )
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+
+        wrapper.unmount()
+    })
+
+    it('allows a deliberate corrected submission after a confirmed bad request', async () => {
+        const createdRevision = {
+            id: '99999999-9999-4999-8999-999999999999',
+            projectId,
+            authorUserId: user.id,
+            message: 'Corrected revision message',
+            parentRevisionId: null,
+            mergeParentRevisionId: null,
+            createdAt: '2026-10-20T12:00:00Z',
+        }
+
+        vi.mocked(createProjectRevision)
+            .mockRejectedValueOnce(new RevisionRequestError(400, 'Bad Request'))
+            .mockResolvedValueOnce(createdRevision)
+
+        const { wrapper, router } = await renderView()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(2)
+        })
+
+        await fileCheckbox(wrapper, firstFile.id).setValue(true)
+        await wrapper.get('#revision-message').setValue('Invalid revision details')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('[role="alert"]').text()).toMatch(
+                /revision details were not accepted/i,
+            )
+        })
+
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+        expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeUndefined()
+        expect(wrapper.get('#revision-message').attributes('disabled')).toBeUndefined()
+        expect((fileCheckbox(wrapper, firstFile.id).element as HTMLInputElement).checked).toBe(true)
+
+        await wrapper.get('#revision-message').setValue('Corrected revision message')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(router.currentRoute.value.name).toBe('project-overview')
+        })
+
+        expect(createProjectRevision).toHaveBeenCalledTimes(2)
+        expect(createProjectRevision).toHaveBeenLastCalledWith(
+            projectId,
+            branchId,
+            {
+                message: 'Corrected revision message',
+                expectedHeadRevisionId: null,
+                projectFileIds: [firstFile.id],
+            },
+            expect.any(AbortSignal),
+        )
+
+        wrapper.unmount()
+    })
+
+    it('redirects after confirmed session expiration without resubmitting', async () => {
+        vi.mocked(createProjectRevision).mockRejectedValueOnce(
+            new RevisionRequestError(401, 'Unauthorized'),
+        )
+
+        const { wrapper, router } = await renderView()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(2)
+        })
+
+        await wrapper.get('#revision-message').setValue('Initial CAD baseline')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(router.currentRoute.value.name).toBe('login')
+        })
+
+        expect(router.currentRoute.value.query.redirect).toBe(
+            `/projects/${projectId}/branches/${branchId}/revisions/new`,
+        )
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+
+        wrapper.unmount()
+    })
+
+    it('explains a confirmed cross-origin rejection without allowing another submission', async () => {
+        vi.mocked(createProjectRevision).mockRejectedValueOnce(
+            new RevisionRequestError(403, 'Forbidden'),
+        )
+
+        const { wrapper } = await renderView()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(2)
+        })
+
+        await wrapper.get('#revision-message').setValue('Initial CAD baseline')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('[role="alert"]').text()).toMatch(/request was rejected/i)
+        })
+
+        expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+
+        wrapper.unmount()
+    })
+
+    it('reports unavailable project resources as a confirmed rejection', async () => {
+        vi.mocked(createProjectRevision).mockRejectedValueOnce(
+            new RevisionRequestError(404, 'Not Found'),
+        )
+
+        const { wrapper } = await renderView(branchWithHead)
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(2)
+        })
+
+        await wrapper.get('#revision-message').setValue('Update gripper geometry')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('[role="alert"]').text()).toMatch(/no longer available/i)
+        })
+
+        expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+
+        wrapper.unmount()
+    })
+
+    it('network interruption leaves the draft blocked without a duplicate POST', async () => {
+        vi.mocked(createProjectRevision).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+        const { wrapper, router } = await renderView(branchWithHead)
+        await wrapper.get('#revision-message').setValue('Update mounting geometry')
+        await fileCheckbox(wrapper, firstFile.id).setValue(true)
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('[role="alert"]').text()).toMatch(/could not be confirmed/i)
+        })
+
+        expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+        expect(wrapper.get('#revision-message').attributes('disabled')).toBeDefined()
+        expect((fileCheckbox(wrapper, firstFile.id).element as HTMLInputElement).checked).toBe(true)
+        expect(router.currentRoute.value.name).toBe('create-project-revision')
+
+        await wrapper.get('form').trigger('submit')
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+        wrapper.unmount()
+    })
+
+    it('HTTP 500 leaves the submission outcome uncertain and blocks another POST', async () => {
+        vi.mocked(createProjectRevision).mockRejectedValueOnce(
+            new RevisionRequestError(500, 'Internal Server Error'),
+        )
+
+        const { wrapper } = await renderView()
+        await wrapper.get('#revision-message').setValue('Initial CAD snapshot')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('[role="alert"]').text()).toMatch(/could not be confirmed/i)
+        })
+
+        expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+        await wrapper.get('form').trigger('submit')
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+        wrapper.unmount()
+    })
+
+    it('an invalid success response does not trigger navigation or another POST', async () => {
+        vi.mocked(createProjectRevision).mockRejectedValueOnce(
+            new RevisionResponseError('Revision response did not contain the expected revision'),
+        )
+
+        const { wrapper, router } = await renderView()
+        await wrapper.get('#revision-message').setValue('Initial CAD snapshot')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('[role="alert"]').text()).toMatch(/could not be confirmed/i)
+        })
+
+        expect(router.currentRoute.value.name).toBe('create-project-revision')
+        expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+        await wrapper.get('form').trigger('submit')
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+        wrapper.unmount()
+    })
+
+    it('a success response with mismatched parent cannot silently confirm creation', async () => {
+        vi.mocked(createProjectRevision).mockResolvedValueOnce({
+            id: '99999999-9999-4999-8999-999999999999',
+            projectId,
+            authorUserId: user.id,
+            message: 'Update mounting geometry',
+            parentRevisionId: null,
+            mergeParentRevisionId: null,
+            createdAt: '2026-10-20T12:00:00Z',
+        })
+
+        const { wrapper, router } = await renderView(branchWithHead)
+        await wrapper.get('#revision-message').setValue('Update mounting geometry')
+        await wrapper.get('form').trigger('submit')
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('[role="alert"]').text()).toMatch(/response was inconsistent/i)
+        })
+
+        expect(router.currentRoute.value.name).toBe('create-project-revision')
+        expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+        wrapper.unmount()
+    })
+
+    it('aborts a pending POST after switching target branches and ignores its late success', async () => {
+        let resolveCreation!: (value: Awaited<ReturnType<typeof createProjectRevision>>) => void
+
+        vi.mocked(createProjectRevision).mockReturnValueOnce(
+            new Promise<Awaited<ReturnType<typeof createProjectRevision>>>((resolve) => {
+                resolveCreation = resolve
+            }),
+        )
+
+        const { wrapper, router } = await renderView()
+        await wrapper.get('#revision-message').setValue('Initial CAD snapshot')
+        await wrapper.get('form').trigger('submit')
+
+        const signal = vi.mocked(createProjectRevision).mock.calls[0]?.[3]
+        expect(signal).toBeInstanceOf(AbortSignal)
+
+        const alternateBranch: ProjectBranch = {
+            ...emptyBranch,
+            id: '88888888-8888-4888-8888-888888888888',
+            name: 'alternate-design',
+        }
+
+        vi.mocked(listProjectBranches).mockResolvedValue([alternateBranch])
+        await wrapper.setProps({ branchId: alternateBranch.id })
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('.create-revision__context').text()).toContain('alternate-design')
+        })
+
+        expect(signal?.aborted).toBe(true)
+
+        resolveCreation({
+            id: '99999999-9999-4999-8999-999999999999',
+            projectId,
+            authorUserId: user.id,
+            message: 'Initial CAD snapshot',
+            parentRevisionId: null,
+            mergeParentRevisionId: null,
+            createdAt: '2026-10-20T12:00:00Z',
+        })
+
+        await flushPromises()
+
+        expect(wrapper.get('.create-revision__context').text()).toContain('alternate-design')
+        expect(router.currentRoute.value.name).toBe('create-project-revision')
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
+        wrapper.unmount()
+    })
+
+    it('aborts a pending POST on unmount and ignores its late completion', async () => {
+        let resolveCreation!: (value: Awaited<ReturnType<typeof createProjectRevision>>) => void
+
+        vi.mocked(createProjectRevision).mockReturnValueOnce(
+            new Promise<Awaited<ReturnType<typeof createProjectRevision>>>((resolve) => {
+                resolveCreation = resolve
+            }),
+        )
+
+        const { wrapper, router } = await renderView()
+        await wrapper.get('#revision-message').setValue('Initial CAD snapshot')
+        await wrapper.get('form').trigger('submit')
+
+        const signal = vi.mocked(createProjectRevision).mock.calls[0]?.[3]
+        expect(signal).toBeInstanceOf(AbortSignal)
+
+        // Router state can reset when the last Vue app unmounts.
+        // Verify the starting route, then observe navigation calls.
+        expect(router.currentRoute.value.name).toBe('create-project-revision')
+        const pushSpy = vi.spyOn(router, 'push')
+        const replaceSpy = vi.spyOn(router, 'replace')
+
+        wrapper.unmount()
+        expect(signal?.aborted).toBe(true)
+
+        resolveCreation({
+            id: '99999999-9999-4999-8999-999999999999',
+            projectId,
+            authorUserId: user.id,
+            message: 'Initial CAD snapshot',
+            parentRevisionId: null,
+            mergeParentRevisionId: null,
+            createdAt: '2026-10-20T12:00:00Z',
+        })
+
+        await flushPromises()
+
+        expect(pushSpy).not.toHaveBeenCalled()
+        expect(replaceSpy).not.toHaveBeenCalled()
+        expect(createProjectRevision).toHaveBeenCalledTimes(1)
     })
 })

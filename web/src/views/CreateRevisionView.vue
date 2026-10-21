@@ -14,7 +14,11 @@
         type Project,
         type ProjectBranch,
     } from '../api/projects'
-    import { listProjectRevisionFiles, RevisionRequestError } from '../api/revisions'
+    import {
+        createProjectRevision,
+        listProjectRevisionFiles,
+        RevisionRequestError,
+    } from '../api/revisions'
     import AppButton from '../components/ui/AppButton.vue'
     import AppTextArea from '../components/ui/AppTextArea.vue'
     import { useSessionStore } from '../stores/session'
@@ -38,11 +42,15 @@
 
     const revisionMessage = ref('')
     const messageError = ref('')
+    const submitting = ref(false)
+    const submissionBlocked = ref(false)
+    const submissionError = ref('')
 
     const unavailableMessage = ref('')
     const errorMessage = ref('')
 
     let activeController: AbortController | null = null
+    let activeSubmitController: AbortController | null = null
 
     function isCurrent(controller: AbortController, projectId: string, branchId: string): boolean {
         return (
@@ -60,12 +68,17 @@
         selectedFileIds.value = new Set()
         revisionMessage.value = ''
         messageError.value = ''
+        submitting.value = false
+        submissionBlocked.value = false
+        submissionError.value = ''
         unavailableMessage.value = ''
         errorMessage.value = ''
         state.value = 'loading'
     }
 
     async function loadDraft(): Promise<void> {
+        activeSubmitController?.abort()
+        activeSubmitController = null
         activeController?.abort()
 
         const controller = new AbortController()
@@ -202,12 +215,152 @@
     }
 
     function updateRevisionMessage(value: string): void {
+        if (submitting.value || submissionBlocked.value) {
+            return
+        }
+
         revisionMessage.value = value
         messageError.value = value.trim() ? '' : 'Revision message is required.'
     }
 
+    async function handleSubmit(): Promise<void> {
+        if (
+            state.value !== 'ready' ||
+            branch.value === null ||
+            project.value === null ||
+            project.value.id !== props.projectId ||
+            branch.value.id !== props.branchId ||
+            submitting.value ||
+            submissionBlocked.value
+        ) {
+            return
+        }
+
+        const message = revisionMessage.value.trim()
+        messageError.value = message ? '' : 'Revision message is required.'
+
+        if (!message) {
+            return
+        }
+
+        const projectId = props.projectId
+        const branchId = props.branchId
+        const expectedHeadRevisionId = branch.value.headRevisionId
+
+        const projectFileIds = files.value
+            .filter((file) => selectedFileIds.value.has(file.id))
+            .map((file) => file.id)
+
+        const controller = new AbortController()
+        activeSubmitController = controller
+        submitting.value = true
+        submissionError.value = ''
+
+        let confirmedCreated = false
+
+        try {
+            const created = await createProjectRevision(
+                projectId,
+                branchId,
+                {
+                    message,
+                    expectedHeadRevisionId,
+                    projectFileIds,
+                },
+                controller.signal,
+            )
+
+            if (
+                controller.signal.aborted ||
+                activeSubmitController !== controller ||
+                props.projectId !== projectId ||
+                props.branchId !== branchId
+            ) {
+                return
+            }
+
+            // Never encourage another POST after a mismatched success response.
+            if (created.parentRevisionId !== expectedHeadRevisionId) {
+                submissionBlocked.value = true
+                submissionError.value =
+                    'The revision response was inconsistent. Check the branch before trying again.'
+                return
+            }
+
+            confirmedCreated = true
+            submissionBlocked.value = true
+        } catch (error) {
+            if (
+                controller.signal.aborted ||
+                activeSubmitController !== controller ||
+                props.projectId !== projectId ||
+                props.branchId !== branchId
+            ) {
+                return
+            }
+
+            if (error instanceof RevisionRequestError && error.status === 401) {
+                session.invalidate()
+
+                await router.replace({
+                    name: 'login',
+                    query: { redirect: route.fullPath },
+                })
+                return
+            }
+
+            if (error instanceof RevisionRequestError && error.status === 400) {
+                // The server explicitly rejected the request; a corrected
+                // draft can be submitted deliberately without duplicating it.
+                submissionError.value =
+                    'The revision details were not accepted. Review them and try again.'
+                return
+            }
+
+            // Keep confirmed conflicts and unavailable resources blocked.
+            // They require reviewing the current project or branch state.
+            submissionBlocked.value = true
+
+            if (error instanceof RevisionRequestError && error.status === 409) {
+                submissionError.value =
+                    'The branch head changed. Return to the project and review its latest revision.'
+                return
+            }
+
+            if (error instanceof RevisionRequestError && error.status === 403) {
+                submissionError.value =
+                    'The revision request was rejected. Return to the project before trying again.'
+                return
+            }
+
+            if (error instanceof RevisionRequestError && error.status === 404) {
+                submissionError.value =
+                    'The requested project, branch, or file is no longer available. Return to the project and review it.'
+                return
+            }
+
+            // Network loss, unexpected responses, and server errors do not
+            // establish that the revision was not committed. Never auto-retry.
+            submissionError.value =
+                'Revision creation could not be confirmed. Check the branch before trying again.'
+        } finally {
+            if (activeSubmitController === controller) {
+                activeSubmitController = null
+                submitting.value = false
+            }
+        }
+
+        // Keep success navigation separate from POST error handling.
+        if (confirmedCreated && props.projectId === projectId && props.branchId === branchId) {
+            await router.push({
+                name: 'project-overview',
+                params: { projectId },
+            })
+        }
+    }
+
     function toggleFile(fileId: string, event: Event): void {
-        if (state.value !== 'ready') {
+        if (state.value !== 'ready' || submitting.value || submissionBlocked.value) {
             return
         }
 
@@ -243,6 +396,8 @@
     onUnmounted(() => {
         activeController?.abort()
         activeController = null
+        activeSubmitController?.abort()
+        activeSubmitController = null
     })
 </script>
 
@@ -277,7 +432,11 @@
             <AppButton variant="secondary" @click="loadDraft"> Try again </AppButton>
         </div>
 
-        <div v-else-if="state === 'ready' && project && branch">
+        <form
+            v-else-if="state === 'ready' && project && branch"
+            novalidate
+            @submit.prevent="handleSubmit"
+        >
             <section class="create-revision__context" aria-labelledby="revision-context-heading">
                 <h3 id="revision-context-heading">Revision context</h3>
 
@@ -312,6 +471,7 @@
                     name="message"
                     placeholder="Describe what changed in this revision..."
                     :required="true"
+                    :disabled="submitting || submissionBlocked"
                     :error="messageError"
                     @update:model-value="updateRevisionMessage"
                 />
@@ -342,6 +502,7 @@
                                 type="checkbox"
                                 :value="file.id"
                                 :checked="selectedFileIds.has(file.id)"
+                                :disabled="submitting || submissionBlocked"
                                 @change="toggleFile(file.id, $event)"
                             />
                             <span>{{ file.originalFilename }}</span>
@@ -350,16 +511,22 @@
                 </ul>
             </section>
 
-            <p class="create-revision__notice">This is a draft. No revision has been created.</p>
+            <p class="create-revision__notice">
+                Creating a revision records the selected source files as an immutable snapshot.
+            </p>
+
+            <p v-if="submissionError" class="create-revision__submission-error" role="alert">
+                {{ submissionError }}
+            </p>
 
             <div class="create-revision__actions">
-                <p>Revision submission is not yet enabled.</p>
+                <p v-if="submitting" role="status">Creating revision...</p>
 
-                <AppButton disabled aria-label="Create revision unavailable">
-                    Create revision
+                <AppButton type="submit" :loading="submitting" :disabled="submissionBlocked">
+                    {{ submitting ? 'Creating revision...' : 'Create revision' }}
                 </AppButton>
             </div>
-        </div>
+        </form>
     </section>
 </template>
 
@@ -528,6 +695,12 @@
     .create-revision__actions p {
         margin: 0;
         color: var(--color-text-muted);
+        font-size: var(--font-size-sm);
+    }
+
+    .create-revision__submission-error {
+        margin-top: var(--space-4);
+        color: var(--color-danger);
         font-size: var(--font-size-sm);
     }
 
