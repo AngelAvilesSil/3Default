@@ -47,6 +47,13 @@ export function createAppRouter(history: RouterHistory): Router {
                 meta: { requiresAuth: true },
             },
             {
+                path: '/projects/:projectId/branches/:branchId/history',
+                name: 'project-branch-history',
+                component: () => import('../views/BranchHistoryView.vue'),
+                props: true,
+                meta: { requiresAuth: true },
+            },
+            {
                 path: '/projects/:projectId/branches/:branchId/revisions/new',
                 name: 'create-project-revision',
                 component: () => import('../views/CreateRevisionView.vue'),
