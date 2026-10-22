@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: authenticated project file upload and automatic on-demand 3D visualization, building on the existing project workspace, conversion pipeline, versioning, and authentication foundations**
+**Current phase: authenticated explicit revision creation with immutable source-file snapshots, building on project file upload, on-demand 3D visualization, and core versioning foundations**
 
 Implemented foundations include:
 
@@ -27,6 +27,10 @@ Implemented foundations include:
 * authenticated My Projects browser listing with loading, empty, retryable-error, and expired-session handling
 * linked, protected project overview at `/projects/:projectId`, with real project metadata, loading, unavailable, retryable-error, and expired-session states
 * read-only project branch summaries with nullable head-revision information, independent loading and retry, project-ID consistency checks, and cancellation of obsolete requests
+* typed frontend revision-creation, revision-detail, branch-history, and exact revision-file snapshot API clients
+* protected Create Revision workflow with current-head snapshot initialization, explicit file selection, and required message validation
+* guarded revision submission with optimistic branch-head concurrency, duplicate prevention, confirmed-rejection handling, and conservative uncertain-result safeguards
+* real-browser verification of initial and subsequent revisions, selected-file snapshots, parent ancestry, branch advancement, and preserved historical membership
 * protected Create Project form with required-name validation, optional description, duplicate-name feedback, cancellation, and return to My Projects
 * frontend project creation and listing integration tests, plus real-browser verification of persistence and duplicate-name handling
 * project overview navigation and lifecycle tests, branch-summary tests, and real-browser verification of project details, branch states, direct links, responsive overflow, and keyboard navigation
@@ -90,7 +94,7 @@ Implemented foundations include:
 
 The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The Vue application supports explicit source-file uploads and automatic on-demand GLB preparation when a supported file is selected in the inline workspace. Existing previews are reused, and completed conversions load into the Three.js viewer without another user action. The protected standalone preview route remains available for retrieving previously generated GLB outputs. PostgreSQL now protects project-file metadata, finalized revision-file membership, and committed revision metadata and ancestry against direct historical rewrites. Comprehensive revision-graph cycle validation, additional native CAD conversion formats, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
 
-**Current browser UI scope:** The shared landing page at `/` serves visitors and authenticated users, with session-aware navigation. Authenticated users can view My Projects, create projects, open a protected project overview, inspect read-only branch/head-revision summaries, and browse the project's uploaded files. The project overview provides an Add file action leading to an explicit source-file upload page. Selecting a supported file opens its existing GLB preview or automatically initiates preparation if no preview or conversion job exists. Users can switch files or close the preview without leaving the overview. The existing protected direct preview route remains available. Browser registration, source-file downloading and richer file management, project metadata editing, interactive branch switching, historical revision navigation and comparison, merge/conflict-resolution workflows, and public project discovery remain future work. The backend offers file, revision, and conversion APIs beyond the current browser UI.
+**Current browser UI scope:** The shared landing page at `/` serves visitors and authenticated users, with session-aware navigation. Authenticated users can view My Projects, create projects, open a protected project overview, inspect branch/head-revision summaries, create revisions on a chosen branch, and browse the project's uploaded files. The project overview provides an Add file action leading to an explicit source-file upload page and a Create revision action on each branch. Selecting a supported file opens its existing GLB preview or automatically initiates preparation if no preview or conversion job exists. Users can switch files or close the preview without leaving the overview. The existing protected direct preview route remains available. Browser registration, source-file downloading and richer file management, project metadata editing, interactive branch switching, historical revision navigation and comparison, merge/conflict-resolution workflows, and public project discovery remain future work. The backend offers file, revision, and conversion APIs beyond the current browser UI.
 
 ---
 
@@ -313,6 +317,7 @@ Vue Router provides the following browser routes:
 | `/projects` | Authenticated | My Projects listing with empty, loading, and error/retry states |
 | `/projects/new` | Authenticated | Create Project form with name validation and optional description |
 | `/projects/:projectId` | Authenticated | Project metadata, read-only branch summaries, file directory, and automatic on-demand inline GLB preview |
+| `/projects/:projectId/branches/:branchId/revisions/new` | Authenticated | Explicit Create Revision form for a selected branch and exact file snapshot |
 | `/projects/:projectId/files/upload` | Authenticated | Explicit source-file selection and sequential upload workflow |
 | `/session-unavailable` | Public | Recoverable session-verification error and retry action |
 | `/projects/:projectId/files/:projectFileId/preview` | Authenticated | Existing lazy-loaded Three.js preview |
@@ -323,7 +328,7 @@ After successful login, the application returns to the requested destination onl
 
 The UI foundation includes centralized CSS tokens, reusable `AppButton`, `AppTextField`, and `AppTextArea` components, and shared text-control styling in `web/src/styles/form-fields.css`. `LoginForm` handles invalid credentials, request throttling, general failures, and in-progress submissions. A successful login updates Pinia session state and navigates through the login view. The shared `SiteHeader` displays My Projects and the authenticated user's display name, and provides the common Sign out action across application pages. Successful logout revokes the server session, clears authenticated browser state, and returns to `/`. A failed logout retains the existing authenticated state and displays retryable feedback.
 
-Registration remains available through `POST /api/auth/register`, but a browser registration form has not yet been implemented. The shared landing page remains public, `/projects` provides the authenticated project listing, and `/projects/new` provides project creation. The project overview includes authenticated file browsing, Add file navigation, and automatic on-demand inline preview preparation. The protected upload page provides explicit source-file upload without creating revisions. Browser source-file downloading, richer file management, interactive branch and revision navigation, and project metadata editing remain future work.
+Registration remains available through `POST /api/auth/register`, but a browser registration form has not yet been implemented. The shared landing page remains public, `/projects` provides the authenticated project listing, and `/projects/new` provides project creation. The project overview includes authenticated file browsing, Add file navigation, Create revision actions for listed branches, and automatic on-demand inline preview preparation. The protected upload page persists source files without creating revisions; the separate Create Revision form records an explicitly selected snapshot. Browser source-file downloading, richer file management, interactive branch switching, historical revision navigation, and project metadata editing remain future work.
 
 Frontend navigation guards are a user-experience boundary, not a substitute for API authorization. The Go backend continues to enforce session validity and owner-scoped access to project resources.
 
@@ -341,7 +346,7 @@ The Vue creation form trims the submitted name and optional description. An empt
 
 The My Projects listing now links each project name to `/projects/:projectId`. This protected route retrieves project metadata through `GET /api/projects/{projectId}` and displays the name and optional description. It provides loading, unavailable, request-error, retry, and expired-session handling while preserving the requested project URL when login is required.
 
-After project metadata loads, the overview independently requests `GET /api/projects/{projectId}/branches`. The browser displays the branches returned by the backend in their response order. A `null` `headRevisionId` is shown as **No revisions yet**; a populated head is displayed as a revision identifier without inventing revision metadata. Empty branch collections are supported, and branch errors can be retried without reloading project metadata. Changing projects or leaving the view cancels obsolete requests, and returned branch project IDs are checked before display. This is informational branch browsing only: there is no interactive branch selection or historical file-snapshot view yet.
+After project metadata loads, the overview independently requests `GET /api/projects/{projectId}/branches`. The browser displays the branches returned by the backend in their response order. A `null` `headRevisionId` is shown as **No revisions yet**; a populated head is displayed as a revision identifier without inventing revision metadata. Empty branch collections are supported, and branch errors can be retried without reloading project metadata. Changing projects or leaving the view cancels obsolete requests, and returned branch project IDs are checked before display. The branch list does not yet support interactive branch switching or historical snapshot browsing, but each branch row offers a Create revision action for that branch.
 
 ```text
 POST /api/projects
@@ -459,6 +464,10 @@ The branch head is advanced only if it still matches the caller's expected value
 `mergeParentRevisionId` is optional. When omitted or `null`, the revision has only its primary parent. When supplied, it records the second parent of a merge revision.
 
 The authenticated project owner is currently also recorded as the revision author. Project ownership is resolved from the server-side session rather than accepted from the request.
+
+The protected browser route `/projects/:projectId/branches/:branchId/revisions/new` loads the selected project, branch, and project-file directory. If the branch has a head revision, its exact file snapshot initializes the selection; newly uploaded files are not implicitly included. An empty branch begins with an empty selection. The user enters a required revision message and deliberately selects the complete file membership for the new revision. The frontend sends the trimmed message, selected `projectFileIds`, and observed `expectedHeadRevisionId` through the typed revision API client. A confirmed successful creation returns to the project overview, which reloads the branch head.
+
+Submission is protected against duplicate requests. HTTP `400` permits deliberate correction and resubmission; HTTP `401` invalidates the frontend session and returns to login with the protected destination preserved. Confirmed `403`, `404`, and `409` responses prevent resubmission from the stale draft and direct the user to review project or branch state. Network errors, HTTP `5xx`, malformed success responses, and inconsistent returned ancestry do not establish that the server failed to commit the revision, so the current draft does not offer an automatic retry. Route changes and unmounting abort obsolete browser requests and ignore late responses, but aborting a POST does not guarantee cancellation of a server-side transaction. Automatic reconciliation of uncertain writes is not yet implemented.
 
 Implemented versioning endpoints are:
 
@@ -790,12 +799,13 @@ The current browser entry points are:
 * `http://localhost:5173/projects/new` for creating a project.
 * `http://localhost:5173/projects/<projectId>` for the authenticated project overview, branch summaries, file directory, and inline visualization.
 * `http://localhost:5173/projects/<projectId>/files/upload` for explicit source-file uploads.
+* `http://localhost:5173/projects/<projectId>/branches/<branchId>/revisions/new` for creating an explicit revision on a chosen branch.
 
 The browser currently provides login and logout but not a registration form. On a new local database, create a development account through `POST /api/auth/register` using the API contract's `email`, `displayName`, and `password` fields, then sign in through `/login`. Registration does not automatically establish a session. Do not commit development credentials or session-cookie values to the repository.
 
 Ordinary sign-in returns to `/`, where the shared header provides a My Projects link. Open `/projects` to see your projects or navigate to `/projects/new` to create one. A new project starts private and has an empty `main` branch. The creation form requires a project name and accepts an optional description. After a successful submission, the browser returns to My Projects. Duplicate names within the same account, including differently capitalized names, are rejected.
 
-From My Projects, select a project name to open its overview. A newly created project's `main` branch initially has no head revision and appears as **No revisions yet**. Existing branch heads display their revision identifiers. The overview also lists uploaded project files. Selecting a supported file opens its existing GLB preview or automatically prepares one by creating or following a conversion job. The interface displays preparation status and opens the resulting model without another click. Unsupported formats and failed conversions show explanatory feedback. Users can switch files or close the preview without leaving the project overview. Branch switching and revision comparison remain future work. The separate authenticated GLB preview route continues to work independently.
+From My Projects, select a project name to open its overview. A newly created project's `main` branch initially has no head revision and appears as **No revisions yet**. Existing branch heads display their revision identifiers. Each listed branch offers Create revision: an empty branch starts with no selected files, while a populated branch initializes the selection from its head revision. The form records only the files explicitly selected by the user and returns to the project overview after a confirmed successful creation. The overview also lists uploaded project files. Selecting a supported file opens its existing GLB preview or automatically prepares one by creating or following a conversion job. The interface displays preparation status and opens the resulting model without another click. Unsupported formats and failed conversions show explanatory feedback. Users can switch files or close the preview without leaving the project overview. Branch switching and revision comparison remain future work. The separate authenticated GLB preview route continues to work independently.
 
 In this Docker development setup, Vite serves the Vue source, while the API service launches the Go application with `go run`. When Go source changes, restart the `api` service so the running process compiles and loads those changes. If the browser unexpectedly continues showing an older Vue template, restarting `web` can refresh the development server. These restarts do not delete the named PostgreSQL or storage volumes.
 
@@ -899,6 +909,8 @@ The direct preview route and the inline project-file preview are loaded on deman
 
 Frontend Vitest coverage includes typed authentication and project APIs (including project detail and branch listing), Pinia session lifecycle, reusable UI primitives, login-form behavior, My Projects loading/error/retry behavior, Create Project validation and error handling, protected navigation, safe return-path handling, login-view behavior, shared-header logout integration, nonblocking public-session restoration, legacy `/app` compatibility, and session-verification retry behavior. Project overview tests verify metadata loading, unavailable projects, expired sessions, retry, and stale-request cancellation. Separate branch-summary tests cover empty and populated heads, multiple branches, loading, independent retry, inconsistent project IDs, unauthorized responses, and switching projects while branch requests remain pending. A real-router integration test verifies navigation from an empty listing through project creation and back to a refreshed listing. Existing GLB preview and Three.js component tests remain part of the same suite. Additional coverage verifies upload selection, sequential upload and recovery, conversion-job API contracts, automatic preview preparation, active-job reuse, polling, completion, authentication, conflict reconciliation, and cancellation.
 
+At the Frontend Explicit Revisions milestone checkpoint, the frontend suite passed **450 tests across 37 test files**. TypeScript checking, production build, targeted Prettier, scoped Oxlint and ESLint, and Git whitespace verification passed. Revision tests cover typed API contracts, protected navigation, draft initialization, explicit file membership, successful submission, expected branch-head conflicts, confirmed HTTP rejections, duplicate prevention, uncertain POST results, and cancellation. The production build continued to report a nonblocking size advisory for its on-demand Three.js chunk. These results are scoped to the milestone and do not claim a clean repository-wide Oxlint run.
+
 At the Frontend File Upload and Conversion milestone checkpoint, the complete frontend suite passed **363 tests across 34 test files**. TypeScript checking, production build, scoped Prettier, Oxlint, ESLint, and whitespace verification passed. Automatic preview preparation passed real-browser acceptance for GLB and STEP files, including model rendering, orbit/pan/zoom, switching files, close/reopen reuse, and no additional visualization button. The on-demand Three.js build chunk continues to produce a non-blocking size advisory. These results do not establish support for other CAD formats or faithful preservation of STEP source colors.
 
 At the Project File Workspace milestone checkpoint, the complete frontend suite passed **266 tests across 26 test files**, with successful TypeScript checking, production build, Prettier verification, and scoped Oxlint/ESLint checks. File workspace coverage includes selection, switching, accessible pressed state, closing/reopening without redundant API requests, and resetting selection when navigating to another project. Three.js tests cover camera-attached inspection lights, camera-relative studio lighting, and environment-resource cleanup. The production build reports an advisory for the on-demand Three.js chunk size.
@@ -971,6 +983,18 @@ For manual File Upload and Automatic Preview acceptance:
 
 All seven corresponding browser acceptance checks passed during this milestone, including STEP-to-GLB conversion through the configured Mayo worker. The tested STEP model preserved its recognizable mechanical geometry, while its light-gray appearance was not treated as proof of original CAD color fidelity.
 
+For manual Explicit Revision Creation acceptance:
+
+1. Create an isolated project and confirm its initial `main` branch has no revision head.
+2. Open Create revision, verify the empty snapshot, and create a first revision with a required message and no selected files.
+3. Confirm navigation to Project Overview, then refresh and verify the newly persisted branch-head UUID.
+4. Independently read the branch, revision metadata, and revision-file snapshot endpoints; verify a null parent and an empty file list.
+5. Upload a source file to the same project without creating a revision; reopen Create revision and confirm that the new file is not automatically selected.
+6. Select that file explicitly, create a second revision, and verify the new branch head and parent reference to the first revision.
+7. Read the second revision's exact file snapshot and confirm that it contains only the selected file; read the first snapshot again and confirm it remains empty.
+
+These browser checks passed using a disposable development project and a STEP source file. Backend GET responses confirmed both persisted revision records, parent-child ancestry, branch-head advancement, the explicitly selected second snapshot, and unchanged first-revision membership. This verifies the tested workflows, not automatic CAD merging, historical comparison, or network-failure reconciliation.
+
 Run PostgreSQL integration tests:
 
 ```bash
@@ -1017,6 +1041,7 @@ milestone/frontend-project-workspace
 milestone/frontend-unified-navigation
 milestone/frontend-project-file-workspace
 milestone/frontend-file-upload-conversion
+milestone/frontend-explicit-revisions
 ```
 
 Within each milestone, work remains divided into small logical commits. Implementation commits are followed by a separate README/documentation audit and documentation commit when updates are needed. Completed milestones are merged into `main` through pull requests using **Rebase and merge**, preserving linear history.
@@ -1040,6 +1065,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * **Frontend session state is not the session credential.** The browser stores user-facing authentication state in Pinia while the opaque credential stays in an HttpOnly, server-managed cookie.
 * **Navigation is not authorization.** Protected routes provide correct browser flow, while backend session validation and owner-scoped API checks enforce access to engineering data.
 * **Branch pointers are not immutable revisions.** A branch identifies its current head; historical file membership belongs to exact revisions. The browser must not imply file-level history or changes that its data cannot establish.
+* **Unconfirmed writes must not be retried blindly.** A lost revision-creation response or canceled request may still have committed on the server; preserve immutable history and require reconciliation before another POST.
 * **Project and branch loading remain independently recoverable.** An unavailable branch list should not erase valid project metadata, and obsolete requests must not overwrite a newly selected project's state.
 * **Browser responsibilities stay separated.** HTTP loading and UI state belong to the preview coordinator, while WebGL parsing, camera control, rendering, and GPU-resource cleanup belong to the Three.js canvas component.
 * **Heavy browser features load only when needed.** Both the direct preview route and inline project-file preview defer Three.js loading until visualization is requested.
@@ -1116,6 +1142,10 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] automatic `main` branch creation
 * [x] atomic revision creation with optimistic branch-head updates
 * [x] authenticated branch/revision reads and revision-creation API
+* [x] typed frontend revision API client and protected Create Revision route
+* [x] explicit current-head file-snapshot selection and validated revision message
+* [x] guarded revision creation with concurrency, error, and uncertain-outcome handling
+* [x] real-browser first- and second-revision persistence and historical snapshot verification
 * [x] authenticated branch creation API
 * [x] authenticated branch rename API
 * [x] authenticated branch deletion API
