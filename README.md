@@ -116,6 +116,26 @@ The intended model includes explicit revision history, branches for parallel wor
 
 The CAD application remains responsible for editing the design itself.
 
+### Engineering Version-Control Concepts
+
+3Default borrows concepts from Git to preserve the evolution of engineering projects.
+
+- **Project (repository):** A collection of authoritative CAD source files, branches, and revision history.
+- **Project file:** An immutable uploaded source file. Uploading a modified design produces a new file record rather than overwriting a historical source.
+- **Revision (commit):** An immutable, explicitly created project snapshot containing a message, author, timestamp, ancestry, and the exact set of selected project-file references. A revision is not a branch.
+- **Branch (design direction):** A named, movable pointer to a revision head. Branches can share an ancestor and evolve independently, such as `main`, `lightweight`, or `reinforced`. A branch is not itself a CAD configuration or a saved version.
+- **Version:** A broader CAD/PDM term often used for a saved design state. In 3Default, the technical name for an immutable committed snapshot is **revision**. Version is not a separate database entity or an alternative name for branch.
+
+For example, two branches may share an initial bracket design and its mounting-hole revision, then continue independently toward lighter and reinforced designs. Each subsequent revision retains its actual parent references and exact source-file membership.
+
+**Long-term product objective:** Help engineers understand **what changed, where in the design it changed, and which revisions introduced or contain those changes**. Deliver this progressively: first, make revision ancestry and exact project-file snapshots inspectable; later, compare project-file references across snapshots; eventually, identify and localize geometric differences when reliable technical evidence permits. The current revision model does not record CAD feature edits or geometric differences, and the interface must not suggest that it does.
+
+**Engineering terminology:** Some PDM systems distinguish routine file versions from formally approved engineering revisions such as Rev A or Rev B. A 3Default revision currently means an explicit immutable snapshot, not a formally approved manufacturing release. Release numbering, approval states, and controlled engineering change workflows are separate future concerns.
+
+**History and restoration:** Each revision preserves its exact project-file membership rather than a geometric change set. Restoring an earlier design state should create a new revision referencing that earlier snapshot's files, preserving intervening history instead of rewriting or deleting it.
+
+This section defines the intended product semantics. Browser history inspection, restoration, geometric comparison, and user-facing merging remain separate implementation milestones.
+
 ---
 
 ## Architecture
