@@ -268,6 +268,20 @@
                             </dd>
                         </div>
                     </dl>
+
+                    <RouterLink
+                        class="branch-history__inspect"
+                        :to="{
+                            name: 'project-revision-detail',
+                            params: {
+                                projectId: props.projectId,
+                                revisionId: revision.id,
+                            },
+                            query: { fromBranchId: props.branchId },
+                        }"
+                    >
+                        Inspect revision
+                    </RouterLink>
                 </li>
             </ul>
         </div>
@@ -345,6 +359,17 @@
     .branch-history__head {
         color: var(--color-text-muted);
         font-size: var(--font-size-sm);
+    }
+
+    .branch-history__inspect {
+        display: inline-block;
+        margin-top: var(--space-3);
+        color: var(--color-action);
+    }
+
+    .branch-history__inspect:focus-visible {
+        outline: 3px solid var(--color-focus-ring);
+        outline-offset: 2px;
     }
 
     .branch-history__metadata {

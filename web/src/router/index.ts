@@ -61,6 +61,13 @@ export function createAppRouter(history: RouterHistory): Router {
                 meta: { requiresAuth: true },
             },
             {
+                path: '/projects/:projectId/revisions/:revisionId',
+                name: 'project-revision-detail',
+                component: () => import('../views/RevisionDetailView.vue'),
+                props: true,
+                meta: { requiresAuth: true },
+            },
+            {
                 path: '/session-unavailable',
                 name: 'session-unavailable',
                 component: () => import('../views/SessionUnavailableView.vue'),
