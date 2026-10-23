@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: authenticated explicit revision creation with immutable source-file snapshots, building on project file upload, on-demand 3D visualization, and core versioning foundations**
+**Current phase: read-only branch history and exact historical revision inspection, building on explicit revision creation, immutable source-file snapshots, project uploads, and on-demand 3D visualization**
 
 Implemented foundations include:
 
@@ -28,6 +28,9 @@ Implemented foundations include:
 * linked, protected project overview at `/projects/:projectId`, with real project metadata, loading, unavailable, retryable-error, and expired-session states
 * read-only project branch summaries with nullable head-revision information, independent loading and retry, project-ID consistency checks, and cancellation of obsolete requests
 * typed frontend revision-creation, revision-detail, branch-history, and exact revision-file snapshot API clients
+* protected, read-only branch-history navigation from the project overview, with head-at-load context, parent and merge-parent references, unavailable/retry states, and stale-request cancellation
+* protected, project-scoped revision-detail inspection with immutable historical metadata and exact selected source-file records, including empty snapshots
+* history-to-revision navigation with optional branch-return context, protected deep-link restoration after login, and no implied exclusive branch ownership of revisions
 * protected Create Revision workflow with current-head snapshot initialization, explicit file selection, and required message validation
 * guarded revision submission with optimistic branch-head concurrency, duplicate prevention, confirmed-rejection handling, and conservative uncertain-result safeguards
 * real-browser verification of initial and subsequent revisions, selected-file snapshots, parent ancestry, branch advancement, and preserved historical membership
@@ -929,6 +932,8 @@ The direct preview route and the inline project-file preview are loaded on deman
 
 Frontend Vitest coverage includes typed authentication and project APIs (including project detail and branch listing), Pinia session lifecycle, reusable UI primitives, login-form behavior, My Projects loading/error/retry behavior, Create Project validation and error handling, protected navigation, safe return-path handling, login-view behavior, shared-header logout integration, nonblocking public-session restoration, legacy `/app` compatibility, and session-verification retry behavior. Project overview tests verify metadata loading, unavailable projects, expired sessions, retry, and stale-request cancellation. Separate branch-summary tests cover empty and populated heads, multiple branches, loading, independent retry, inconsistent project IDs, unauthorized responses, and switching projects while branch requests remain pending. A real-router integration test verifies navigation from an empty listing through project creation and back to a refreshed listing. Existing GLB preview and Three.js component tests remain part of the same suite. Additional coverage verifies upload selection, sequential upload and recovery, conversion-job API contracts, automatic preview preparation, active-job reuse, polling, completion, authentication, conflict reconciliation, and cancellation.
 
+At the Frontend Revision History and Inspection implementation checkpoint, the complete frontend suite passed **485 tests across 39 test files**, including 16 branch-history tests and 19 revision-detail tests. TypeScript checking, the production build, targeted Prettier checks, scoped Oxlint and ESLint, and Git whitespace verification passed. The new tests cover protected routes, historical revision identities, parent and merge-parent metadata, exact file-snapshot membership, empty snapshots, navigation, expired sessions, unavailable resources, retries, and stale-request cancellation. The existing on-demand Three.js chunk continued to produce a nonblocking build-size advisory. Scoped lint results do not establish a clean repository-wide Oxlint run.
+
 At the Frontend Explicit Revisions milestone checkpoint, the frontend suite passed **450 tests across 37 test files**. TypeScript checking, production build, targeted Prettier, scoped Oxlint and ESLint, and Git whitespace verification passed. Revision tests cover typed API contracts, protected navigation, draft initialization, explicit file membership, successful submission, expected branch-head conflicts, confirmed HTTP rejections, duplicate prevention, uncertain POST results, and cancellation. The production build continued to report a nonblocking size advisory for its on-demand Three.js chunk. These results are scoped to the milestone and do not claim a clean repository-wide Oxlint run.
 
 At the Frontend File Upload and Conversion milestone checkpoint, the complete frontend suite passed **363 tests across 34 test files**. TypeScript checking, production build, scoped Prettier, Oxlint, ESLint, and whitespace verification passed. Automatic preview preparation passed real-browser acceptance for GLB and STEP files, including model rendering, orbit/pan/zoom, switching files, close/reopen reuse, and no additional visualization button. The on-demand Three.js build chunk continues to produce a non-blocking size advisory. These results do not establish support for other CAD formats or faithful preservation of STEP source colors.
@@ -1014,6 +1019,17 @@ For manual Explicit Revision Creation acceptance:
 7. Read the second revision's exact file snapshot and confirm that it contains only the selected file; read the first snapshot again and confirm it remains empty.
 
 These browser checks passed using a disposable development project and a STEP source file. Backend GET responses confirmed both persisted revision records, parent-child ancestry, branch-head advancement, the explicitly selected second snapshot, and unchanged first-revision membership. This verifies the tested workflows, not automatic CAD merging, historical comparison, or network-failure reconciliation.
+
+For manual Branch History and Revision Detail acceptance:
+
+1. Sign in and open a project with persisted revisions, then use **View history** on its branch.
+2. Verify the branch name, observed head revision, newest-first listing, and parent/merge-parent references without interpreting list order as a single ancestry path.
+3. Open **Inspect revision** for an empty root snapshot and for a later revision with selected source files. Confirm historical file membership is not replaced by the entire project upload directory.
+4. Refresh both revision-detail URLs and branch history directly, and compare rendered revision/file identities against authenticated backend GET responses.
+5. Verify the return-to-history link, signed-out protected deep-link login and restoration, and the unavailable state for a nonexistent revision.
+6. Review responsive presentation and browser-console behavior without interpreting this as CAD geometry comparison or historical preview validation.
+
+The October 22, 2026 browser acceptance used development project `QA-R3-20261020-01` on `main`. Revision `18559442-5e9e-42fb-a86a-a7a89076b9ad` remained an empty root snapshot, while its child and observed branch head `29c1eedb-ac95-4a8a-ae4d-6ef0c230f998` contained exactly one source-file record, `major 3 repair.STEP` (file ID `62052e61-74c4-46fb-b741-69bdd3e3558f`). The backend returned the empty array and corresponding single-file array, and the displayed file identity and SHA-256 matched the API response. Direct refresh, protected login return, and inaccessible-revision handling passed; visual checks were acceptable and no unexpected application-console errors were reported. This acceptance covers read-only historical metadata and source-file membership, not merge operations, file-level diffs, CAD geometry comparisons, or rendering a historical snapshot.
 
 Run PostgreSQL integration tests:
 
@@ -1170,7 +1186,10 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] authenticated branch rename API
 * [x] authenticated branch deletion API
 * [ ] broader branch management
-* [ ] interactive browser branch switching and revision-history navigation
+* [x] browser branch-history navigation from the project overview with observed head and ancestry metadata
+* [x] protected, project-scoped revision-detail inspection with exact historical file membership
+* [x] real-browser revision-history and historical snapshot inspection acceptance
+* [ ] interactive browser branch switching
 * [x] branch-head DAG traversal and history API
 * [x] immutable project-file metadata and content-reference update protection
 * [x] transactionally finalized, immutable revision-file snapshots
