@@ -149,6 +149,11 @@ export type ProjectBranch = {
     updatedAt: string
 }
 
+export type CreateProjectBranchInput = {
+    name: string
+    headRevisionId: string | null
+}
+
 function isProjectBranch(value: unknown): value is ProjectBranch {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         return false
@@ -234,4 +239,54 @@ export async function listProjectBranches(
     }
 
     return readProjectBranches(response)
+}
+
+export async function createProjectBranch(
+    projectId: string,
+    input: CreateProjectBranchInput,
+    signal?: AbortSignal,
+): Promise<ProjectBranch> {
+    const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/branches`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            name: input.name,
+            headRevisionId: input.headRevisionId,
+        }),
+        signal,
+    })
+
+    if (!response.ok) {
+        throw new ProjectRequestError(response.status, response.statusText)
+    }
+
+    if (response.status !== 201) {
+        throw new ProjectResponseError(
+            `Unexpected branch creation response status: ${response.status}`,
+        )
+    }
+
+    let body: unknown
+
+    try {
+        body = await response.json()
+    } catch {
+        throw new ProjectResponseError('Branch creation response did not contain valid JSON')
+    }
+
+    if (
+        !isProjectBranch(body) ||
+        body.projectId !== projectId ||
+        body.headRevisionId !== input.headRevisionId
+    ) {
+        throw new ProjectResponseError(
+            'Branch creation response did not contain the expected branch',
+        )
+    }
+
+    return body
 }
