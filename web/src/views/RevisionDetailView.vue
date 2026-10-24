@@ -255,6 +255,20 @@
                 </dl>
             </section>
 
+            <RouterLink
+                class="revision-detail__create-branch"
+                :to="{
+                    name: 'create-project-branch',
+                    params: {
+                        projectId: props.projectId,
+                        revisionId: revision.id,
+                    },
+                    query: sourceBranchId === null ? {} : { fromBranchId: sourceBranchId },
+                }"
+            >
+                Create branch from this revision
+            </RouterLink>
+
             <section class="revision-detail__section" aria-labelledby="revision-files-heading">
                 <h3 id="revision-files-heading">Files in this revision ({{ files.length }})</h3>
 
@@ -310,6 +324,30 @@
 
     .revision-detail__back {
         color: var(--color-action);
+    }
+
+    .revision-detail__create-branch {
+        display: inline-flex;
+        align-items: center;
+        min-height: 2.5rem;
+        margin-top: var(--space-4);
+        padding: var(--space-2) var(--space-4);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm);
+        background: var(--color-surface);
+        color: var(--color-text);
+        font-size: var(--font-size-sm);
+        font-weight: var(--font-weight-semibold);
+        text-decoration: none;
+    }
+
+    .revision-detail__create-branch:hover {
+        background: var(--color-page);
+    }
+
+    .revision-detail__create-branch:focus-visible {
+        outline: 3px solid var(--color-focus-ring);
+        outline-offset: 2px;
     }
 
     .revision-detail__back:focus-visible {
