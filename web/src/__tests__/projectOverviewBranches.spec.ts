@@ -161,7 +161,19 @@ describe('project overview branch summaries', () => {
 
         expect(branches[1]!.text()).toContain('gripper-redesign')
         expect(branches[1]!.text()).toContain('Head revision')
-        expect(branches[1]!.text()).toContain('55555555')
+
+        const shortId = branches[1]!.get('.revision-id__short')
+
+        expect(shortId.text()).toBe('55555555')
+        expect(shortId.attributes('title')).toBe(featureBranch.headRevisionId)
+        expect(branches[1]!.text()).not.toContain(featureBranch.headRevisionId)
+        expect(
+            branches[1]!
+                .get('button[aria-label="Copy full branch head revision ID 55555555"]')
+                .attributes('type'),
+        ).toBe('button')
+
+        expect(branches[0]!.find('.revision-id').exists()).toBe(false)
 
         wrapper.unmount()
     })

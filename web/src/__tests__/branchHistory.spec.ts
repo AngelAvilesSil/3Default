@@ -242,10 +242,30 @@ describe('read-only branch history', () => {
 
         const items = wrapper.findAll('.branch-history__item')
         expect(items[0]?.text()).toContain(head.message)
-        expect(items[0]?.text()).toContain(rootId)
         expect(items[0]?.text()).toContain('Head at load')
         expect(items[1]?.text()).toContain(root.message)
         expect(items[1]?.text()).toContain('None (root revision)')
+
+        const headDisplay = wrapper.get('.branch-history__context .revision-id__short')
+        expect(headDisplay.text()).toBe(headId.slice(0, 8))
+        expect(headDisplay.attributes('title')).toBe(headId)
+
+        const firstRevisionIds = items[0]!.findAll('.revision-id__short')
+        expect(firstRevisionIds.map((node) => node.text())).toEqual([
+            headId.slice(0, 8),
+            rootId.slice(0, 8),
+        ])
+        expect(firstRevisionIds.map((node) => node.attributes('title'))).toEqual([headId, rootId])
+
+        expect(items[0]?.text()).not.toContain(rootId)
+        expect(wrapper.text()).not.toContain(headId)
+        expect(items[1]?.findAll('.revision-id')).toHaveLength(1)
+
+        const inspectLink = items[0]!.get('a.branch-history__inspect')
+        expect(inspectLink.attributes('href')).toContain(
+            `/projects/${projectId}/revisions/${headId}`,
+        )
+        expect(inspectLink.attributes('href')).toContain(`fromBranchId=${branchId}`)
 
         expect(wrapper.text()).toContain('Head when loaded')
         expect(wrapper.text()).toContain(project.name)
@@ -266,6 +286,7 @@ describe('read-only branch history', () => {
         })
 
         expect(wrapper.findAll('.branch-history__item')).toHaveLength(0)
+        expect(wrapper.find('.revision-id').exists()).toBe(false)
 
         wrapper.unmount()
     })
@@ -292,9 +313,28 @@ describe('read-only branch history', () => {
 
         const first = wrapper.findAll('.branch-history__item')[0]
         expect(first?.text()).toContain('Integrate reinforced design')
-        expect(first?.text()).toContain(headId)
-        expect(first?.text()).toContain(rootId)
         expect(first?.text()).toContain('Merge parent')
+
+        const mergeRevisionIds = first!.findAll('.revision-id__short')
+        expect(mergeRevisionIds.map((node) => node.text())).toEqual([
+            mergeId.slice(0, 8),
+            headId.slice(0, 8),
+            rootId.slice(0, 8),
+        ])
+        expect(mergeRevisionIds.map((node) => node.attributes('title'))).toEqual([
+            mergeId,
+            headId,
+            rootId,
+        ])
+
+        expect(first?.text()).not.toContain(headId)
+        expect(first?.text()).not.toContain(rootId)
+        expect(
+            first!
+                .get('button[aria-label="Copy full merge parent revision ID 33333333"]')
+                .attributes('type'),
+        ).toBe('button')
+
         expect(wrapper.text()).toContain('not necessarily a single development path')
 
         wrapper.unmount()

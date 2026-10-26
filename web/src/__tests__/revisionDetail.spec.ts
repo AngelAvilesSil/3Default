@@ -259,7 +259,21 @@ describe('read-only revision and file snapshot', () => {
 
         expect(wrapper.text()).toContain(project.name)
         expect(wrapper.text()).toContain(revision.message)
-        expect(wrapper.text()).toContain(revision.id)
+        const shortId = wrapper.get('.revision-detail__metadata .revision-id__short')
+
+        expect(shortId.text()).toBe(revision.id.slice(0, 8))
+        expect(shortId.attributes('title')).toBe(revision.id)
+        expect(wrapper.text()).not.toContain(revision.id)
+        expect(
+            wrapper.get('button[aria-label="Copy full revision ID 33333333"]').attributes('type'),
+        ).toBe('button')
+
+        const createBranchLink = wrapper.get('a.revision-detail__create-branch')
+        expect(createBranchLink.attributes('href')).toContain(
+            `/projects/${projectId}/revisions/${revisionId}/branches/new`,
+        )
+        expect(createBranchLink.attributes('href')).toContain(`fromBranchId=${branchId}`)
+
         expect(wrapper.text()).toContain(revision.authorUserId)
         expect(wrapper.text()).toContain('Files in this revision (2)')
         expect(wrapper.text()).toContain(sourceFile.originalFilename)
@@ -312,8 +326,27 @@ describe('read-only revision and file snapshot', () => {
             expect(wrapper.text()).toContain('Merge parent')
         })
 
-        expect(wrapper.text()).toContain(parentId)
-        expect(wrapper.text()).toContain(mergeParentId)
+        const revisionIds = wrapper.findAll('.revision-detail__section .revision-id__short')
+
+        expect(revisionIds.map((node) => node.text())).toEqual([
+            revisionId.slice(0, 8),
+            parentId.slice(0, 8),
+            mergeParentId.slice(0, 8),
+        ])
+        expect(revisionIds.map((node) => node.attributes('title'))).toEqual([
+            revisionId,
+            parentId,
+            mergeParentId,
+        ])
+
+        expect(wrapper.text()).not.toContain(parentId)
+        expect(wrapper.text()).not.toContain(mergeParentId)
+        expect(
+            wrapper
+                .get('button[aria-label="Copy full merge parent revision ID 55555555"]')
+                .attributes('type'),
+        ).toBe('button')
+
         expect(wrapper.get('time').attributes('datetime')).toBe(revision.createdAt)
 
         wrapper.unmount()
@@ -332,6 +365,7 @@ describe('read-only revision and file snapshot', () => {
         })
 
         expect(wrapper.text()).not.toContain('Merge parent')
+        expect(wrapper.findAll('.revision-id')).toHaveLength(1)
 
         wrapper.unmount()
     })
