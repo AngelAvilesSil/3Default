@@ -15,6 +15,7 @@
     } from '../api/revisions'
     import AppButton from '../components/ui/AppButton.vue'
     import AppTextField from '../components/ui/AppTextField.vue'
+    import RevisionId from '../components/ui/RevisionId.vue'
     import { useSessionStore } from '../stores/session'
 
     const props = defineProps<{
@@ -364,7 +365,7 @@
                         <dt>Revision</dt>
                         <dd>
                             <strong>{{ revision.message }}</strong>
-                            <code>{{ revision.id.slice(0, 8) }}</code>
+                            <RevisionId :id="revision.id" label="starting revision" />
                         </dd>
                     </div>
                     <div>
@@ -376,11 +377,6 @@
                         </dd>
                     </div>
                 </dl>
-
-                <details class="create-branch__technical">
-                    <summary>Full revision ID</summary>
-                    <code>{{ revision.id }}</code>
-                </details>
             </section>
 
             <section class="create-branch__panel" aria-labelledby="branch-name-heading">
@@ -495,26 +491,6 @@
         gap: var(--space-2);
         margin: 0;
         overflow-wrap: anywhere;
-    }
-
-    .create-branch__metadata code,
-    .create-branch__technical code {
-        font-family: var(--font-family-mono);
-        overflow-wrap: anywhere;
-    }
-
-    .create-branch__technical {
-        margin-top: var(--space-4);
-    }
-
-    .create-branch__technical summary {
-        cursor: pointer;
-        color: var(--color-action);
-    }
-
-    .create-branch__technical code {
-        display: block;
-        margin-top: var(--space-2);
     }
 
     .create-branch__error,

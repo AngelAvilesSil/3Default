@@ -15,6 +15,7 @@
         type ProjectRevision,
     } from '../api/revisions'
     import AppButton from '../components/ui/AppButton.vue'
+    import RevisionId from '../components/ui/RevisionId.vue'
     import { useSessionStore } from '../stores/session'
 
     const props = defineProps<{
@@ -212,7 +213,7 @@
                 <span v-if="branch.headRevisionId === null"> — No revisions yet</span>
                 <span v-else>
                     — Head when loaded:
-                    <code>{{ branch.headRevisionId }}</code>
+                    <RevisionId :id="branch.headRevisionId" label="branch head revision" />
                 </span>
             </p>
 
@@ -241,7 +242,7 @@
                         <div>
                             <dt>Revision</dt>
                             <dd>
-                                <code>{{ revision.id }}</code>
+                                <RevisionId :id="revision.id" />
                             </dd>
                         </div>
                         <div>
@@ -255,16 +256,21 @@
                         <div>
                             <dt>Parent</dt>
                             <dd>
-                                <code v-if="revision.parentRevisionId">
-                                    {{ revision.parentRevisionId }}
-                                </code>
+                                <RevisionId
+                                    v-if="revision.parentRevisionId"
+                                    :id="revision.parentRevisionId"
+                                    label="parent revision"
+                                />
                                 <span v-else>None (root revision)</span>
                             </dd>
                         </div>
                         <div v-if="revision.mergeParentRevisionId">
                             <dt>Merge parent</dt>
                             <dd>
-                                <code>{{ revision.mergeParentRevisionId }}</code>
+                                <RevisionId
+                                    :id="revision.mergeParentRevisionId"
+                                    label="merge parent revision"
+                                />
                             </dd>
                         </div>
                     </dl>

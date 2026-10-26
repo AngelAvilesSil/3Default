@@ -11,6 +11,7 @@
         type ProjectRevision,
     } from '../api/revisions'
     import AppButton from '../components/ui/AppButton.vue'
+    import RevisionId from '../components/ui/RevisionId.vue'
     import { useSessionStore } from '../stores/session'
 
     const props = defineProps<{
@@ -220,7 +221,7 @@
                     <div>
                         <dt>Revision ID</dt>
                         <dd>
-                            <code>{{ revision.id }}</code>
+                            <RevisionId :id="revision.id" />
                         </dd>
                     </div>
                     <div>
@@ -240,16 +241,21 @@
                     <div>
                         <dt>Parent</dt>
                         <dd>
-                            <code v-if="revision.parentRevisionId">
-                                {{ revision.parentRevisionId }}
-                            </code>
+                            <RevisionId
+                                v-if="revision.parentRevisionId"
+                                :id="revision.parentRevisionId"
+                                label="parent revision"
+                            />
                             <span v-else>None (root revision)</span>
                         </dd>
                     </div>
                     <div v-if="revision.mergeParentRevisionId">
                         <dt>Merge parent</dt>
                         <dd>
-                            <code>{{ revision.mergeParentRevisionId }}</code>
+                            <RevisionId
+                                :id="revision.mergeParentRevisionId"
+                                label="merge parent revision"
+                            />
                         </dd>
                     </div>
                 </dl>

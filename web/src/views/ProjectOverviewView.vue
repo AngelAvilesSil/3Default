@@ -11,6 +11,7 @@
     } from '../api/projects'
     import ProjectFileWorkspace from '../components/ProjectFileWorkspace.vue'
     import AppButton from '../components/ui/AppButton.vue'
+    import RevisionId from '../components/ui/RevisionId.vue'
     import { useSessionStore } from '../stores/session'
 
     const route = useRoute()
@@ -297,7 +298,7 @@
 
                         <span v-else class="project-overview__branch-state">
                             Head revision:
-                            <code>{{ branch.headRevisionId }}</code>
+                            <RevisionId :id="branch.headRevisionId" label="branch head revision" />
                         </span>
 
                         <AppButton

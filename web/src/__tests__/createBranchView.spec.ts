@@ -206,7 +206,7 @@ describe('Create Branch navigation', () => {
     it('returns to the exact revision when Cancel is selected', async () => {
         const { wrapper, router } = await renderPage()
 
-        await wrapper.get('button[type="button"]').trigger('click')
+        await wrapper.get('.create-branch__actions button[type="button"]').trigger('click')
 
         await vi.waitFor(() => {
             expect(router.currentRoute.value.name).toBe('project-revision-detail')
@@ -243,12 +243,25 @@ describe('Create Branch context', () => {
 
         expect(wrapper.text()).toContain(project.name)
         expect(wrapper.text()).toContain(revision.message)
-        expect(wrapper.text()).toContain(revision.id.slice(0, 8))
+
+        const displayedId = wrapper.get('.create-branch__metadata .revision-id__short')
+        expect(displayedId.text()).toBe(revisionId.slice(0, 8))
+        expect(displayedId.attributes('title')).toBe(revisionId)
+        expect(wrapper.get('.create-branch__metadata').text()).not.toContain(revisionId)
+
+        const copyButton = wrapper.get(
+            '.create-branch__metadata button[aria-label="Copy full starting revision ID 33333333"]',
+        )
+        expect(copyButton.attributes('type')).toBe('button')
+
         expect(wrapper.text()).toContain('does not duplicate')
-        expect(wrapper.get('details code').text()).toBe(revisionId)
+        expect(wrapper.find('.create-branch__technical').exists()).toBe(false)
+        expect(wrapper.text()).not.toContain(revisionId)
 
         expect(wrapper.get('#branch-name').attributes('required')).toBeDefined()
         expect(wrapper.find('input[name="headRevisionId"]').exists()).toBe(false)
+
+        await copyButton.trigger('click')
         expect(createProjectBranch).not.toHaveBeenCalled()
 
         wrapper.unmount()
@@ -484,12 +497,14 @@ describe('Create Branch submission', () => {
         })
 
         expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
-        expect(wrapper.get('button[type="button"]').text()).toContain('Review project')
+        expect(wrapper.get('.create-branch__actions button[type="button"]').text()).toContain(
+            'Review project',
+        )
 
         await wrapper.get('form').trigger('submit')
         expect(createProjectBranch).toHaveBeenCalledTimes(1)
 
-        await wrapper.get('button[type="button"]').trigger('click')
+        await wrapper.get('.create-branch__actions button[type="button"]').trigger('click')
 
         await vi.waitFor(() => {
             expect(router.currentRoute.value.name).toBe('project-overview')
@@ -561,7 +576,9 @@ describe('Create Branch submission', () => {
         expect(createProjectBranch).toHaveBeenCalledTimes(1)
         expect(wrapper.get('#branch-name').attributes('disabled')).toBeDefined()
         expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined()
-        expect(wrapper.get('button[type="button"]').attributes('disabled')).toBeDefined()
+        expect(
+            wrapper.get('.create-branch__actions button[type="button"]').attributes('disabled'),
+        ).toBeDefined()
 
         resolveCreation(createdBranch)
 
@@ -631,15 +648,23 @@ describe('Create Branch submission', () => {
         await wrapper.setProps({ revisionId: newerRevisionId })
 
         await vi.waitFor(() => {
-            expect(wrapper.get('details code').text()).toBe(newerRevisionId)
+            expect(
+                wrapper.get('.create-branch__metadata .revision-id__short').attributes('title'),
+            ).toBe(newerRevisionId)
         })
+
+        const updatedId = wrapper.get('.create-branch__metadata .revision-id__short')
+        expect(updatedId.text()).toBe(newerRevisionId.slice(0, 8))
+        expect(updatedId.attributes('title')).toBe(newerRevisionId)
 
         expect(oldSignal?.aborted).toBe(true)
 
         resolveOldProject(project)
         await flushPromises()
 
-        expect(wrapper.get('details code').text()).toBe(newerRevisionId)
+        expect(
+            wrapper.get('.create-branch__metadata .revision-id__short').attributes('title'),
+        ).toBe(newerRevisionId)
         expect(createProjectBranch).not.toHaveBeenCalled()
 
         wrapper.unmount()
