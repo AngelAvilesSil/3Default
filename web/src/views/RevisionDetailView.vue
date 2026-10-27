@@ -11,6 +11,7 @@
         type ProjectRevision,
     } from '../api/revisions'
     import AppButton from '../components/ui/AppButton.vue'
+    import CopyableId from '../components/ui/CopyableId.vue'
     import RevisionId from '../components/ui/RevisionId.vue'
     import { useSessionStore } from '../stores/session'
 
@@ -233,9 +234,15 @@
                         </dd>
                     </div>
                     <div>
-                        <dt>Author ID</dt>
-                        <dd>
-                            <code>{{ revision.authorUserId }}</code>
+                        <dt>Author</dt>
+                        <dd class="revision-detail__author">
+                            <span class="revision-detail__author-name">
+                                {{ revision.authorDisplayName ?? 'Unknown author' }}
+                            </span>
+                            <span class="revision-detail__author-id">
+                                <span>User ID</span>
+                                <CopyableId :id="revision.authorUserId" label="user" kind="user" />
+                            </span>
                         </dd>
                     </div>
                     <div>
@@ -414,6 +421,26 @@
     .revision-detail__metadata code {
         font-family: var(--font-family-mono);
         overflow-wrap: anywhere;
+    }
+
+    .revision-detail__author {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-1);
+    }
+
+    .revision-detail__author-name {
+        font-weight: var(--font-weight-semibold);
+    }
+
+    .revision-detail__author-id {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--space-2);
+        color: var(--color-text-muted);
+        font-size: var(--font-size-sm);
     }
 
     .revision-detail__files {

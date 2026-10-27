@@ -274,7 +274,15 @@ describe('read-only revision and file snapshot', () => {
         )
         expect(createBranchLink.attributes('href')).toContain(`fromBranchId=${branchId}`)
 
-        expect(wrapper.text()).toContain(revision.authorUserId)
+        expect(wrapper.get('.revision-detail__author-name').text()).toBe('Unknown author')
+
+        const authorId = wrapper.get('.user-id__short')
+        expect(authorId.text()).toBe(revision.authorUserId.slice(0, 8))
+        expect(authorId.attributes('title')).toBe(revision.authorUserId)
+        expect(wrapper.text()).not.toContain(revision.authorUserId)
+        expect(
+            wrapper.get('button[aria-label="Copy full user ID 66666666"]').attributes('type'),
+        ).toBe('button')
         expect(wrapper.text()).toContain('Files in this revision (2)')
         expect(wrapper.text()).toContain(sourceFile.originalFilename)
         expect(wrapper.text()).toContain(anotherFile.originalFilename)
@@ -282,6 +290,34 @@ describe('read-only revision and file snapshot', () => {
         expect(wrapper.text()).toContain(sourceFile.contentSha256)
         expect(wrapper.text()).toContain('not every file uploaded to the project')
         expect(wrapper.text()).toContain('does not calculate CAD geometry differences')
+
+        wrapper.unmount()
+    })
+
+    it('displays the recorded author instead of the signed-in user', async () => {
+        vi.mocked(getCurrentUser).mockResolvedValue({
+            status: 'authenticated',
+            user: {
+                ...user,
+                id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                displayName: 'Signed In Viewer',
+            },
+        })
+
+        vi.mocked(getProjectRevision).mockResolvedValue({
+            ...revision,
+            authorDisplayName: 'Engineering Author',
+        })
+
+        const { wrapper } = await mountDetail()
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('.revision-detail__author-name').text()).toBe('Engineering Author')
+        })
+
+        expect(wrapper.text()).not.toContain('Signed In Viewer')
+        expect(wrapper.get('.user-id__short').attributes('title')).toBe(revision.authorUserId)
+        expect(wrapper.text()).not.toContain(revision.authorUserId)
 
         wrapper.unmount()
     })
