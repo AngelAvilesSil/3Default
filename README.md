@@ -12,7 +12,7 @@ This repository is a ground-up reconstruction of an earlier 3Default MVP. It is 
 
 ## Project Status
 
-**Current phase: frontend branch creation from exact revisions, read-only history and revision inspection, and consistent revision-ID presentation, building on immutable source-file snapshots and on-demand 3D visualization**
+**Current phase: human-readable revision author attribution on Revision Detail, following frontend branch creation from exact revisions, read-only history inspection, and reusable technical-ID presentation**
 
 Implemented foundations include:
 
@@ -33,6 +33,8 @@ Implemented foundations include:
 * history-to-revision navigation with optional branch-return context, protected deep-link restoration after login, and no implied exclusive branch ownership of revisions
 * protected Create Branch workflow from an exact existing revision, with branch-name validation, guarded submission, and full-UUID branch-head references
 * reusable abbreviated revision-ID display across Project Overview, Branch History, Revision Detail, and Create Branch, with full-ID hover titles, Copy ID, and clipboard-unavailable fallback
+* project-scoped Revision Detail author attribution resolved by the backend from the revision's recorded `authorUserId`, with an optional `authorDisplayName`, a truthful Unknown author fallback, and a secondary abbreviated, copyable user UUID
+* shared `CopyableId` interaction and styling for revision and user identifiers, with `RevisionId` retaining its existing public component interface
 * protected Create Revision workflow with current-head snapshot initialization, explicit file selection, and required message validation
 * guarded revision submission with optimistic branch-head concurrency, duplicate prevention, confirmed-rejection handling, and conservative uncertain-result safeguards
 * real-browser verification of initial and subsequent revisions, selected-file snapshots, parent ancestry, branch advancement, and preserved historical membership
@@ -99,7 +101,7 @@ Implemented foundations include:
 
 The authentication, core project-versioning, file-storage, durable conversion-job, and first GLB preview-pipeline foundations are now implemented. The backend supports branch listing, creation, rename, and deletion, project-scoped revision reads, atomic revision creation with optimistic branch-head concurrency, branch-head history traversal, immutable content-addressed source-file storage, owner-scoped project-file upload, metadata reads, streaming source-file download, exact revision-file snapshots supplied during revision creation, authenticated revision-file snapshot reads, durable conversion-job creation and inspection, persisted derived preview outputs, and an embedded worker that is started by `main` and finalizes successful jobs only together with their output metadata. With Mayo configured, the conversion worker supports STEP/STP-to-GLB conversion alongside structurally validated GLB 2.0 pass-through. Without Mayo, the worker preserves the original GLB pass-through behavior. The Vue application supports explicit source-file uploads and automatic on-demand GLB preparation when a supported file is selected in the inline workspace. Existing previews are reused, and completed conversions load into the Three.js viewer without another user action. The protected standalone preview route remains available for retrieving previously generated GLB outputs. PostgreSQL now protects project-file metadata, finalized revision-file membership, and committed revision metadata and ancestry against direct historical rewrites. Comprehensive revision-graph cycle validation, additional native CAD conversion formats, revision-aware visual comparison, and user-facing merge/conflict-resolution workflows remain future work.
 
-**Current browser UI scope:** The shared landing page at `/` serves visitors and authenticated users, with session-aware navigation. Authenticated users can view My Projects, create projects, open a protected project overview, inspect branch/head-revision summaries and exact historical revision snapshots, create revisions on a chosen branch, create a new branch from an existing revision, and browse the project's uploaded files. The project overview provides an Add file action leading to an explicit source-file upload page, a Create revision action on each branch, and View history navigation for branch inspection. Selecting a supported file opens its existing GLB preview or automatically initiates preparation if no preview or conversion job exists. Users can switch files or close the preview without leaving the overview. The existing protected direct preview route remains available. Revision identifiers are abbreviated for display while complete IDs remain available through hover titles and copy actions; API requests and navigation retain complete UUIDs. Browser registration, source-file downloading and richer file management, project metadata editing, interactive branch switching, historical revision comparison, merge/conflict-resolution workflows, and public project discovery remain future work. The backend offers file, revision, and conversion APIs beyond the current browser UI.
+**Current browser UI scope:** The shared landing page at `/` serves visitors and authenticated users, with session-aware navigation. Authenticated users can view My Projects, create projects, open a protected project overview, inspect branch/head-revision summaries and exact historical revision snapshots, create revisions on a chosen branch, create a new branch from an existing revision, and browse the project's uploaded files. The project overview provides an Add file action leading to an explicit source-file upload page, a Create revision action on each branch, and View history navigation for branch inspection. Selecting a supported file opens its existing GLB preview or automatically initiates preparation if no preview or conversion job exists. Users can switch files or close the preview without leaving the overview. The existing protected direct preview route remains available. Revision identifiers are abbreviated for display while complete IDs remain available through hover titles and copy actions; API requests and navigation retain complete UUIDs. Revision Detail additionally displays the recorded author's current resolved display name, or Unknown author when unavailable, with a secondary abbreviated user UUID that can be hovered over and copied in full. The display name is resolved during the detail request and is not an immutable snapshot of the author's name at revision creation time. Browser registration, source-file downloading and richer file management, project metadata editing, interactive branch switching, historical revision comparison, merge/conflict-resolution workflows, and public project discovery remain future work. The backend offers file, revision, and conversion APIs beyond the current browser UI.
 
 ---
 
@@ -130,6 +132,8 @@ The CAD application remains responsible for editing the design itself.
 - **Revision (commit):** An immutable, explicitly created project snapshot containing a message, author, timestamp, ancestry, and the exact set of selected project-file references. A revision is not a branch.
 - **Branch (design direction):** A named, movable pointer to a revision head. Branches can share an ancestor and evolve independently, such as `main`, `lightweight`, or `reinforced`. A branch is not itself a CAD configuration or a saved version.
 - **Version:** A broader CAD/PDM term often used for a saved design state. In 3Default, the technical name for an immutable committed snapshot is **revision**. Version is not a separate database entity or an alternative name for branch.
+
+**Author identity:** A revision records its author user ID as historical metadata. Revision Detail resolves the corresponding user's current display name after project-scoped authorization. The name is a presentation lookup, not a historical name snapshot or a substitute for the recorded ID. A failed or unavailable lookup must not attribute the revision to the signed-in viewer or prevent inspection of its immutable snapshot.
 
 For example, two branches may share an initial bracket design and its mounting-hole revision, then continue independently toward lighter and reinforced designs. Each subsequent revision retains its actual parent references and exact source-file membership.
 
@@ -830,6 +834,9 @@ The current browser entry points are:
 * `http://localhost:5173/projects/<projectId>` for the authenticated project overview, branch summaries, file directory, and inline visualization.
 * `http://localhost:5173/projects/<projectId>/files/upload` for explicit source-file uploads.
 * `http://localhost:5173/projects/<projectId>/branches/<branchId>/revisions/new` for creating an explicit revision on a chosen branch.
+* `http://localhost:5173/projects/<projectId>/branches/<branchId>/history` for inspecting branch history.
+* `http://localhost:5173/projects/<projectId>/revisions/<revisionId>` for inspecting an exact historical revision and its recorded author.
+* `http://localhost:5173/projects/<projectId>/revisions/<revisionId>/branches/new` for creating a branch from an exact revision.
 
 The browser currently provides login and logout but not a registration form. On a new local database, create a development account through `POST /api/auth/register` using the API contract's `email`, `displayName`, and `password` fields, then sign in through `/login`. Registration does not automatically establish a session. Do not commit development credentials or session-cookie values to the repository.
 
@@ -939,6 +946,8 @@ The direct preview route and the inline project-file preview are loaded on deman
 
 Frontend Vitest coverage includes typed authentication and project APIs (including project detail and branch listing), Pinia session lifecycle, reusable UI primitives, login-form behavior, My Projects loading/error/retry behavior, Create Project validation and error handling, protected navigation, safe return-path handling, login-view behavior, shared-header logout integration, nonblocking public-session restoration, legacy `/app` compatibility, and session-verification retry behavior. Project overview tests verify metadata loading, unavailable projects, expired sessions, retry, and stale-request cancellation. Separate branch-summary tests cover empty and populated heads, multiple branches, loading, independent retry, inconsistent project IDs, unauthorized responses, and switching projects while branch requests remain pending. A real-router integration test verifies navigation from an empty listing through project creation and back to a refreshed listing. Existing GLB preview and Three.js component tests remain part of the same suite. Additional coverage verifies upload selection, sequential upload and recovery, conversion-job API contracts, automatic preview preparation, active-job reuse, polling, completion, authentication, conflict reconciliation, and cancellation.
 
+At the Revision Author Attribution milestone checkpoint, the complete frontend suite passed **555 tests across 43 test files**. The complete normal Go test suite and `go vet` passed. The frontend TypeScript check, production build, project-wide ESLint, scoped Prettier and Oxlint checks, and Git whitespace checks passed. Four focused backend HTTP regression tests verify recorded-author lookup, read availability when the author lookup fails, rejection of mismatched author identities, and authorization before identity resolution. Frontend coverage includes optional author-name validation, the distinction between the recorded author and the session viewer, missing-name fallback, user-ID copying, and regression coverage of existing revision-ID controls. Eight real-browser acceptance checks passed. The production build continues to report the nonblocking size advisory for the on-demand Three.js preview chunk. Scoped Oxlint success must not be interpreted as a clean repository-wide Oxlint run.
+
 At the Frontend Branch Creation and Revision ID presentation checkpoint, the complete frontend suite passed **544 tests across 42 test files**. TypeScript checking, the production build, project-wide ESLint, scoped Oxlint and Prettier checks for the ten implementation files, and Git whitespace verification passed. Coverage includes 25 Create Branch view tests, 16 Branch History tests, 19 Revision Detail tests, and eight shared Revision ID component tests. The revision identifiers are abbreviated only for presentation, while browser navigation and branch-creation requests retain complete UUIDs. Repository-wide Oxlint reported 13 pre-existing findings in five files unchanged from the implementation baseline; this is not a clean project-wide Oxlint result. Vite continued to report a nonblocking size advisory for the on-demand Three.js preview chunk.
 
 At the Frontend Revision History and Inspection implementation checkpoint, the complete frontend suite passed **485 tests across 39 test files**, including 16 branch-history tests and 19 revision-detail tests. TypeScript checking, the production build, targeted Prettier checks, scoped Oxlint and ESLint, and Git whitespace verification passed. The new tests cover protected routes, historical revision identities, parent and merge-parent metadata, exact file-snapshot membership, empty snapshots, navigation, expired sessions, unavailable resources, retries, and stale-request cancellation. The existing on-demand Three.js chunk continued to produce a nonblocking build-size advisory. Scoped lint results do not establish a clean repository-wide Oxlint run.
@@ -1044,6 +1053,19 @@ For Revision ID presentation acceptance, review Project Overview, Branch History
 
 The O.4 browser acceptance reported five passing checks across the four screens and general usability. After that acceptance, the redundant expandable Full revision ID disclosure was removed from Create Branch; the simplified implementation then passed the complete 544-test frontend suite, TypeScript, scoped formatting and lint checks, project-wide ESLint, and the production build. These checks do not establish a separate browser acceptance of the final disclosure-free layout.
 
+For manual Revision Author Attribution acceptance:
+
+1. Restart the Go API service after backend source changes, then sign in and open an existing project's branch history.
+2. Open an existing revision and verify the protected Revision Detail page loads.
+3. Confirm Author shows the recorded user's readable display name instead of a raw UUID.
+4. Inspect the revision-detail GET response in browser Developer Tools; verify the returned `authorUserId` and matching `authorDisplayName`.
+5. Confirm the author user ID is abbreviated to eight characters and the complete UUID is available on hover.
+6. Use Copy ID and verify the clipboard contains the complete author UUID, not the abbreviation.
+7. Verify the existing revision-ID and parent-ID copy controls, history-return navigation, and Create Branch navigation still work.
+8. Verify narrow-width layout and keyboard usability.
+
+All eight checks passed during the October 26, 2026 author-attribution browser acceptance. Automated regression tests separately cover Unknown author fallback, clipboard failures, and a recorded author who differs from the signed-in user. The milestone does not add profile editing, collaboration permissions, or historical CAD geometry comparison.
+
 Run PostgreSQL integration tests:
 
 ```bash
@@ -1092,6 +1114,7 @@ milestone/frontend-project-file-workspace
 milestone/frontend-file-upload-conversion
 milestone/frontend-explicit-revisions
 milestone/frontend-branch-creation
+milestone/revision-author-attribution
 ```
 
 Within each milestone, work remains divided into small logical commits. Implementation commits are followed by a separate README/documentation audit and documentation commit when updates are needed. Completed milestones are merged into `main` through pull requests using **Rebase and merge**, preserving linear history.
@@ -1109,6 +1132,7 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * **Persistence should be atomic where correctness requires it.** Related database state is committed together or rolled back together.
 * **Immutable content should not be destructively compensated.** A failed metadata write must not delete a content-addressed object that may be shared by another reference or concurrent upload.
 * **Identity comes from authentication.** Clients should not declare ownership of authenticated resources.
+* **Historical revision attribution uses the recorded author ID.** Resolve readable names from that ID only after authorization; never substitute the current session user. Current display names are not immutable revision metadata.
 * **Infrastructure stays simple until complexity is justified.** PostgreSQL and a modular monolith are preferred over premature distributed services.
 * **Durable background work belongs in durable state.** Conversion jobs are persisted before execution and recovered explicitly rather than relying on in-memory queues.
 * **Derived artifacts remain replaceable.** Conversion and preview outputs must be reproducible from authoritative source files and should not become the source of truth.
@@ -1207,7 +1231,8 @@ The goal is to keep both the codebase and Git history understandable as the proj
 * [x] reusable shortened, copyable revision IDs across four frontend screens
 * [x] browser acceptance of revision-ID presentation and navigation
 * [ ] interactive browser branch switching
-* [ ] human-readable revision author attribution backed by the correct user identity, with internal user IDs secondary
+* [x] human-readable revision author attribution on Revision Detail backed by the recorded user ID, with internal user IDs secondary
+* [x] reusable copyable user IDs with hover, clipboard fallback, and regression tests for existing revision IDs
 * [x] branch-head DAG traversal and history API
 * [x] immutable project-file metadata and content-reference update protection
 * [x] transactionally finalized, immutable revision-file snapshots
