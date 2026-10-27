@@ -4,6 +4,7 @@ export type ProjectRevision = {
     id: string
     projectId: string
     authorUserId: string
+    authorDisplayName?: string
     message: string
     parentRevisionId: string | null
     mergeParentRevisionId: string | null
@@ -59,6 +60,8 @@ function isProjectRevision(value: unknown): value is ProjectRevision {
         isNonEmptyString(revision.id) &&
         isNonEmptyString(revision.projectId) &&
         isNonEmptyString(revision.authorUserId) &&
+        (revision.authorDisplayName === undefined ||
+            isNonEmptyString(revision.authorDisplayName)) &&
         isNonEmptyString(revision.message) &&
         isNullableRevisionId(revision.parentRevisionId) &&
         isNullableRevisionId(revision.mergeParentRevisionId) &&
