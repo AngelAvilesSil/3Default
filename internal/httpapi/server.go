@@ -1421,10 +1421,29 @@ func (s *Server) GetProjectRevision(
 		}
 	}
 
+	// Resolve the identity recorded on the revision, never the
+	// current session user's display name. The revision has
+	// already passed project-scoped authorization.
+	var authorDisplayName *string
+
+	if s.currentUsers != nil {
+		author, lookupErr := s.currentUsers.GetUserByID(
+			ctx,
+			revision.AuthorUserID,
+		)
+		if lookupErr == nil && author.ID == revision.AuthorUserID {
+			name := strings.TrimSpace(author.DisplayName)
+			if name != "" {
+				authorDisplayName = &name
+			}
+		}
+	}
+
 	return api.GetProjectRevision200JSONResponse{
 		Id:                    uuid.UUID(revision.ID),
 		ProjectId:             uuid.UUID(revision.ProjectID),
 		AuthorUserId:          uuid.UUID(revision.AuthorUserID),
+		AuthorDisplayName:     authorDisplayName,
 		Message:               revision.Message,
 		ParentRevisionId:      apiUUIDFromPGUUID(revision.ParentRevisionID),
 		MergeParentRevisionId: apiUUIDFromPGUUID(revision.MergeParentRevisionID),

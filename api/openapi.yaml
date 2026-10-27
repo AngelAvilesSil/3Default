@@ -1547,6 +1547,9 @@ components:
         authorUserId:
           type: string
           format: uuid
+        authorDisplayName:
+          type: string
+          description: Current display name of the recorded revision author, when available.
         message:
           type: string
         parentRevisionId:

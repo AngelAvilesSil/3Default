@@ -188,6 +188,8 @@ type ProjectResponseVisibility string
 
 // ProjectRevisionResponse defines model for ProjectRevisionResponse.
 type ProjectRevisionResponse struct {
+	// AuthorDisplayName Current display name of the recorded revision author, when available.
+	AuthorDisplayName     *string    `json:"authorDisplayName,omitempty"`
 	AuthorUserId          uuid.UUID  `json:"authorUserId"`
 	CreatedAt             time.Time  `json:"createdAt"`
 	Id                    uuid.UUID  `json:"id"`
