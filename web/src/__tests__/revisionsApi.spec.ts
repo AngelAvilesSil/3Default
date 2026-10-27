@@ -238,6 +238,38 @@ describe('revision detail API', () => {
         )
     })
 
+    it('preserves the recorded author display name and ID', async () => {
+        const attributedRevision = {
+            ...revision,
+            authorDisplayName: 'Engineering Author',
+        }
+
+        fetchMock.mockResolvedValueOnce(jsonResponse(attributedRevision))
+
+        await expect(getProjectRevision(projectId, revisionId)).resolves.toEqual(attributedRevision)
+
+        expect(attributedRevision.authorUserId).toBe(revision.authorUserId)
+    })
+
+    it.each([
+        ['null', null],
+        ['empty', ''],
+        ['whitespace-only', '   '],
+        ['number', 42],
+        ['object', { displayName: 'Untrusted' }],
+    ])('rejects an invalid %s author display name', async (_case, value) => {
+        fetchMock.mockResolvedValueOnce(
+            jsonResponse({
+                ...revision,
+                authorDisplayName: value,
+            }),
+        )
+
+        await expect(getProjectRevision(projectId, revisionId)).rejects.toBeInstanceOf(
+            RevisionResponseError,
+        )
+    })
+
     it('rejects the wrong revision identity', async () => {
         fetchMock.mockResolvedValueOnce(jsonResponse({ ...revision, id: 'different-revision' }))
 
