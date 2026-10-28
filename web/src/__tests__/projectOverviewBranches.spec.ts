@@ -120,10 +120,13 @@ describe('project overview branch summaries', () => {
 
         expect(listProjectBranches).toHaveBeenCalledWith(project.id, expect.any(AbortSignal))
 
-        const branches = wrapper.get('ul[aria-label="Project branches"]')
+        const selector = wrapper.get('button[aria-label="Choose design branch"]')
+        const selected = wrapper.get('.project-overview__selection')
 
-        expect(branches.text()).toContain('main')
-        expect(branches.text()).toContain('No revisions yet')
+        expect(selector.text()).toContain('main')
+        expect(selected.text()).toContain('No revisions yet')
+        expect(selected.find('.revision-id').exists()).toBe(false)
+        expect(wrapper.findAll('button[aria-label^="View history of "]')).toHaveLength(1)
 
         wrapper.unmount()
     })
@@ -145,35 +148,62 @@ describe('project overview branch summaries', () => {
         wrapper.unmount()
     })
 
-    it('shows multiple branches and existing head revision information', async () => {
+    it('shows multiple branch choices and the selected head revision', async () => {
         vi.mocked(listProjectBranches).mockResolvedValueOnce([mainBranch, featureBranch])
 
-        const { wrapper } = await mountOverview()
+        const { wrapper, router } = await mountOverview()
 
         await vi.waitFor(() => {
-            expect(wrapper.findAll('ul[aria-label="Project branches"] > li')).toHaveLength(2)
+            expect(wrapper.get('button[aria-label="Choose design branch"]').text()).toContain(
+                'main',
+            )
         })
 
-        const branches = wrapper.findAll('ul[aria-label="Project branches"] > li')
+        const selector = wrapper.get('button[aria-label="Choose design branch"]')
 
-        expect(branches[0]!.text()).toContain('main')
-        expect(branches[0]!.text()).toContain('No revisions yet')
+        expect(wrapper.get('.project-overview__selection').text()).toContain('No revisions yet')
+        expect(wrapper.find('.project-overview__selection .revision-id').exists()).toBe(false)
 
-        expect(branches[1]!.text()).toContain('gripper-redesign')
-        expect(branches[1]!.text()).toContain('Head revision')
+        await selector.trigger('click')
 
-        const shortId = branches[1]!.get('.revision-id__short')
+        const choices = wrapper.get('#project-branch-choices').findAll('button')
+
+        expect(choices.map((choice) => choice.text().trim())).toEqual(['main', 'gripper-redesign'])
+
+        expect(choices[0]?.attributes('aria-pressed')).toBe('true')
+        expect(choices[1]?.attributes('aria-pressed')).toBe('false')
+
+        await choices[1]!.trigger('click')
+
+        await vi.waitFor(() => {
+            expect(selector.text()).toContain('gripper-redesign')
+            expect(router.currentRoute.value.query.branchId).toBe(featureBranch.id)
+        })
+
+        const selected = wrapper.get('.project-overview__selection')
+
+        expect(selected.text()).toContain('Head revision')
+        expect(selected.text()).toContain('gripper-redesign')
+        expect(selected.text()).not.toContain(featureBranch.headRevisionId)
+
+        const shortId = selected.get('.revision-id__short')
 
         expect(shortId.text()).toBe('55555555')
         expect(shortId.attributes('title')).toBe(featureBranch.headRevisionId)
-        expect(branches[1]!.text()).not.toContain(featureBranch.headRevisionId)
+
         expect(
-            branches[1]!
+            selected
                 .get('button[aria-label="Copy full branch head revision ID 55555555"]')
                 .attributes('type'),
         ).toBe('button')
 
-        expect(branches[0]!.find('.revision-id').exists()).toBe(false)
+        expect(wrapper.findAll('button[aria-label^="View history of "]')).toHaveLength(1)
+
+        expect(
+            wrapper.findAll('button[aria-label="View history of gripper-redesign"]'),
+        ).toHaveLength(1)
+
+        expect(selector.attributes('aria-expanded')).toBe('false')
 
         wrapper.unmount()
     })
@@ -296,11 +326,21 @@ describe('project overview branch summaries', () => {
 
         expect(wrapper.get('h2').text()).toBe('Gearbox')
 
-        const displayedBranches = wrapper.findAll('ul[aria-label="Project branches"] > li')
+        const selector = wrapper.get('button[aria-label="Choose design branch"]')
+        const selected = wrapper.get('.project-overview__selection')
 
-        expect(displayedBranches).toHaveLength(1)
-        expect(displayedBranches[0]!.text()).toContain('gearbox-development')
-        expect(displayedBranches[0]!.text()).not.toContain('main')
+        expect(selector.text()).toContain('gearbox-development')
+        expect(selector.text()).not.toContain('main')
+        expect(selected.text()).toContain('gearbox-development')
+        expect(selected.text()).not.toContain('main')
+
+        await selector.trigger('click')
+
+        const choices = wrapper.get('#project-branch-choices').findAll('button')
+
+        expect(choices).toHaveLength(1)
+        expect(choices[0]?.text()).toContain('gearbox-development')
+        expect(choices[0]?.text()).not.toContain('main')
 
         wrapper.unmount()
     })
