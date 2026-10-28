@@ -164,8 +164,37 @@ describe('Create Revision navigation', () => {
         const { wrapper, router } = await mountOverview()
 
         await vi.waitFor(() => {
-            expect(wrapper.findAll('button[aria-label^="Create revision on "]')).toHaveLength(2)
+            expect(wrapper.get('button[aria-label="Choose design branch"]').text()).toContain(
+                'main',
+            )
         })
+
+        expect(wrapper.findAll('button[aria-label^="Create revision on "]')).toHaveLength(1)
+        expect(wrapper.get('button[aria-label="Create revision on main"]').text()).toContain(
+            'Create revision',
+        )
+
+        await wrapper.get('button[aria-label="Choose design branch"]').trigger('click')
+
+        const choice = wrapper
+            .findAll('#project-branch-choices button')
+            .find((button) => button.text().includes(featureBranch.name))
+
+        if (!choice) {
+            throw new Error('Expected gripper-redesign branch choice was not found')
+        }
+
+        await choice.trigger('click')
+
+        await vi.waitFor(() => {
+            expect(router.currentRoute.value.query.branchId).toBe(featureBranchId)
+            expect(
+                wrapper.get('button[aria-label="Create revision on gripper-redesign"]').text(),
+            ).toContain('Create revision')
+        })
+
+        expect(wrapper.findAll('button[aria-label^="Create revision on "]')).toHaveLength(1)
+        expect(wrapper.find('button[aria-label="Create revision on main"]').exists()).toBe(false)
 
         await wrapper
             .get('button[aria-label="Create revision on gripper-redesign"]')

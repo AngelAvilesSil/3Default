@@ -176,8 +176,29 @@ describe('branch history route and navigation', () => {
         const { wrapper, router } = await mountOverview()
 
         await vi.waitFor(() => {
-            expect(wrapper.findAll('button[aria-label^="View history of "]')).toHaveLength(2)
+            expect(wrapper.get('button[aria-label="Choose design branch"]').text()).toContain(
+                'main',
+            )
         })
+
+        expect(wrapper.findAll('button[aria-label^="View history of "]')).toHaveLength(1)
+
+        await wrapper.get('button[aria-label="Choose design branch"]').trigger('click')
+
+        const choices = wrapper.get('#project-branch-choices').findAll('button')
+
+        expect(choices.map((choice) => choice.text().trim())).toEqual(['main', 'reinforced'])
+
+        await choices[1]!.trigger('click')
+
+        await vi.waitFor(() => {
+            expect(wrapper.get('button[aria-label="Choose design branch"]').text()).toContain(
+                'reinforced',
+            )
+            expect(router.currentRoute.value.query.branchId).toBe(secondBranch.id)
+        })
+
+        expect(wrapper.findAll('button[aria-label^="View history of "]')).toHaveLength(1)
 
         await wrapper.get('button[aria-label="View history of reinforced"]').trigger('click')
 

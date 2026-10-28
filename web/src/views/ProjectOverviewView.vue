@@ -1,5 +1,5 @@
 <script setup lang="ts">
-    import { onUnmounted, ref, watch } from 'vue'
+    import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
     import { useRoute, useRouter } from 'vue-router'
 
     import {
@@ -9,6 +9,7 @@
         type Project,
         type ProjectBranch,
     } from '../api/projects'
+    import BranchHeadFiles from '../components/BranchHeadFiles.vue'
     import ProjectFileWorkspace from '../components/ProjectFileWorkspace.vue'
     import AppButton from '../components/ui/AppButton.vue'
     import RevisionId from '../components/ui/RevisionId.vue'
@@ -26,6 +27,38 @@
     const branches = ref<ProjectBranch[]>([])
     const branchesLoading = ref(false)
     const branchErrorMessage = ref('')
+    const branchPickerOpen = ref(false)
+    const branchSearch = ref('')
+    const branchPickerTrigger = ref<HTMLButtonElement | null>(null)
+    const branchSearchInput = ref<HTMLInputElement | null>(null)
+
+    const selectedBranch = computed<ProjectBranch | null>(() => {
+        if (branches.value.length === 0) {
+            return null
+        }
+
+        const requestedId = route.query.branchId
+
+        if (requestedId !== undefined) {
+            if (typeof requestedId !== 'string' || !requestedId) {
+                return null
+            }
+
+            return branches.value.find((branch) => branch.id === requestedId) ?? null
+        }
+
+        return branches.value.find((branch) => branch.name === 'main') ?? branches.value[0] ?? null
+    })
+
+    const filteredBranches = computed(() => {
+        const query = branchSearch.value.trim().toLowerCase()
+
+        if (!query) {
+            return branches.value
+        }
+
+        return branches.value.filter((branch) => branch.name.toLowerCase().includes(query))
+    })
 
     let activeController: AbortController | null = null
     let activeBranchController: AbortController | null = null
@@ -48,6 +81,8 @@
         branches.value = []
         branchesLoading.value = false
         branchErrorMessage.value = ''
+        branchPickerOpen.value = false
+        branchSearch.value = ''
     }
 
     async function loadBranches(projectId: string): Promise<void> {
@@ -173,6 +208,55 @@
         })
     }
 
+    async function toggleBranchPicker(event: MouseEvent): Promise<void> {
+        const trigger = event.currentTarget
+
+        if (!(trigger instanceof HTMLButtonElement)) {
+            return
+        }
+
+        branchPickerTrigger.value = trigger
+        branchPickerOpen.value = !branchPickerOpen.value
+        branchSearch.value = ''
+
+        if (branchPickerOpen.value) {
+            await nextTick()
+
+            if (branchPickerOpen.value) {
+                branchSearchInput.value?.focus()
+            }
+        }
+    }
+
+    function closeBranchPickerOnEscape(): void {
+        branchPickerOpen.value = false
+        branchSearch.value = ''
+        branchPickerTrigger.value?.focus()
+    }
+
+    function chooseBranch(branch: ProjectBranch): void {
+        if (
+            project.value === null ||
+            branch.projectId !== project.value.id ||
+            !branches.value.some((candidate) => candidate.id === branch.id)
+        ) {
+            return
+        }
+
+        branchPickerOpen.value = false
+        branchSearch.value = ''
+
+        if (route.query.branchId === branch.id) {
+            return
+        }
+
+        void router.push({
+            name: 'project-overview',
+            params: { projectId: project.value.id },
+            query: { ...route.query, branchId: branch.id },
+        })
+    }
+
     function openBranchHistory(branch: ProjectBranch): void {
         if (
             project.value === null ||
@@ -221,6 +305,14 @@
             void loadProject()
         },
         { immediate: true },
+    )
+
+    watch(
+        () => route.query.branchId,
+        () => {
+            branchPickerOpen.value = false
+            branchSearch.value = ''
+        },
     )
 
     onUnmounted(() => {
@@ -280,44 +372,113 @@
                 No branches are available for this project.
             </p>
 
-            <ul v-else class="project-overview__branch-list" aria-label="Project branches">
-                <li
-                    v-for="branch in branches"
-                    :key="branch.id"
-                    class="project-overview__branch-item"
-                >
-                    <div class="project-overview__branch-row">
-                        <strong>{{ branch.name }}</strong>
+            <div v-else class="project-overview__branch-workspace">
+                <div class="project-overview__branch-picker">
+                    <AppButton
+                        variant="secondary"
+                        aria-label="Choose design branch"
+                        :aria-expanded="branchPickerOpen"
+                        aria-controls="project-branch-choices"
+                        @click="toggleBranchPicker($event)"
+                    >
+                        <span class="project-overview__selector-name">
+                            {{ selectedBranch?.name ?? 'Choose branch' }}
+                        </span>
+                        <span aria-hidden="true">
+                            {{ branchPickerOpen ? '▲' : '▼' }}
+                        </span>
+                    </AppButton>
 
-                        <span
-                            v-if="branch.headRevisionId === null"
-                            class="project-overview__branch-state"
+                    <div
+                        v-if="branchPickerOpen"
+                        id="project-branch-choices"
+                        class="project-overview__branch-options"
+                        role="group"
+                        aria-label="Available design branches"
+                        @keydown.esc.stop.prevent="closeBranchPickerOnEscape"
+                    >
+                        <input
+                            ref="branchSearchInput"
+                            v-model="branchSearch"
+                            type="search"
+                            class="ui-field__input project-overview__branch-search"
+                            aria-label="Search branches"
+                            placeholder="Search branches"
+                            autocomplete="off"
+                        />
+
+                        <p
+                            v-if="filteredBranches.length === 0"
+                            class="project-overview__no-matches"
+                            role="status"
                         >
-                            No revisions yet
-                        </span>
-
-                        <span v-else class="project-overview__branch-state">
-                            Head revision:
-                            <RevisionId :id="branch.headRevisionId" label="branch head revision" />
-                        </span>
+                            No matching branches
+                        </p>
 
                         <AppButton
+                            v-for="branch in filteredBranches"
+                            :key="branch.id"
                             variant="secondary"
-                            :aria-label="`View history of ${branch.name}`"
-                            @click="openBranchHistory(branch)"
+                            :aria-pressed="selectedBranch?.id === branch.id"
+                            @click="chooseBranch(branch)"
+                        >
+                            {{ branch.name }}
+                        </AppButton>
+                    </div>
+                </div>
+
+                <div v-if="selectedBranch" class="project-overview__selection">
+                    <p>
+                        Selected branch:
+                        <strong>{{ selectedBranch.name }}</strong>
+                    </p>
+
+                    <p
+                        v-if="selectedBranch.headRevisionId === null"
+                        class="project-overview__branch-state"
+                    >
+                        No revisions yet
+                    </p>
+
+                    <p v-else class="project-overview__branch-state">
+                        Head revision:
+                        <RevisionId
+                            :id="selectedBranch.headRevisionId"
+                            label="branch head revision"
+                        />
+                    </p>
+
+                    <div class="project-overview__branch-actions">
+                        <AppButton
+                            variant="secondary"
+                            :aria-label="`View history of ${selectedBranch.name}`"
+                            @click="openBranchHistory(selectedBranch)"
                         >
                             View history
                         </AppButton>
+
                         <AppButton
                             variant="secondary"
-                            :aria-label="`Create revision on ${branch.name}`"
-                            @click="openCreateRevision(branch)"
+                            :aria-label="`Create revision on ${selectedBranch.name}`"
+                            @click="openCreateRevision(selectedBranch)"
                         >
                             Create revision
                         </AppButton>
                     </div>
-                </li>
-            </ul>
+
+                    <BranchHeadFiles
+                        v-if="selectedBranch.headRevisionId"
+                        :key="`${selectedBranch.id}:${selectedBranch.headRevisionId}`"
+                        :project-id="selectedBranch.projectId"
+                        :revision-id="selectedBranch.headRevisionId"
+                        @unauthorized="redirectToLogin"
+                    />
+                </div>
+
+                <p v-else class="project-overview__branch-feedback" role="alert">
+                    The branch in this link is unavailable. Choose another branch.
+                </p>
+            </div>
         </section>
 
         <ProjectFileWorkspace
@@ -384,34 +545,58 @@
         font-size: var(--font-size-sm);
     }
 
-    .project-overview__branch-list {
-        margin: var(--space-2) 0 0;
-        padding: 0;
-        list-style: none;
+    .project-overview__branch-workspace {
+        margin-top: var(--space-3);
+    }
+
+    .project-overview__branch-picker {
+        min-width: 0;
+    }
+
+    .project-overview__selector-name {
+        overflow-wrap: anywhere;
+    }
+
+    .project-overview__branch-options {
+        display: flex;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+        margin-top: var(--space-2);
+        padding: var(--space-3);
         border: 1px solid var(--color-border);
         border-radius: var(--radius-md);
+        background: var(--color-surface);
     }
 
-    .project-overview__branch-item {
-        padding: var(--space-2) var(--space-3);
+    .project-overview__branch-search {
+        box-sizing: border-box;
+        min-width: 0;
+        flex: 1 1 100%;
+    }
+
+    .project-overview__no-matches {
+        margin: 0;
+        color: var(--color-text-muted);
+        font-size: var(--font-size-sm);
+    }
+
+    .project-overview__selection {
+        margin-top: var(--space-4);
+        padding: var(--space-3);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        background: var(--color-surface);
+    }
+
+    .project-overview__selection p {
         overflow-wrap: anywhere;
     }
 
-    .project-overview__branch-item + .project-overview__branch-item {
-        border-top: 1px solid var(--color-border);
-    }
-
-    .project-overview__branch-row {
+    .project-overview__branch-actions {
         display: flex;
-        align-items: start;
-        justify-content: space-between;
         flex-wrap: wrap;
-        gap: var(--space-3);
-    }
-
-    .project-overview__branch-state code {
-        font-family: var(--font-family-mono);
-        overflow-wrap: anywhere;
+        gap: var(--space-2);
     }
 
     .project-overview__branch-feedback,
