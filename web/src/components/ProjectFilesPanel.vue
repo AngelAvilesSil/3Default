@@ -6,11 +6,16 @@
         ProjectFileRequestError,
         type ProjectFile,
     } from '../api/projectFiles'
+    import { listProjectRevisionFiles, RevisionRequestError } from '../api/revisions'
     import AppButton from './ui/AppButton.vue'
+
+    type FileScope = 'uploaded' | 'revision'
 
     const props = defineProps<{
         projectId: string
         selectedFileId?: string | null
+        scope?: FileScope
+        revisionId?: string | null
     }>()
 
     const emit = defineEmits<{
@@ -19,7 +24,7 @@
         'add-file': []
     }>()
 
-    type LoadState = 'loading' | 'ready' | 'error' | 'unauthorized'
+    type LoadState = 'loading' | 'ready' | 'error' | 'unauthorized' | 'unavailable' | 'empty-branch'
 
     const state = ref<LoadState>('loading')
     const files = ref<ProjectFile[]>([])
@@ -42,7 +47,11 @@
         return `Uploaded ${dateFormatter.format(date)}`
     }
 
-    async function loadFiles(projectId: string): Promise<void> {
+    async function loadFiles(
+        projectId: string,
+        scope: FileScope,
+        revisionId: string | null | undefined,
+    ): Promise<void> {
         activeController?.abort()
 
         const controller = new AbortController()
@@ -51,14 +60,32 @@
         files.value = []
         state.value = 'loading'
 
-        try {
-            const result = await listProjectFiles(projectId, controller.signal)
+        const isCurrent = () =>
+            !controller.signal.aborted &&
+            activeController === controller &&
+            props.projectId === projectId &&
+            (props.scope ?? 'uploaded') === scope &&
+            (scope !== 'revision' || props.revisionId === revisionId)
 
-            if (controller.signal.aborted || activeController !== controller) {
+        try {
+            let result: ProjectFile[]
+
+            if (scope === 'revision') {
+                if (!revisionId?.trim()) {
+                    state.value = 'empty-branch'
+                    return
+                }
+
+                result = await listProjectRevisionFiles(projectId, revisionId, controller.signal)
+            } else {
+                result = await listProjectFiles(projectId, controller.signal)
+            }
+
+            if (!isCurrent()) {
                 return
             }
 
-            // Do not display files belonging to a different project.
+            // Never display files associated with another project.
             if (result.some((file) => file.projectId !== projectId)) {
                 state.value = 'error'
                 return
@@ -67,13 +94,26 @@
             files.value = result
             state.value = 'ready'
         } catch (error) {
-            if (controller.signal.aborted || activeController !== controller) {
+            if (!isCurrent()) {
                 return
             }
 
-            if (error instanceof ProjectFileRequestError && error.status === 401) {
+            if (
+                (error instanceof ProjectFileRequestError ||
+                    error instanceof RevisionRequestError) &&
+                error.status === 401
+            ) {
                 state.value = 'unauthorized'
                 emit('unauthorized')
+                return
+            }
+
+            if (
+                scope === 'revision' &&
+                error instanceof RevisionRequestError &&
+                (error.status === 400 || error.status === 403 || error.status === 404)
+            ) {
+                state.value = 'unavailable'
                 return
             }
 
@@ -85,10 +125,14 @@
         }
     }
 
+    function retryFiles(): void {
+        void loadFiles(props.projectId, props.scope ?? 'uploaded', props.revisionId)
+    }
+
     watch(
-        () => props.projectId,
-        (projectId) => {
-            void loadFiles(projectId)
+        () => [props.projectId, props.scope ?? 'uploaded', props.revisionId] as const,
+        ([projectId, scope, revisionId]) => {
+            void loadFiles(projectId, scope, revisionId)
         },
         { immediate: true },
     )
@@ -119,13 +163,26 @@
 
         <div v-else-if="state === 'error'" class="project-files-panel__feedback">
             <p role="alert">Unable to load files. Please try again.</p>
-            <AppButton variant="secondary" @click="loadFiles(props.projectId)">
-                Try again
-            </AppButton>
+            <AppButton variant="secondary" @click="retryFiles()">Try again</AppButton>
         </div>
 
         <p v-else-if="state === 'unauthorized'" role="status">
             Session expired. Please sign in again.
+        </p>
+
+        <p v-else-if="state === 'empty-branch'" class="project-files-panel__empty">
+            This branch has no revisions yet.
+        </p>
+
+        <p v-else-if="state === 'unavailable'" role="alert">
+            This revision's files are unavailable or not accessible.
+        </p>
+
+        <p
+            v-else-if="files.length === 0 && props.scope === 'revision'"
+            class="project-files-panel__empty"
+        >
+            This revision contains no source files.
         </p>
 
         <p v-else-if="files.length === 0" class="project-files-panel__empty">
