@@ -96,7 +96,7 @@ const ProjectFilePreviewStub = defineComponent({
     `,
 })
 
-async function mountOverview() {
+async function mountOverview(options: { uploadedFiles?: boolean } = {}) {
     const router = createAppRouter(createMemoryHistory())
     await router.push(`/projects/${project.id}`)
 
@@ -108,6 +108,12 @@ async function mountOverview() {
             },
         },
     })
+
+    if (options.uploadedFiles) {
+        await vi.waitFor(() => wrapper.get('button[aria-label="All uploaded files"]'))
+
+        await wrapper.get('button[aria-label="All uploaded files"]').trigger('click')
+    }
 
     return { wrapper, router }
 }
@@ -129,7 +135,7 @@ describe('project overview file integration', () => {
     })
 
     it('renders uploaded files alongside project metadata and branches', async () => {
-        const { wrapper } = await mountOverview()
+        const { wrapper } = await mountOverview({ uploadedFiles: true })
 
         await vi.waitFor(() => {
             expect(wrapper.findAll('ul[aria-label="Project files"] > li')).toHaveLength(1)
@@ -165,7 +171,7 @@ describe('project overview file integration', () => {
     it('opens the inline preview on selection and switches files', async () => {
         vi.mocked(listProjectFiles).mockResolvedValueOnce([projectFile, secondFile])
 
-        const { wrapper } = await mountOverview()
+        const { wrapper } = await mountOverview({ uploadedFiles: true })
 
         await vi.waitFor(() => {
             expect(wrapper.findAll('ul[aria-label="Project files"] button')).toHaveLength(2)
@@ -225,7 +231,7 @@ describe('project overview file integration', () => {
             id === project.id ? [projectFile] : [otherFile],
         )
 
-        const { wrapper, router } = await mountOverview()
+        const { wrapper, router } = await mountOverview({ uploadedFiles: true })
 
         await vi.waitFor(() => {
             expect(wrapper.findAll('ul[aria-label="Project files"] button')).toHaveLength(1)
@@ -241,6 +247,16 @@ describe('project overview file integration', () => {
 
         await vi.waitFor(() => {
             expect(wrapper.get('h2').text()).toBe(otherProject.name)
+            expect(
+                wrapper.get('button[aria-label="Current revision"]').attributes('aria-pressed'),
+            ).toBe('true')
+        })
+
+        expect(wrapper.find('[data-testid="inline-preview"]').exists()).toBe(false)
+
+        await wrapper.get('button[aria-label="All uploaded files"]').trigger('click')
+
+        await vi.waitFor(() => {
             expect(wrapper.text()).toContain(otherFile.originalFilename)
         })
 
@@ -264,7 +280,7 @@ describe('project overview file integration', () => {
     })
 
     it('closes the inline preview without reloading the project or files', async () => {
-        const { wrapper, router } = await mountOverview()
+        const { wrapper, router } = await mountOverview({ uploadedFiles: true })
 
         await vi.waitFor(() => {
             expect(wrapper.findAll('ul[aria-label="Project files"] button')).toHaveLength(1)
@@ -301,7 +317,7 @@ describe('project overview file integration', () => {
     })
 
     it('places branch context before the project file list', async () => {
-        const { wrapper } = await mountOverview()
+        const { wrapper } = await mountOverview({ uploadedFiles: true })
 
         await vi.waitFor(() => {
             expect(wrapper.find('ul[aria-label="Project files"]').exists()).toBe(true)
@@ -321,7 +337,7 @@ describe('project overview file integration', () => {
             .mockRejectedValueOnce(new TypeError('Failed to fetch'))
             .mockResolvedValueOnce([projectFile])
 
-        const { wrapper } = await mountOverview()
+        const { wrapper } = await mountOverview({ uploadedFiles: true })
 
         await vi.waitFor(() => {
             expect(wrapper.text()).toContain('Unable to load files')
@@ -348,7 +364,7 @@ describe('project overview file integration', () => {
             new ProjectFileRequestError(401, 'Unauthorized'),
         )
 
-        const { wrapper, router } = await mountOverview()
+        const { wrapper, router } = await mountOverview({ uploadedFiles: true })
         const session = useSessionStore(pinia)
 
         await vi.waitFor(() => {
