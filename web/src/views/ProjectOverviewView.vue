@@ -373,118 +373,120 @@
             </p>
 
             <div v-else class="project-overview__branch-workspace">
-                <div class="project-overview__branch-picker">
-                    <AppButton
-                        variant="secondary"
-                        aria-label="Choose design branch"
-                        :aria-expanded="branchPickerOpen"
-                        aria-controls="project-branch-choices"
-                        @click="toggleBranchPicker($event)"
-                    >
-                        <span class="project-overview__selector-name">
-                            {{ selectedBranch?.name ?? 'Choose branch' }}
-                        </span>
-                        <span aria-hidden="true">
-                            {{ branchPickerOpen ? '▲' : '▼' }}
-                        </span>
-                    </AppButton>
+                <div class="project-overview__branch-toolbar">
+                    <div class="project-overview__selection">
+                        <div class="project-overview__branch-picker">
+                            <AppButton
+                                variant="secondary"
+                                aria-label="Choose design branch"
+                                :aria-expanded="branchPickerOpen"
+                                aria-controls="project-branch-choices"
+                                @click="toggleBranchPicker($event)"
+                            >
+                                <span class="project-overview__selector-name">
+                                    {{ selectedBranch?.name ?? 'Choose branch' }}
+                                </span>
+                                <span aria-hidden="true">
+                                    {{ branchPickerOpen ? '▲' : '▼' }}
+                                </span>
+                            </AppButton>
 
-                    <div
-                        v-if="branchPickerOpen"
-                        id="project-branch-choices"
-                        class="project-overview__branch-options"
-                        role="group"
-                        aria-label="Available design branches"
-                        @keydown.esc.stop.prevent="closeBranchPickerOnEscape"
-                    >
-                        <input
-                            ref="branchSearchInput"
-                            v-model="branchSearch"
-                            type="search"
-                            class="ui-field__input project-overview__branch-search"
-                            aria-label="Search branches"
-                            placeholder="Search branches"
-                            autocomplete="off"
-                        />
+                            <div
+                                v-if="branchPickerOpen"
+                                id="project-branch-choices"
+                                class="project-overview__branch-options"
+                                role="group"
+                                aria-label="Available design branches"
+                                @keydown.esc.stop.prevent="closeBranchPickerOnEscape"
+                            >
+                                <input
+                                    ref="branchSearchInput"
+                                    v-model="branchSearch"
+                                    type="search"
+                                    class="ui-field__input project-overview__branch-search"
+                                    aria-label="Search branches"
+                                    placeholder="Search branches"
+                                    autocomplete="off"
+                                />
+
+                                <p
+                                    v-if="filteredBranches.length === 0"
+                                    class="project-overview__no-matches"
+                                    role="status"
+                                >
+                                    No matching branches
+                                </p>
+
+                                <AppButton
+                                    v-for="branch in filteredBranches"
+                                    :key="branch.id"
+                                    variant="secondary"
+                                    :aria-pressed="selectedBranch?.id === branch.id"
+                                    @click="chooseBranch(branch)"
+                                >
+                                    {{ branch.name }}
+                                </AppButton>
+                            </div>
+                        </div>
 
                         <p
-                            v-if="filteredBranches.length === 0"
-                            class="project-overview__no-matches"
-                            role="status"
+                            v-if="selectedBranch && selectedBranch.headRevisionId === null"
+                            class="project-overview__branch-state"
                         >
-                            No matching branches
+                            No revisions yet
                         </p>
 
-                        <AppButton
-                            v-for="branch in filteredBranches"
-                            :key="branch.id"
-                            variant="secondary"
-                            :aria-pressed="selectedBranch?.id === branch.id"
-                            @click="chooseBranch(branch)"
+                        <p
+                            v-else-if="selectedBranch && selectedBranch.headRevisionId"
+                            class="project-overview__branch-state"
                         >
-                            {{ branch.name }}
-                        </AppButton>
+                            Head revision:
+                            <RevisionId
+                                :id="selectedBranch.headRevisionId"
+                                label="branch head revision"
+                            />
+                        </p>
+
+                        <div v-if="selectedBranch" class="project-overview__branch-actions">
+                            <AppButton
+                                variant="secondary"
+                                :aria-label="`View history of ${selectedBranch.name}`"
+                                @click="openBranchHistory(selectedBranch)"
+                            >
+                                View history
+                            </AppButton>
+
+                            <AppButton
+                                variant="secondary"
+                                :aria-label="`Create revision on ${selectedBranch.name}`"
+                                @click="openCreateRevision(selectedBranch)"
+                            >
+                                Create revision
+                            </AppButton>
+                        </div>
                     </div>
                 </div>
 
-                <div v-if="selectedBranch" class="project-overview__selection">
-                    <p>
-                        Selected branch:
-                        <strong>{{ selectedBranch.name }}</strong>
-                    </p>
+                <BranchHeadFiles
+                    v-if="selectedBranch && selectedBranch.headRevisionId"
+                    :key="`${selectedBranch.id}:${selectedBranch.headRevisionId}`"
+                    :project-id="selectedBranch.projectId"
+                    :revision-id="selectedBranch.headRevisionId"
+                    @unauthorized="redirectToLogin"
+                />
 
-                    <p
-                        v-if="selectedBranch.headRevisionId === null"
-                        class="project-overview__branch-state"
-                    >
-                        No revisions yet
-                    </p>
-
-                    <p v-else class="project-overview__branch-state">
-                        Head revision:
-                        <RevisionId
-                            :id="selectedBranch.headRevisionId"
-                            label="branch head revision"
-                        />
-                    </p>
-
-                    <div class="project-overview__branch-actions">
-                        <AppButton
-                            variant="secondary"
-                            :aria-label="`View history of ${selectedBranch.name}`"
-                            @click="openBranchHistory(selectedBranch)"
-                        >
-                            View history
-                        </AppButton>
-
-                        <AppButton
-                            variant="secondary"
-                            :aria-label="`Create revision on ${selectedBranch.name}`"
-                            @click="openCreateRevision(selectedBranch)"
-                        >
-                            Create revision
-                        </AppButton>
-                    </div>
-
-                    <BranchHeadFiles
-                        v-if="selectedBranch.headRevisionId"
-                        :key="`${selectedBranch.id}:${selectedBranch.headRevisionId}`"
-                        :project-id="selectedBranch.projectId"
-                        :revision-id="selectedBranch.headRevisionId"
-                        @unauthorized="redirectToLogin"
-                    />
-                </div>
-
-                <p v-else class="project-overview__branch-feedback" role="alert">
+                <p v-if="!selectedBranch" class="project-overview__branch-feedback" role="alert">
                     The branch in this link is unavailable. Choose another branch.
                 </p>
             </div>
         </section>
 
         <ProjectFileWorkspace
-            v-if="project && !loading"
+            v-if="project && !loading && selectedBranch"
             :key="project.id"
             :project-id="project.id"
+            :branch-id="selectedBranch.id"
+            :head-revision-id="selectedBranch.headRevisionId"
             @unauthorized="redirectToLogin"
             @add-file="openFileUpload"
         />
@@ -549,8 +551,25 @@
         margin-top: var(--space-3);
     }
 
-    .project-overview__branch-picker {
+    .project-overview__branch-toolbar {
+        padding: var(--space-3);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        background: var(--color-surface);
+    }
+
+    .project-overview__selection {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: var(--space-3);
         min-width: 0;
+    }
+
+    .project-overview__branch-picker {
+        position: relative;
+        min-width: 0;
+        max-width: 100%;
     }
 
     .project-overview__selector-name {
@@ -558,10 +577,17 @@
     }
 
     .project-overview__branch-options {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        z-index: 2;
         display: flex;
-        align-items: flex-start;
-        flex-wrap: wrap;
+        flex-direction: column;
+        align-items: stretch;
         gap: var(--space-2);
+        width: min(20rem, calc(100vw - var(--space-6) - var(--space-6)));
+        max-height: 60vh;
+        overflow-y: auto;
         margin-top: var(--space-2);
         padding: var(--space-3);
         border: 1px solid var(--color-border);
@@ -571,8 +597,8 @@
 
     .project-overview__branch-search {
         box-sizing: border-box;
+        width: 100%;
         min-width: 0;
-        flex: 1 1 100%;
     }
 
     .project-overview__no-matches {
@@ -581,15 +607,8 @@
         font-size: var(--font-size-sm);
     }
 
-    .project-overview__selection {
-        margin-top: var(--space-4);
-        padding: var(--space-3);
-        border: 1px solid var(--color-border);
-        border-radius: var(--radius-md);
-        background: var(--color-surface);
-    }
-
-    .project-overview__selection p {
+    .project-overview__branch-state {
+        margin: 0;
         overflow-wrap: anywhere;
     }
 
@@ -597,6 +616,14 @@
         display: flex;
         flex-wrap: wrap;
         gap: var(--space-2);
+        margin-left: auto;
+    }
+
+    @media (max-width: 52rem) {
+        .project-overview__branch-actions {
+            width: 100%;
+            margin-left: 0;
+        }
     }
 
     .project-overview__branch-feedback,

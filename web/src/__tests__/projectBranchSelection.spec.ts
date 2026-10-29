@@ -72,6 +72,7 @@ async function mountOverview(path: string) {
         global: {
             plugins: [pinia, router],
             stubs: {
+                BranchHeadFiles: true,
                 ProjectFileWorkspace: true,
             },
         },
@@ -103,6 +104,36 @@ describe('project overview branch selection', () => {
         // Deliberately place the non-main branch first.
         // Default selection must not depend on API ordering.
         vi.mocked(listProjectBranches).mockResolvedValue([designBranch, mainBranch])
+    })
+
+    it('groups the selected branch controls into one compact toolbar', async () => {
+        const { wrapper } = await mountOverview(
+            `/projects/${project.id}?branchId=${designBranch.id}`,
+        )
+
+        const toolbar = wrapper.get('.project-overview__branch-toolbar')
+        const selector = toolbar.get('button[aria-label="Choose design branch"]')
+
+        expect(selector.text()).toContain('gripper-redesign')
+
+        const context = toolbar.get('.project-overview__selection')
+
+        expect(context.text()).toContain('Head revision')
+        expect(context.get('.revision-id__short').text()).toBe('55555555')
+        expect(context.text()).not.toContain('Selected branch:')
+
+        expect(
+            toolbar.findAll('button[aria-label="View history of gripper-redesign"]'),
+        ).toHaveLength(1)
+
+        expect(
+            toolbar.findAll('button[aria-label="Create revision on gripper-redesign"]'),
+        ).toHaveLength(1)
+
+        expect(wrapper.findAll('button[aria-label="Choose design branch"]')).toHaveLength(1)
+        expect(wrapper.text()).not.toContain('Selected branch:')
+
+        wrapper.unmount()
     })
 
     it('selects main by default in a single branch selector', async () => {
