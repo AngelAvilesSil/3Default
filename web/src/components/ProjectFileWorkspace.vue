@@ -7,8 +7,12 @@
 
     const ProjectFilePreview = defineAsyncComponent(() => import('./ProjectFilePreview.vue'))
 
+    type FileScope = 'revision' | 'uploaded'
+
     const props = defineProps<{
         projectId: string
+        branchId?: string | null
+        headRevisionId?: string | null
     }>()
 
     const emit = defineEmits<{
@@ -17,6 +21,16 @@
     }>()
 
     const selectedFile = ref<ProjectFile | null>(null)
+    const scope = ref<FileScope>(props.branchId ? 'revision' : 'uploaded')
+
+    function setScope(nextScope: FileScope): void {
+        if (scope.value === nextScope) {
+            return
+        }
+
+        selectedFile.value = null
+        scope.value = nextScope
+    }
 
     function selectFile(file: ProjectFile): void {
         if (file.projectId !== props.projectId) {
@@ -31,7 +45,15 @@
     }
 
     watch(
-        () => props.projectId,
+        () => [props.projectId, props.branchId] as const,
+        () => {
+            selectedFile.value = null
+            scope.value = props.branchId ? 'revision' : 'uploaded'
+        },
+    )
+
+    watch(
+        () => props.headRevisionId,
         () => {
             selectedFile.value = null
         },
@@ -44,8 +66,35 @@
         :class="{ 'project-file-workspace--split': selectedFile !== null }"
     >
         <div class="project-file-workspace__files">
+            <div
+                v-if="props.branchId"
+                class="project-file-workspace__scopes"
+                role="group"
+                aria-label="File scope"
+            >
+                <AppButton
+                    :variant="scope === 'revision' ? 'primary' : 'secondary'"
+                    aria-label="Current revision"
+                    :aria-pressed="scope === 'revision'"
+                    @click="setScope('revision')"
+                >
+                    Current revision
+                </AppButton>
+
+                <AppButton
+                    :variant="scope === 'uploaded' ? 'primary' : 'secondary'"
+                    aria-label="All uploaded files"
+                    :aria-pressed="scope === 'uploaded'"
+                    @click="setScope('uploaded')"
+                >
+                    All uploaded files
+                </AppButton>
+            </div>
+
             <ProjectFilesPanel
                 :project-id="props.projectId"
+                :scope="scope"
+                :revision-id="scope === 'revision' ? (props.headRevisionId ?? null) : undefined"
                 :selected-file-id="selectedFile?.id ?? null"
                 @select-file="selectFile"
                 @unauthorized="emit('unauthorized')"
@@ -91,6 +140,13 @@
 
     .project-file-workspace__files {
         min-width: 0;
+    }
+
+    .project-file-workspace__scopes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+        margin-top: var(--space-4);
     }
 
     .project-file-workspace__preview {
