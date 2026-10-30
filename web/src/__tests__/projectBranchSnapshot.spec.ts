@@ -4,7 +4,7 @@ import { createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getCurrentUser } from '../api/auth'
-import type { ProjectFile } from '../api/projectFiles'
+import { listProjectFiles, type ProjectFile } from '../api/projectFiles'
 import { getProject, listProjectBranches, type Project, type ProjectBranch } from '../api/projects'
 import { listProjectRevisionFiles, RevisionRequestError } from '../api/revisions'
 import { createAppRouter } from '../router'
@@ -26,6 +26,15 @@ vi.mock('../api/projects', async (importOriginal) => {
         ...original,
         getProject: vi.fn<typeof original.getProject>(),
         listProjectBranches: vi.fn<typeof original.listProjectBranches>(),
+    }
+})
+
+vi.mock('../api/projectFiles', async (importOriginal) => {
+    const original = await importOriginal<typeof import('../api/projectFiles')>()
+
+    return {
+        ...original,
+        listProjectFiles: vi.fn<typeof original.listProjectFiles>(),
     }
 })
 
@@ -108,9 +117,6 @@ async function mountOverview(branchId?: string) {
     const wrapper = mount(ProjectOverviewView, {
         global: {
             plugins: [pinia, router],
-            stubs: {
-                ProjectFileWorkspace: true,
-            },
         },
     })
 
@@ -123,7 +129,7 @@ async function mountOverview(branchId?: string) {
     return { wrapper, router }
 }
 
-describe('project overview branch-head revision files', () => {
+describe('project overview unified revision files', () => {
     beforeEach(() => {
         vi.resetAllMocks()
 
@@ -139,6 +145,7 @@ describe('project overview branch-head revision files', () => {
 
         vi.mocked(listProjectBranches).mockResolvedValue([designBranch, mainBranch])
 
+        vi.mocked(listProjectFiles).mockResolvedValue([])
         vi.mocked(listProjectRevisionFiles).mockResolvedValue([firstFile, secondFile])
     })
 
@@ -149,8 +156,9 @@ describe('project overview branch-head revision files', () => {
 
         expect(wrapper.text()).toContain('No revisions yet')
         expect(listProjectRevisionFiles).not.toHaveBeenCalled()
+        expect(listProjectFiles).not.toHaveBeenCalled()
 
-        expect(wrapper.find('ul[aria-label="Files in head revision"]').exists()).toBe(false)
+        expect(wrapper.find('ul[aria-label="Project files"]').exists()).toBe(false)
 
         wrapper.unmount()
     })
@@ -163,6 +171,7 @@ describe('project overview branch-head revision files', () => {
         expect(wrapper.text()).toContain('The branch in this link is unavailable')
         expect(router.currentRoute.value.query.branchId).toBe(missingBranchId)
         expect(listProjectRevisionFiles).not.toHaveBeenCalled()
+        expect(listProjectFiles).not.toHaveBeenCalled()
 
         wrapper.unmount()
     })
@@ -178,7 +187,11 @@ describe('project overview branch-head revision files', () => {
             )
         })
 
-        const files = wrapper.get('ul[aria-label="Files in head revision"]')
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('ul[aria-label="Project files"] > li')).toHaveLength(2)
+        })
+
+        const files = wrapper.get('ul[aria-label="Project files"]')
         const entries = files.findAll('li')
 
         expect(entries).toHaveLength(2)
@@ -188,8 +201,11 @@ describe('project overview branch-head revision files', () => {
         expect(wrapper.text()).toContain('gripper-redesign')
         expect(wrapper.text()).toContain('Head revision')
 
-        // The project-wide uploaded-file workspace remains independent.
-        expect(wrapper.find('project-file-workspace-stub').exists()).toBe(true)
+        expect(
+            wrapper.get('button[aria-label="Current revision"]').attributes('aria-pressed'),
+        ).toBe('true')
+        expect(listProjectRevisionFiles).toHaveBeenCalledTimes(1)
+        expect(listProjectFiles).not.toHaveBeenCalled()
 
         wrapper.unmount()
     })
@@ -207,11 +223,13 @@ describe('project overview branch-head revision files', () => {
             )
         })
 
-        expect(wrapper.text()).toContain('This revision contains no source files.')
+        await vi.waitFor(() => {
+            expect(wrapper.text()).toContain('This revision contains no source files.')
+        })
         expect(wrapper.text()).toContain('Head revision')
         expect(wrapper.text()).not.toContain('No revisions yet')
 
-        expect(wrapper.findAll('ul[aria-label="Files in head revision"] > li')).toHaveLength(0)
+        expect(wrapper.findAll('ul[aria-label="Project files"] > li')).toHaveLength(0)
 
         wrapper.unmount()
     })
@@ -232,11 +250,11 @@ describe('project overview branch-head revision files', () => {
             expect(observedSignal).toBeDefined()
         })
 
-        expect(wrapper.get('.branch-head-files [role="status"]').text()).toContain(
-            'Loading head revision files',
+        expect(wrapper.get('.project-files-panel [role="status"]').text()).toContain(
+            'Loading files',
         )
 
-        expect(wrapper.find('ul[aria-label="Files in head revision"]').exists()).toBe(false)
+        expect(wrapper.find('ul[aria-label="Project files"]').exists()).toBe(false)
 
         expect(observedSignal?.aborted).toBe(false)
 
@@ -253,17 +271,17 @@ describe('project overview branch-head revision files', () => {
         const { wrapper } = await mountOverview(designBranchId)
 
         await vi.waitFor(() => {
-            expect(wrapper.get('.branch-head-files [role="alert"]').text()).toContain(
-                'Unable to load head revision files',
+            expect(wrapper.get('.project-files-panel [role="alert"]').text()).toContain(
+                'Unable to load files',
             )
         })
 
         expect(wrapper.text()).not.toContain(firstFile.originalFilename)
 
-        await wrapper.get('.branch-head-files__feedback button').trigger('click')
+        await wrapper.get('.project-files-panel__feedback button').trigger('click')
 
         await vi.waitFor(() => {
-            expect(wrapper.get('ul[aria-label="Files in head revision"]').text()).toContain(
+            expect(wrapper.get('ul[aria-label="Project files"]').text()).toContain(
                 firstFile.originalFilename,
             )
         })
@@ -283,14 +301,14 @@ describe('project overview branch-head revision files', () => {
         const { wrapper } = await mountOverview(designBranchId)
 
         await vi.waitFor(() => {
-            expect(wrapper.get('.branch-head-files [role="alert"]').text()).toContain(
+            expect(wrapper.get('.project-files-panel [role="alert"]').text()).toContain(
                 'not accessible',
             )
         })
 
-        expect(wrapper.find('ul[aria-label="Files in head revision"]').exists()).toBe(false)
+        expect(wrapper.find('ul[aria-label="Project files"]').exists()).toBe(false)
 
-        expect(wrapper.find('.branch-head-files__feedback button').exists()).toBe(false)
+        expect(wrapper.find('.project-files-panel__feedback button').exists()).toBe(false)
 
         wrapper.unmount()
     })
@@ -306,13 +324,13 @@ describe('project overview branch-head revision files', () => {
         const { wrapper } = await mountOverview(designBranchId)
 
         await vi.waitFor(() => {
-            expect(wrapper.get('.branch-head-files [role="alert"]').text()).toContain(
-                'Unable to load head revision files',
+            expect(wrapper.get('.project-files-panel [role="alert"]').text()).toContain(
+                'Unable to load files',
             )
         })
 
         expect(wrapper.text()).not.toContain(firstFile.originalFilename)
-        expect(wrapper.find('ul[aria-label="Files in head revision"]').exists()).toBe(false)
+        expect(wrapper.find('ul[aria-label="Project files"]').exists()).toBe(false)
 
         wrapper.unmount()
     })
@@ -400,7 +418,7 @@ describe('project overview branch-head revision files', () => {
         })
 
         await vi.waitFor(() => {
-            expect(wrapper.get('ul[aria-label="Files in head revision"]').text()).toContain(
+            expect(wrapper.get('ul[aria-label="Project files"]').text()).toContain(
                 secondFile.originalFilename,
             )
         })
