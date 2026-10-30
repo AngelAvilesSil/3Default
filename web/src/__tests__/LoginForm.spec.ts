@@ -13,9 +13,9 @@ vi.mock('../api/auth', async (importOriginal) => {
 
     return {
         ...original,
-        getCurrentUser: vi.fn(),
-        loginUser: vi.fn(),
-        logoutUser: vi.fn(),
+        getCurrentUser: vi.fn<typeof original.getCurrentUser>(),
+        loginUser: vi.fn<typeof original.loginUser>(),
+        logoutUser: vi.fn<typeof original.logoutUser>(),
     }
 })
 
