@@ -72,7 +72,6 @@ async function mountOverview(path: string) {
         global: {
             plugins: [pinia, router],
             stubs: {
-                BranchHeadFiles: true,
                 ProjectFileWorkspace: true,
             },
         },

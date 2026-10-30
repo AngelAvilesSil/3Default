@@ -101,7 +101,6 @@ async function mountOverview(branchId?: string) {
             plugins: [pinia, router],
             stubs: {
                 ProjectFileWorkspace: WorkspaceContextStub,
-                BranchHeadFiles: true,
             },
         },
     })

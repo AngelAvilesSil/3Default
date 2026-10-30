@@ -9,7 +9,6 @@
         type Project,
         type ProjectBranch,
     } from '../api/projects'
-    import BranchHeadFiles from '../components/BranchHeadFiles.vue'
     import ProjectFileWorkspace from '../components/ProjectFileWorkspace.vue'
     import AppButton from '../components/ui/AppButton.vue'
     import RevisionId from '../components/ui/RevisionId.vue'
@@ -466,14 +465,6 @@
                         </div>
                     </div>
                 </div>
-
-                <BranchHeadFiles
-                    v-if="selectedBranch && selectedBranch.headRevisionId"
-                    :key="`${selectedBranch.id}:${selectedBranch.headRevisionId}`"
-                    :project-id="selectedBranch.projectId"
-                    :revision-id="selectedBranch.headRevisionId"
-                    @unauthorized="redirectToLogin"
-                />
 
                 <p v-if="!selectedBranch" class="project-overview__branch-feedback" role="alert">
                     The branch in this link is unavailable. Choose another branch.
