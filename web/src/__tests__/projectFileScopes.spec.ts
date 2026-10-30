@@ -190,4 +190,87 @@ describe('project file scopes', () => {
             wrapper.unmount()
         }
     })
+
+    it('uses the selected file scope in the directory heading', async () => {
+        const wrapper = mount(ProjectFilesPanel, {
+            props: {
+                projectId,
+                scope: 'revision',
+                revisionId: null,
+            },
+        })
+
+        try {
+            expect(wrapper.get('#project-files-heading').text()).toBe('Files in current revision')
+            expect(wrapper.text()).toContain('This branch has no revisions yet.')
+            expect(listProjectRevisionFiles).not.toHaveBeenCalled()
+
+            await wrapper.setProps({
+                scope: 'uploaded',
+                revisionId: undefined,
+            })
+
+            await vi.waitFor(() => {
+                expect(wrapper.findAll('ul[aria-label="Project files"] > li')).toHaveLength(2)
+            })
+
+            expect(wrapper.get('#project-files-heading').text()).toBe('All uploaded files')
+            expect(listProjectFiles).toHaveBeenCalledTimes(1)
+        } finally {
+            wrapper.unmount()
+        }
+    })
+
+    it('keeps natural filename ordering consistent across both scopes', async () => {
+        const secondPart: ProjectFile = {
+            ...committedFile,
+            originalFilename: 'Assembly 2.step',
+        }
+
+        const tenthPart: ProjectFile = {
+            ...uploadedOnlyFile,
+            originalFilename: 'Assembly 10.step',
+        }
+
+        const revisionRecords = [tenthPart, secondPart]
+        const uploadedRecords = [secondPart, tenthPart]
+
+        vi.mocked(listProjectRevisionFiles).mockResolvedValue(revisionRecords)
+        vi.mocked(listProjectFiles).mockResolvedValue(uploadedRecords)
+
+        const wrapper = mount(ProjectFilesPanel, {
+            props: {
+                projectId,
+                scope: 'revision',
+                revisionId: headRevisionId,
+            },
+        })
+
+        const displayedNames = () =>
+            wrapper.findAll('.project-files-panel__name > span').map((node) => node.text())
+
+        const expectedNames = ['Assembly 2.step', 'Assembly 10.step']
+
+        try {
+            await vi.waitFor(() => {
+                expect(displayedNames()).toEqual(expectedNames)
+            })
+
+            await wrapper.setProps({
+                scope: 'uploaded',
+                revisionId: undefined,
+            })
+
+            await vi.waitFor(() => {
+                expect(displayedNames()).toEqual(expectedNames)
+                expect(listProjectFiles).toHaveBeenCalledTimes(1)
+            })
+
+            expect(listProjectRevisionFiles).toHaveBeenCalledTimes(1)
+            expect(revisionRecords).toEqual([tenthPart, secondPart])
+            expect(uploadedRecords).toEqual([secondPart, tenthPart])
+        } finally {
+            wrapper.unmount()
+        }
+    })
 })
