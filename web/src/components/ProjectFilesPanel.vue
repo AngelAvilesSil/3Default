@@ -1,5 +1,5 @@
 <script setup lang="ts">
-    import { onUnmounted, ref, watch } from 'vue'
+    import { computed, onUnmounted, ref, watch } from 'vue'
 
     import {
         listProjectFiles,
@@ -28,6 +28,33 @@
 
     const state = ref<LoadState>('loading')
     const files = ref<ProjectFile[]>([])
+
+    // Keep the same visible file order regardless of API response order.
+    // Revision membership and the original response array are unchanged.
+    const fileNameCollator = new Intl.Collator('en', {
+        numeric: true,
+        sensitivity: 'base',
+    })
+
+    const orderedFiles = computed(() =>
+        [...files.value].sort(
+            (first, second) =>
+                fileNameCollator.compare(first.originalFilename, second.originalFilename) ||
+                first.id.localeCompare(second.id),
+        ),
+    )
+
+    const directoryHeading = computed(() => {
+        if (props.scope === 'revision') {
+            return 'Files in current revision'
+        }
+
+        if (props.scope === 'uploaded') {
+            return 'All uploaded files'
+        }
+
+        return 'Project files'
+    })
 
     const dateFormatter = new Intl.DateTimeFormat('en-CA', {
         year: 'numeric',
@@ -146,7 +173,7 @@
 <template>
     <section class="project-files-panel" aria-labelledby="project-files-heading">
         <div class="project-files-panel__header">
-            <h3 id="project-files-heading">Project files</h3>
+            <h3 id="project-files-heading">{{ directoryHeading }}</h3>
 
             <div class="project-files-panel__header-actions">
                 <span v-if="state === 'ready'" class="project-files-panel__count">
@@ -196,7 +223,7 @@
             </div>
 
             <ul class="project-files-panel__list" aria-label="Project files">
-                <li v-for="file in files" :key="file.id" class="project-files-panel__item">
+                <li v-for="file in orderedFiles" :key="file.id" class="project-files-panel__item">
                     <button
                         type="button"
                         class="project-files-panel__select"
