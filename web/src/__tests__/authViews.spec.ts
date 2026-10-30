@@ -15,8 +15,8 @@ vi.mock('../api/auth', async (importOriginal) => {
 
     return {
         ...original,
-        getCurrentUser: vi.fn(),
-        loginUser: vi.fn(),
+        getCurrentUser: vi.fn<typeof original.getCurrentUser>(),
+        loginUser: vi.fn<typeof original.loginUser>(),
     }
 })
 
@@ -207,5 +207,26 @@ describe('authentication views', () => {
         expect(safeReturnPath(router, '/projects/p/files/f/preview?camera=front')).toBe(
             '/projects/p/files/f/preview?camera=front',
         )
+    })
+
+    it('rejects every ASCII control character before resolving a return destination', () => {
+        const router = createAppRouter(createMemoryHistory())
+        const resolve = vi.spyOn(router, 'resolve')
+
+        const forbiddenCodes = [...Array.from({ length: 32 }, (_, code) => code), 127]
+
+        for (const code of forbiddenCodes) {
+            const character = String.fromCharCode(code)
+
+            expect(safeReturnPath(router, `/projects?input=${character}`)).toBe('/')
+            expect(safeReturnPath(router, `/projects/${character}`)).toBe('/')
+        }
+
+        expect(resolve).not.toHaveBeenCalled()
+
+        expect(safeReturnPath(router, '/projects')).toBe('/projects')
+        expect(resolve).toHaveBeenCalledExactlyOnceWith('/projects')
+
+        resolve.mockRestore()
     })
 })

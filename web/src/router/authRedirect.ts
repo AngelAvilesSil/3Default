@@ -2,13 +2,25 @@ import type { Router } from 'vue-router'
 
 const DEFAULT_DESTINATION = '/'
 
+function containsAsciiControlCharacter(value: string): boolean {
+    for (let index = 0; index < value.length; index += 1) {
+        const characterCode = value.charCodeAt(index)
+
+        if (characterCode <= 0x1f || characterCode === 0x7f) {
+            return true
+        }
+    }
+
+    return false
+}
+
 export function safeReturnPath(router: Router, redirect: unknown): string {
     if (
         typeof redirect !== 'string' ||
         !redirect.startsWith('/') ||
         redirect.startsWith('//') ||
         redirect.includes('\\') ||
-        /[\u0000-\u001f\u007f]/.test(redirect)
+        containsAsciiControlCharacter(redirect)
     ) {
         return DEFAULT_DESTINATION
     }
