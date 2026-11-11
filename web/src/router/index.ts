@@ -86,6 +86,11 @@ export function createAppRouter(history: RouterHistory): Router {
                 props: true,
                 meta: { requiresAuth: true },
             },
+            {
+                path: '/:pathMatch(.*)*',
+                name: 'unknown-path',
+                redirect: { name: 'landing', params: {} },
+            },
         ],
     })
 

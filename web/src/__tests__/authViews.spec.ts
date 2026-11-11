@@ -209,6 +209,36 @@ describe('authentication views', () => {
         )
     })
 
+    it('handles unknown routes without router warnings or protected navigation', async () => {
+        const router = createAppRouter(createMemoryHistory())
+        const fallback = router.getRoutes().find((route) => route.name === 'unknown-path')
+
+        expect(fallback).toBeDefined()
+        expect(fallback?.path).toBe('/:pathMatch(.*)*')
+        expect(fallback?.meta.requiresAuth).not.toBe(true)
+
+        const warn = vi.spyOn(console, 'warn')
+
+        try {
+            for (const path of ['/unknown', '/%2F%2Fevil.example']) {
+                const resolved = router.resolve(path)
+
+                expect(resolved.matched.some((record) => record.name === 'unknown-path')).toBe(true)
+
+                expect(safeReturnPath(router, path)).toBe('/')
+
+                await router.push(path)
+
+                expect(router.currentRoute.value.name).toBe('landing')
+                expect(router.currentRoute.value.path).toBe('/')
+            }
+
+            expect(warn).not.toHaveBeenCalled()
+        } finally {
+            warn.mockRestore()
+        }
+    })
+
     it('rejects every ASCII control character before resolving a return destination', () => {
         const router = createAppRouter(createMemoryHistory())
         const resolve = vi.spyOn(router, 'resolve')
