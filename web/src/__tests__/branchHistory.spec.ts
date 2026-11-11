@@ -247,10 +247,10 @@ describe('branch history route and navigation', () => {
 
 describe('read-only branch history', () => {
     it('renders real revisions, ancestry, ordering, and observed head', async () => {
-        const { wrapper } = await mountHistory()
+        const { wrapper, router } = await mountHistory()
 
         await vi.waitFor(() => {
-            expect(wrapper.findAll('.branch-history__item')).toHaveLength(2)
+            expect(wrapper.findAll('.revision-graph__revision')).toHaveLength(2)
         })
 
         expect(getProject).toHaveBeenCalledWith(projectId, expect.any(AbortSignal))
@@ -261,37 +261,73 @@ describe('read-only branch history', () => {
             expect.any(AbortSignal),
         )
 
-        const items = wrapper.findAll('.branch-history__item')
-        expect(items[0]?.text()).toContain(head.message)
-        expect(items[0]?.text()).toContain('Head at load')
-        expect(items[1]?.text()).toContain(root.message)
-        expect(items[1]?.text()).toContain('None (root revision)')
+        const revisions = wrapper.findAll('.revision-graph__revision')
+
+        expect(revisions.map((item) => item.attributes('data-revision-id'))).toEqual([
+            headId,
+            rootId,
+        ])
+
+        expect(revisions[0]?.text()).toContain(head.message)
+        expect(revisions[0]?.text()).toContain('Head: main')
+        expect(revisions[1]?.text()).toContain(root.message)
+        expect(revisions[1]?.text()).not.toContain('Head: main')
+
+        expect(wrapper.findAll('circle[data-revision-id]')).toHaveLength(2)
+        expect(wrapper.findAll('path[data-kind="parent"]')).toHaveLength(1)
+        expect(wrapper.findAll('path[data-kind="merge-parent"]')).toHaveLength(0)
 
         const headDisplay = wrapper.get('.branch-history__context .revision-id__short')
         expect(headDisplay.text()).toBe(headId.slice(0, 8))
         expect(headDisplay.attributes('title')).toBe(headId)
 
-        const firstRevisionIds = items[0]!.findAll('.revision-id__short')
-        expect(firstRevisionIds.map((node) => node.text())).toEqual([
+        expect(revisions[0]!.get('time').attributes('datetime')).toBe(head.createdAt)
+        expect(wrapper.text()).toContain('Head when loaded')
+        expect(wrapper.text()).toContain(project.name)
+        expect(wrapper.text()).toContain(branch.name)
+
+        expect(wrapper.find('a.branch-history__selected-inspect').exists()).toBe(false)
+
+        await revisions[0]!.trigger('click')
+
+        expect(revisions[0]!.attributes('aria-pressed')).toBe('true')
+        expect(router.currentRoute.value.name).toBe('project-branch-history')
+
+        const selected = wrapper.get('.branch-history__selection')
+        expect(selected.text()).toContain(head.message)
+        expect(selected.text()).toContain('Parent')
+
+        const selectedIds = selected.findAll('.revision-id__short')
+
+        expect(selectedIds.map((node) => node.text())).toEqual([
             headId.slice(0, 8),
             rootId.slice(0, 8),
         ])
-        expect(firstRevisionIds.map((node) => node.attributes('title'))).toEqual([headId, rootId])
 
-        expect(items[0]?.text()).not.toContain(rootId)
-        expect(wrapper.text()).not.toContain(headId)
-        expect(items[1]?.findAll('.revision-id')).toHaveLength(1)
+        expect(selectedIds.map((node) => node.attributes('title'))).toEqual([headId, rootId])
 
-        const inspectLink = items[0]!.get('a.branch-history__inspect')
+        expect(selected.text()).not.toContain(headId)
+        expect(selected.text()).not.toContain(rootId)
+
+        const inspectLink = selected.get('a.branch-history__selected-inspect')
+
         expect(inspectLink.attributes('href')).toContain(
             `/projects/${projectId}/revisions/${headId}`,
         )
         expect(inspectLink.attributes('href')).toContain(`fromBranchId=${branchId}`)
 
-        expect(wrapper.text()).toContain('Head when loaded')
-        expect(wrapper.text()).toContain(project.name)
-        expect(wrapper.text()).toContain(branch.name)
-        expect(wrapper.find('time').attributes('datetime')).toBe(head.createdAt)
+        await revisions[1]!.trigger('click')
+
+        expect(revisions[0]!.attributes('aria-pressed')).toBe('false')
+        expect(revisions[1]!.attributes('aria-pressed')).toBe('true')
+
+        expect(wrapper.get('.branch-history__selection').text()).toContain('None (root revision)')
+
+        expect(wrapper.get('a.branch-history__selected-inspect').attributes('href')).toContain(
+            `/projects/${projectId}/revisions/${rootId}`,
+        )
+
+        expect(router.currentRoute.value.name).toBe('project-branch-history')
 
         wrapper.unmount()
     })
@@ -306,7 +342,8 @@ describe('read-only branch history', () => {
             expect(wrapper.text()).toContain('This branch has no revisions yet')
         })
 
-        expect(wrapper.findAll('.branch-history__item')).toHaveLength(0)
+        expect(wrapper.findAll('.revision-graph__revision')).toHaveLength(0)
+        expect(wrapper.find('.branch-history__selected-inspect').exists()).toBe(false)
         expect(wrapper.find('.revision-id').exists()).toBe(false)
 
         wrapper.unmount()
@@ -329,29 +366,59 @@ describe('read-only branch history', () => {
         const { wrapper } = await mountHistory()
 
         await vi.waitFor(() => {
-            expect(wrapper.findAll('.branch-history__item')).toHaveLength(3)
+            expect(wrapper.findAll('.revision-graph__revision')).toHaveLength(3)
         })
 
-        const first = wrapper.findAll('.branch-history__item')[0]
-        expect(first?.text()).toContain('Integrate reinforced design')
-        expect(first?.text()).toContain('Merge parent')
+        const revisions = wrapper.findAll('.revision-graph__revision')
 
-        const mergeRevisionIds = first!.findAll('.revision-id__short')
-        expect(mergeRevisionIds.map((node) => node.text())).toEqual([
-            mergeId.slice(0, 8),
-            headId.slice(0, 8),
-            rootId.slice(0, 8),
-        ])
-        expect(mergeRevisionIds.map((node) => node.attributes('title'))).toEqual([
+        expect(revisions.map((item) => item.attributes('data-revision-id'))).toEqual([
             mergeId,
             headId,
             rootId,
         ])
 
-        expect(first?.text()).not.toContain(headId)
-        expect(first?.text()).not.toContain(rootId)
+        expect(revisions[0]?.text()).toContain('Integrate reinforced design')
+        expect(revisions[0]?.text()).toContain('Head: main')
+        expect(revisions[0]!.get('time').attributes('datetime')).toBe(merged.createdAt)
+
+        const mergeEdges = wrapper.findAll(`path[data-child-id="${mergeId}"]`)
+
+        expect(mergeEdges).toHaveLength(2)
+        expect(mergeEdges.map((edge) => edge.attributes('data-kind')).sort()).toEqual([
+            'merge-parent',
+            'parent',
+        ])
+
+        await revisions[0]!.trigger('click')
+
+        expect(revisions[0]!.attributes('aria-pressed')).toBe('true')
+
+        const selected = wrapper.get('.branch-history__selection')
+
+        expect(selected.text()).toContain('Integrate reinforced design')
+        expect(selected.text()).toContain('Parent')
+        expect(selected.text()).toContain('Merge parent')
+
+        const selectedIds = selected.findAll('.revision-id__short')
+
+        expect(selectedIds.map((node) => node.text())).toEqual([
+            mergeId.slice(0, 8),
+            headId.slice(0, 8),
+            rootId.slice(0, 8),
+        ])
+
+        expect(selectedIds.map((node) => node.attributes('title'))).toEqual([
+            mergeId,
+            headId,
+            rootId,
+        ])
+
+        expect(selected.text()).not.toContain(mergeId)
+        expect(selected.text()).not.toContain(headId)
+        expect(selected.text()).not.toContain(rootId)
+
         expect(
-            first!
+            selected
                 .get('button[aria-label="Copy full merge parent revision ID 33333333"]')
                 .attributes('type'),
         ).toBe('button')
@@ -432,13 +499,19 @@ describe('read-only branch history', () => {
             expect(wrapper.get('[role="alert"]').text()).toContain('Unable to load')
         })
 
+        expect(wrapper.find('.revision-graph__revision').exists()).toBe(false)
+
         await wrapper.get('button').trigger('click')
 
         await vi.waitFor(() => {
-            expect(wrapper.findAll('.branch-history__item')).toHaveLength(2)
+            expect(wrapper.findAll('.revision-graph__revision')).toHaveLength(2)
         })
 
+        expect(wrapper.get(`button[data-revision-id="${headId}"]`).text()).toContain(head.message)
+
+        expect(wrapper.findAll('path[data-kind="parent"]')).toHaveLength(1)
         expect(listProjectBranchHistory).toHaveBeenCalledTimes(2)
+
         wrapper.unmount()
     })
 
@@ -451,7 +524,8 @@ describe('read-only branch history', () => {
             expect(wrapper.get('[role="alert"]').text()).toContain('changed while loading')
         })
 
-        expect(wrapper.findAll('.branch-history__item')).toHaveLength(0)
+        expect(wrapper.findAll('.revision-graph__revision')).toHaveLength(0)
+        expect(wrapper.find('.branch-history__selected-inspect').exists()).toBe(false)
         wrapper.unmount()
     })
 

@@ -190,10 +190,23 @@ describe('revision detail navigation', () => {
         })
 
         await vi.waitFor(() => {
-            expect(wrapper.findAll('a.branch-history__inspect')).toHaveLength(1)
+            expect(wrapper.findAll('button.revision-graph__revision')).toHaveLength(1)
         })
 
-        const link = wrapper.get('a.branch-history__inspect')
+        // Selecting a revision is read-only and must not navigate.
+        expect(wrapper.find('a.branch-history__selected-inspect').exists()).toBe(false)
+
+        const revisionButton = wrapper.get(
+            `button.revision-graph__revision[data-revision-id="${revisionId}"]`,
+        )
+
+        await revisionButton.trigger('click')
+
+        expect(revisionButton.attributes('aria-pressed')).toBe('true')
+        expect(router.currentRoute.value.name).toBe('project-branch-history')
+
+        // Only explicit inspection opens the exact revision detail.
+        const link = wrapper.get('a.branch-history__selected-inspect')
         expect(link.text()).toContain('Inspect revision')
 
         await link.trigger('click')
