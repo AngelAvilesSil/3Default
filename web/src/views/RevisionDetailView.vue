@@ -1,5 +1,5 @@
 <script setup lang="ts">
-    import { computed, onUnmounted, ref, watch } from 'vue'
+    import { computed, defineAsyncComponent, onUnmounted, ref, watch } from 'vue'
     import { useRoute, useRouter } from 'vue-router'
 
     import { type ProjectFile } from '../api/projectFiles'
@@ -14,6 +14,10 @@
     import CopyableId from '../components/ui/CopyableId.vue'
     import RevisionId from '../components/ui/RevisionId.vue'
     import { useSessionStore } from '../stores/session'
+
+    const HistoricalFilePreview = defineAsyncComponent(
+        () => import('../components/HistoricalFilePreview.vue'),
+    )
 
     const props = defineProps<{
         projectId: string
@@ -30,10 +34,15 @@
     const project = ref<Project | null>(null)
     const revision = ref<ProjectRevision | null>(null)
     const files = ref<ProjectFile[]>([])
+    const selectedFileId = ref<string | null>(null)
     const unavailableMessage = ref('')
     const errorMessage = ref('')
 
     let activeController: AbortController | null = null
+
+    const selectedFile = computed(
+        () => files.value.find((file) => file.id === selectedFileId.value) ?? null,
+    )
 
     // This is a navigation hint, not revision ownership data.
     const sourceBranchId = computed(() => {
@@ -81,6 +90,20 @@
         })
     }
 
+    function selectFile(fileId: string): void {
+        if (state.value !== 'ready') {
+            return
+        }
+
+        if (files.value.some((file) => file.id === fileId)) {
+            selectedFileId.value = fileId
+        }
+    }
+
+    function closeFileInspection(): void {
+        selectedFileId.value = null
+    }
+
     async function loadRevision(): Promise<void> {
         activeController?.abort()
 
@@ -94,6 +117,7 @@
         project.value = null
         revision.value = null
         files.value = []
+        selectedFileId.value = null
         unavailableMessage.value = ''
         errorMessage.value = ''
 
@@ -295,34 +319,123 @@
                     This revision contains no source files.
                 </p>
 
-                <ul v-else class="revision-detail__files">
-                    <li v-for="file in files" :key="file.id" class="revision-detail__file">
-                        <strong>{{ file.originalFilename }}</strong>
+                <div
+                    v-else
+                    class="revision-detail__file-workspace"
+                    :class="{
+                        'revision-detail__file-workspace--inspecting': selectedFile !== null,
+                    }"
+                >
+                    <ul class="revision-detail__files">
+                        <li v-for="file in files" :key="file.id" class="revision-detail__file">
+                            <div class="revision-detail__file-heading">
+                                <strong>{{ file.originalFilename }}</strong>
+                                <AppButton
+                                    :variant="selectedFileId === file.id ? 'primary' : 'secondary'"
+                                    :aria-label="`Inspect historical file ${file.originalFilename}`"
+                                    :aria-pressed="selectedFileId === file.id"
+                                    @click="selectFile(file.id)"
+                                >
+                                    Inspect file
+                                </AppButton>
+                            </div>
+
+                            <dl class="revision-detail__metadata">
+                                <div>
+                                    <dt>File ID</dt>
+                                    <dd>
+                                        <code>{{ file.id }}</code>
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt>SHA-256</dt>
+                                    <dd>
+                                        <code>{{ file.contentSha256 }}</code>
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt>Uploaded</dt>
+                                    <dd>
+                                        <time :datetime="file.createdAt">
+                                            {{ new Date(file.createdAt).toLocaleString() }}
+                                        </time>
+                                    </dd>
+                                </div>
+                            </dl>
+                        </li>
+                    </ul>
+
+                    <section
+                        v-if="selectedFile"
+                        class="revision-detail__inspector"
+                        aria-labelledby="revision-detail-inspector-heading"
+                    >
+                        <div class="revision-detail__inspector-header">
+                            <div>
+                                <h4 id="revision-detail-inspector-heading">
+                                    Historical file inspection
+                                </h4>
+                                <p class="revision-detail__inspector-filename">
+                                    {{ selectedFile.originalFilename }}
+                                </p>
+                            </div>
+
+                            <AppButton
+                                variant="secondary"
+                                aria-label="Close historical file inspection"
+                                @click="closeFileInspection"
+                            >
+                                Close
+                            </AppButton>
+                        </div>
+
+                        <p class="revision-detail__note">
+                            This source-file record belongs to the inspected revision. Selecting it
+                            does not modify the revision or switch branches.
+                        </p>
 
                         <dl class="revision-detail__metadata">
                             <div>
-                                <dt>File ID</dt>
+                                <dt>Source file ID</dt>
                                 <dd>
-                                    <code>{{ file.id }}</code>
+                                    <code>{{ selectedFile.id }}</code>
                                 </dd>
                             </div>
                             <div>
-                                <dt>SHA-256</dt>
+                                <dt>Source SHA-256</dt>
                                 <dd>
-                                    <code>{{ file.contentSha256 }}</code>
+                                    <code>{{ selectedFile.contentSha256 }}</code>
                                 </dd>
                             </div>
                             <div>
                                 <dt>Uploaded</dt>
                                 <dd>
-                                    <time :datetime="file.createdAt">
-                                        {{ new Date(file.createdAt).toLocaleString() }}
+                                    <time :datetime="selectedFile.createdAt">
+                                        {{ new Date(selectedFile.createdAt).toLocaleString() }}
                                     </time>
                                 </dd>
                             </div>
                         </dl>
-                    </li>
-                </ul>
+
+                        <section
+                            class="revision-detail__derived-preview"
+                            aria-label="Existing derived GLB preview"
+                        >
+                            <h5>Existing GLB preview</h5>
+                            <p class="revision-detail__note">
+                                The source file belongs to this exact revision. Its existing GLB
+                                preview may have been generated later; it is not a preserved
+                                rendering from the revision date.
+                            </p>
+
+                            <HistoricalFilePreview
+                                :project-id="props.projectId"
+                                :project-file-id="selectedFile.id"
+                                @unauthorized="redirectToLogin"
+                            />
+                        </section>
+                    </section>
+                </div>
             </section>
         </div>
     </section>
@@ -443,6 +556,58 @@
         font-size: var(--font-size-sm);
     }
 
+    .revision-detail__file-workspace {
+        min-width: 0;
+    }
+
+    .revision-detail__file-workspace--inspecting {
+        display: grid;
+        grid-template-columns: minmax(0, 19fr) minmax(0, 31fr);
+        align-items: start;
+        gap: var(--space-4);
+    }
+
+    .revision-detail__file-heading,
+    .revision-detail__inspector-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: var(--space-3);
+    }
+
+    .revision-detail__inspector {
+        min-width: 0;
+        margin-top: var(--space-4);
+        padding: var(--space-4);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        background: var(--color-page);
+    }
+
+    .revision-detail__inspector h4 {
+        margin: 0;
+        font-size: var(--font-size-base);
+    }
+
+    .revision-detail__inspector-filename {
+        margin-bottom: 0;
+        overflow-wrap: anywhere;
+        font-weight: var(--font-weight-semibold);
+    }
+
+    .revision-detail__derived-preview {
+        min-width: 0;
+        margin-top: var(--space-4);
+        padding-top: var(--space-4);
+        border-top: 1px solid var(--color-border);
+    }
+
+    .revision-detail__derived-preview h5 {
+        margin: 0;
+        font-size: var(--font-size-sm);
+    }
+
     .revision-detail__files {
         padding: 0;
         margin: var(--space-4) 0 0;
@@ -462,6 +627,12 @@
 
     .revision-detail__file .revision-detail__metadata {
         margin-top: var(--space-2);
+    }
+
+    @media (max-width: 52rem) {
+        .revision-detail__file-workspace--inspecting {
+            grid-template-columns: minmax(0, 1fr);
+        }
     }
 
     @media (max-width: 40rem) {

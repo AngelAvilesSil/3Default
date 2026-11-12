@@ -1,3 +1,4 @@
+import { defineComponent } from 'vue'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory } from 'vue-router'
@@ -42,6 +43,19 @@ vi.mock('../api/revisions', async (importOriginal) => {
         listProjectBranchHistory: vi.fn<typeof original.listProjectBranchHistory>(),
         listProjectRevisionFiles: vi.fn<typeof original.listProjectRevisionFiles>(),
     }
+})
+
+// The independent preview suite tests GET-only behavior.
+// These tests cover Revision Details wiring without mounting WebGL.
+// Stub the async component by its registration key, not its module.
+const HistoricalFilePreviewStub = defineComponent({
+    name: 'HistoricalFilePreview',
+    props: {
+        projectId: { type: String, required: true },
+        projectFileId: { type: String, required: true },
+    },
+    emits: ['unauthorized'],
+    template: '<div data-testid="historical-preview-child"></div>',
 })
 
 const projectId = '11111111-1111-4111-8111-111111111111'
@@ -133,6 +147,9 @@ async function mountDetail(
         },
         global: {
             plugins: [pinia, router],
+            stubs: {
+                HistoricalFilePreview: HistoricalFilePreviewStub,
+            },
         },
     })
 
@@ -303,6 +320,269 @@ describe('read-only revision and file snapshot', () => {
         expect(wrapper.text()).toContain(sourceFile.contentSha256)
         expect(wrapper.text()).toContain('not every file uploaded to the project')
         expect(wrapper.text()).toContain('does not calculate CAD geometry differences')
+
+        wrapper.unmount()
+    })
+
+    it('keeps exact revision membership visible without preselecting a file', async () => {
+        vi.mocked(listProjectRevisionFiles).mockResolvedValue([sourceFile, anotherFile])
+
+        const { wrapper } = await mountDetail()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('.revision-detail__file')).toHaveLength(2)
+        })
+
+        expect(wrapper.find('.revision-detail__inspector').exists()).toBe(false)
+        expect(wrapper.findAll('button[aria-label^="Inspect historical file"]')).toHaveLength(2)
+        expect(wrapper.find('canvas').exists()).toBe(false)
+        expect(listProjectRevisionFiles).toHaveBeenCalledTimes(1)
+
+        wrapper.unmount()
+    })
+
+    it('inspects an exact snapshot member without changing branch navigation', async () => {
+        vi.mocked(listProjectRevisionFiles).mockResolvedValue([sourceFile, anotherFile])
+
+        const { wrapper, router } = await mountDetail()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('.revision-detail__file')).toHaveLength(2)
+        })
+
+        const originalPath = router.currentRoute.value.fullPath
+        const select = wrapper.get(
+            `button[aria-label="Inspect historical file ${sourceFile.originalFilename}"]`,
+        )
+
+        await select.trigger('click')
+
+        expect(select.attributes('aria-pressed')).toBe('true')
+        expect(wrapper.get('.revision-detail__inspector-filename').text()).toBe(
+            sourceFile.originalFilename,
+        )
+
+        const inspector = wrapper.get('.revision-detail__inspector')
+        expect(inspector.text()).toContain(sourceFile.id)
+        expect(inspector.text()).toContain(sourceFile.contentSha256)
+        expect(inspector.text()).not.toContain(anotherFile.contentSha256)
+
+        expect(wrapper.findAll('.revision-detail__file')).toHaveLength(2)
+        expect(router.currentRoute.value.fullPath).toBe(originalPath)
+        expect(router.currentRoute.value.query.fromBranchId).toBe(branchId)
+        expect(listProjectRevisionFiles).toHaveBeenCalledTimes(1)
+
+        wrapper.unmount()
+    })
+
+    it('switches and closes file inspection without navigating or refetching', async () => {
+        vi.mocked(listProjectRevisionFiles).mockResolvedValue([sourceFile, anotherFile])
+
+        const { wrapper, router } = await mountDetail()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('.revision-detail__file')).toHaveLength(2)
+        })
+
+        const originalPath = router.currentRoute.value.fullPath
+
+        const first = wrapper.get(
+            `button[aria-label="Inspect historical file ${sourceFile.originalFilename}"]`,
+        )
+        const second = wrapper.get(
+            `button[aria-label="Inspect historical file ${anotherFile.originalFilename}"]`,
+        )
+
+        await first.trigger('click')
+        await second.trigger('click')
+
+        expect(first.attributes('aria-pressed')).toBe('false')
+        expect(second.attributes('aria-pressed')).toBe('true')
+        expect(wrapper.get('.revision-detail__inspector-filename').text()).toBe(
+            anotherFile.originalFilename,
+        )
+        expect(wrapper.get('.revision-detail__inspector').text()).toContain(
+            anotherFile.contentSha256,
+        )
+
+        await wrapper.get('button[aria-label="Close historical file inspection"]').trigger('click')
+
+        expect(wrapper.find('.revision-detail__inspector').exists()).toBe(false)
+        expect(wrapper.findAll('.revision-detail__file')).toHaveLength(2)
+        expect(first.attributes('aria-pressed')).toBe('false')
+        expect(second.attributes('aria-pressed')).toBe('false')
+        expect(router.currentRoute.value.fullPath).toBe(originalPath)
+        expect(listProjectRevisionFiles).toHaveBeenCalledTimes(1)
+
+        wrapper.unmount()
+    })
+
+    it('clears file selection when inspecting a different revision', async () => {
+        const { wrapper } = await mountDetail()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('.revision-detail__file')).toHaveLength(1)
+        })
+
+        await wrapper
+            .get(`button[aria-label="Inspect historical file ${sourceFile.originalFilename}"]`)
+            .trigger('click')
+
+        expect(wrapper.find('.revision-detail__inspector').exists()).toBe(true)
+
+        const newerRevisionId = '99999999-9999-4999-8999-999999999999'
+
+        vi.mocked(getProjectRevision).mockResolvedValueOnce({
+            ...revision,
+            id: newerRevisionId,
+            message: 'Update mounting plate',
+        })
+        vi.mocked(listProjectRevisionFiles).mockResolvedValueOnce([anotherFile])
+
+        await wrapper.setProps({ revisionId: newerRevisionId })
+
+        expect(wrapper.find('.revision-detail__inspector').exists()).toBe(false)
+
+        await vi.waitFor(() => {
+            expect(wrapper.text()).toContain('Update mounting plate')
+            expect(wrapper.findAll('.revision-detail__file')).toHaveLength(1)
+        })
+
+        expect(wrapper.find('.revision-detail__inspector').exists()).toBe(false)
+        const previousFileButton = wrapper.find(
+            `button[aria-label="Inspect historical file ${sourceFile.originalFilename}"]`,
+        )
+        expect(previousFileButton.exists()).toBe(false)
+        expect(wrapper.text()).toContain(anotherFile.originalFilename)
+
+        wrapper.unmount()
+    })
+
+    it('loads historical preview only after explicit file selection', async () => {
+        const { wrapper, router } = await mountDetail()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('.revision-detail__file')).toHaveLength(1)
+        })
+
+        const pathBefore = router.currentRoute.value.fullPath
+
+        expect(wrapper.find('[data-testid="historical-preview-child"]').exists()).toBe(false)
+
+        const button = wrapper.get(
+            'button[aria-label="Inspect historical file ' + sourceFile.originalFilename + '"]',
+        )
+
+        await button.trigger('click')
+
+        await vi.waitFor(() => {
+            expect(wrapper.find('[data-testid="historical-preview-child"]').exists()).toBe(true)
+        })
+
+        const preview = wrapper.findComponent({ name: 'HistoricalFilePreview' })
+
+        expect(preview.props('projectId')).toBe(projectId)
+        expect(preview.props('projectFileId')).toBe(sourceFile.id)
+        expect(wrapper.text()).toContain('may have been generated later')
+        expect(wrapper.findAll('.revision-detail__file')).toHaveLength(1)
+        expect(router.currentRoute.value.fullPath).toBe(pathBefore)
+
+        wrapper.unmount()
+    })
+
+    it('keeps preview bound to the selected historical snapshot file', async () => {
+        vi.mocked(listProjectRevisionFiles).mockResolvedValue([sourceFile, anotherFile])
+
+        const { wrapper, router } = await mountDetail()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('.revision-detail__file')).toHaveLength(2)
+        })
+
+        const pathBefore = router.currentRoute.value.fullPath
+
+        await wrapper
+            .get('button[aria-label="Inspect historical file ' + sourceFile.originalFilename + '"]')
+            .trigger('click')
+
+        await vi.waitFor(() => {
+            expect(wrapper.findComponent({ name: 'HistoricalFilePreview' }).exists()).toBe(true)
+        })
+
+        expect(
+            wrapper.findComponent({ name: 'HistoricalFilePreview' }).props('projectFileId'),
+        ).toBe(sourceFile.id)
+
+        await wrapper
+            .get(
+                'button[aria-label="Inspect historical file ' + anotherFile.originalFilename + '"]',
+            )
+            .trigger('click')
+
+        await vi.waitFor(() => {
+            expect(
+                wrapper.findComponent({ name: 'HistoricalFilePreview' }).props('projectFileId'),
+            ).toBe(anotherFile.id)
+        })
+
+        expect(wrapper.findAll('.revision-detail__file')).toHaveLength(2)
+        expect(router.currentRoute.value.fullPath).toBe(pathBefore)
+        expect(router.currentRoute.value.query.fromBranchId).toBe(branchId)
+
+        wrapper.unmount()
+    })
+
+    it('unmounts historical preview when inspection closes', async () => {
+        const { wrapper, router } = await mountDetail()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('.revision-detail__file')).toHaveLength(1)
+        })
+
+        const pathBefore = router.currentRoute.value.fullPath
+
+        await wrapper
+            .get('button[aria-label="Inspect historical file ' + sourceFile.originalFilename + '"]')
+            .trigger('click')
+
+        await vi.waitFor(() => {
+            expect(wrapper.find('[data-testid="historical-preview-child"]').exists()).toBe(true)
+        })
+
+        await wrapper.get('button[aria-label="Close historical file inspection"]').trigger('click')
+
+        expect(wrapper.find('[data-testid="historical-preview-child"]').exists()).toBe(false)
+        expect(wrapper.find('.revision-detail__inspector').exists()).toBe(false)
+        expect(wrapper.text()).toContain(sourceFile.originalFilename)
+        expect(router.currentRoute.value.fullPath).toBe(pathBefore)
+
+        wrapper.unmount()
+    })
+
+    it('redirects to login when historical preview reports expired authentication', async () => {
+        const { wrapper, router } = await mountDetail()
+
+        await vi.waitFor(() => {
+            expect(wrapper.findAll('.revision-detail__file')).toHaveLength(1)
+        })
+
+        const pathBefore = router.currentRoute.value.fullPath
+
+        await wrapper
+            .get('button[aria-label="Inspect historical file ' + sourceFile.originalFilename + '"]')
+            .trigger('click')
+
+        await vi.waitFor(() => {
+            expect(wrapper.find('[data-testid="historical-preview-child"]').exists()).toBe(true)
+        })
+
+        wrapper.findComponent({ name: 'HistoricalFilePreview' }).vm.$emit('unauthorized')
+
+        await vi.waitFor(() => {
+            expect(router.currentRoute.value.name).toBe('login')
+        })
+
+        expect(router.currentRoute.value.query.redirect).toBe(pathBefore)
 
         wrapper.unmount()
     })
