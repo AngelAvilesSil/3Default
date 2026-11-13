@@ -9,9 +9,12 @@
         type Project,
         type ProjectBranch,
     } from '../api/projects'
+    import { RevisionRequestError } from '../api/revisions'
     import ProjectFileWorkspace from '../components/ProjectFileWorkspace.vue'
     import AppButton from '../components/ui/AppButton.vue'
     import RevisionId from '../components/ui/RevisionId.vue'
+    import { loadProjectHistoryGraph } from '../history/projectHistoryProvider'
+    import type { RevisionGraph } from '../history/revisionGraph'
     import { useSessionStore } from '../stores/session'
 
     const route = useRoute()
@@ -28,6 +31,9 @@
     const branchErrorMessage = ref('')
     const branchPickerOpen = ref(false)
     const historyOpen = ref(false)
+    const historyLoading = ref(false)
+    const historyGraph = ref<RevisionGraph | null>(null)
+    const historyErrorMessage = ref('')
     const branchSearch = ref('')
     const branchPickerTrigger = ref<HTMLButtonElement | null>(null)
     const branchSearchInput = ref<HTMLInputElement | null>(null)
@@ -62,6 +68,7 @@
 
     let activeController: AbortController | null = null
     let activeBranchController: AbortController | null = null
+    let activeHistoryController: AbortController | null = null
 
     async function redirectToLogin(): Promise<void> {
         const returnPath = route.fullPath
@@ -72,6 +79,14 @@
             name: 'login',
             query: { redirect: returnPath },
         })
+    }
+
+    function resetHistory(): void {
+        activeHistoryController?.abort()
+        activeHistoryController = null
+        historyLoading.value = false
+        historyGraph.value = null
+        historyErrorMessage.value = ''
     }
 
     function resetBranches(): void {
@@ -133,6 +148,7 @@
 
     async function loadProject(): Promise<void> {
         activeController?.abort()
+        resetHistory()
         resetBranches()
         historyOpen.value = false
 
@@ -194,6 +210,79 @@
                 if (!controller.signal.aborted) {
                     loading.value = false
                 }
+            }
+        }
+    }
+
+    async function loadHistory(): Promise<void> {
+        const loadedProject = project.value
+
+        if (
+            !historyOpen.value ||
+            loadedProject === null ||
+            route.params.projectId !== loadedProject.id ||
+            selectedBranch.value === null ||
+            branchesLoading.value ||
+            branchErrorMessage.value
+        ) {
+            return
+        }
+
+        activeHistoryController?.abort()
+
+        const controller = new AbortController()
+        activeHistoryController = controller
+
+        const projectId = loadedProject.id
+        const observedBranches = [...branches.value]
+
+        historyLoading.value = true
+        historyGraph.value = null
+        historyErrorMessage.value = ''
+
+        try {
+            const graph = await loadProjectHistoryGraph(
+                projectId,
+                observedBranches,
+                controller.signal,
+            )
+
+            if (
+                controller.signal.aborted ||
+                activeHistoryController !== controller ||
+                !historyOpen.value ||
+                route.params.projectId !== projectId
+            ) {
+                return
+            }
+
+            if (graph.projectId !== projectId) {
+                throw new Error('Unexpected history project identity')
+            }
+
+            if (graph.nodes.length === 0 && graph.coverage.status === 'partial') {
+                historyErrorMessage.value =
+                    'Unable to load any branch revision history. Please try again.'
+                return
+            }
+
+            historyGraph.value = graph
+        } catch (error) {
+            if (controller.signal.aborted || activeHistoryController !== controller) {
+                return
+            }
+
+            if (error instanceof RevisionRequestError && error.status === 401) {
+                resetHistory()
+                await redirectToLogin()
+                return
+            }
+
+            historyErrorMessage.value = 'Unable to load combined branch history. Please try again.'
+        } finally {
+            if (activeHistoryController === controller) {
+                activeHistoryController = null
+                historyLoading.value = false
             }
         }
     }
@@ -316,7 +405,33 @@
         },
     )
 
+    watch(
+        () =>
+            [
+                historyOpen.value,
+                branches.value,
+                branchesLoading.value,
+                branchErrorMessage.value,
+                project.value?.id,
+            ] as const,
+        ([isOpen]) => {
+            if (
+                !isOpen ||
+                project.value === null ||
+                selectedBranch.value === null ||
+                branchesLoading.value ||
+                branchErrorMessage.value
+            ) {
+                resetHistory()
+                return
+            }
+
+            void loadHistory()
+        },
+    )
+
     onUnmounted(() => {
+        resetHistory()
         activeController?.abort()
         activeController = null
         resetBranches()
@@ -494,9 +609,33 @@
                 aria-labelledby="project-overview-history-heading"
             >
                 <h3 id="project-overview-history-heading">Revision history</h3>
-                <p class="project-overview__history-note">
-                    Revision graph integration is not available in this panel yet.
+                <p v-if="historyLoading" class="project-overview__history-note" role="status">
+                    Loading histories from all branches...
                 </p>
+
+                <div v-else-if="historyErrorMessage">
+                    <p role="alert">{{ historyErrorMessage }}</p>
+                    <AppButton variant="secondary" @click="loadHistory()">Try again</AppButton>
+                </div>
+
+                <div v-else-if="historyGraph">
+                    <p class="project-overview__history-note">
+                        {{ historyGraph.nodes.length }}
+                        {{ historyGraph.nodes.length === 1 ? 'revision' : 'revisions' }}
+                        loaded from branch-head-reachable history. Graph display will be added in
+                        the next integration step.
+                    </p>
+
+                    <div v-if="historyGraph.coverage.status === 'partial'">
+                        <p role="alert">
+                            Revision history is incomplete. Some revisions or ancestry information
+                            may be unavailable.
+                        </p>
+                        <AppButton variant="secondary" @click="loadHistory()">
+                            Try again
+                        </AppButton>
+                    </div>
+                </div>
             </aside>
 
             <ProjectFileWorkspace
