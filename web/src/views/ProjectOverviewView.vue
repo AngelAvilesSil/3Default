@@ -27,6 +27,7 @@
     const branchesLoading = ref(false)
     const branchErrorMessage = ref('')
     const branchPickerOpen = ref(false)
+    const historyOpen = ref(false)
     const branchSearch = ref('')
     const branchPickerTrigger = ref<HTMLButtonElement | null>(null)
     const branchSearchInput = ref<HTMLInputElement | null>(null)
@@ -133,6 +134,7 @@
     async function loadProject(): Promise<void> {
         activeController?.abort()
         resetBranches()
+        historyOpen.value = false
 
         const controller = new AbortController()
         activeController = controller
@@ -449,6 +451,14 @@
                         <div v-if="selectedBranch" class="project-overview__branch-actions">
                             <AppButton
                                 variant="secondary"
+                                aria-controls="project-overview-history-panel"
+                                :aria-expanded="historyOpen"
+                                @click="historyOpen = !historyOpen"
+                            >
+                                {{ historyOpen ? 'Hide history panel' : 'Show history panel' }}
+                            </AppButton>
+                            <AppButton
+                                variant="secondary"
                                 :aria-label="`View history of ${selectedBranch.name}`"
                                 @click="openBranchHistory(selectedBranch)"
                             >
@@ -472,15 +482,32 @@
             </div>
         </section>
 
-        <ProjectFileWorkspace
+        <div
             v-if="project && !loading && selectedBranch"
-            :key="project.id"
-            :project-id="project.id"
-            :branch-id="selectedBranch.id"
-            :head-revision-id="selectedBranch.headRevisionId"
-            @unauthorized="redirectToLogin"
-            @add-file="openFileUpload"
-        />
+            class="project-overview__content"
+            :class="{ 'project-overview__content--history-open': historyOpen }"
+        >
+            <aside
+                :hidden="!historyOpen"
+                id="project-overview-history-panel"
+                class="project-overview__history-panel"
+                aria-labelledby="project-overview-history-heading"
+            >
+                <h3 id="project-overview-history-heading">Revision history</h3>
+                <p class="project-overview__history-note">
+                    Revision graph integration is not available in this panel yet.
+                </p>
+            </aside>
+
+            <ProjectFileWorkspace
+                :key="project.id"
+                :project-id="project.id"
+                :branch-id="selectedBranch.id"
+                :head-revision-id="selectedBranch.headRevisionId"
+                @unauthorized="redirectToLogin"
+                @add-file="openFileUpload"
+            />
+        </div>
     </section>
 </template>
 
@@ -614,6 +641,60 @@
         .project-overview__branch-actions {
             width: 100%;
             margin-left: 0;
+        }
+    }
+
+    .project-overview__content {
+        position: relative;
+        min-width: 0;
+    }
+
+    .project-overview__content--history-open {
+        display: grid;
+        grid-template-columns: minmax(17rem, 21rem) minmax(0, 1fr);
+        align-items: start;
+        gap: var(--space-4);
+    }
+
+    .project-overview__history-panel {
+        box-sizing: border-box;
+        min-width: 0;
+        padding: var(--space-4);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        background: var(--color-surface);
+    }
+
+    .project-overview__history-panel h3 {
+        margin-top: 0;
+        font-size: var(--font-size-base);
+    }
+
+    .project-overview__history-note {
+        margin-bottom: 0;
+        color: var(--color-text-muted);
+        font-size: var(--font-size-sm);
+    }
+
+    @media (max-width: 76rem) {
+        .project-overview__content--history-open {
+            display: block;
+        }
+
+        .project-overview__history-panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 3;
+            width: min(22rem, 100%);
+            max-height: 75vh;
+            overflow-y: auto;
+        }
+    }
+
+    @media (max-width: 40rem) {
+        .project-overview__history-panel {
+            width: 100%;
         }
     }
 
