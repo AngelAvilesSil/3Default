@@ -11,6 +11,7 @@
     } from '../api/projects'
     import { RevisionRequestError } from '../api/revisions'
     import ProjectFileWorkspace from '../components/ProjectFileWorkspace.vue'
+    import RevisionGraphRenderer from '../components/history/RevisionGraph.vue'
     import AppButton from '../components/ui/AppButton.vue'
     import RevisionId from '../components/ui/RevisionId.vue'
     import { loadProjectHistoryGraph } from '../history/projectHistoryProvider'
@@ -33,6 +34,7 @@
     const historyOpen = ref(false)
     const historyLoading = ref(false)
     const historyGraph = ref<RevisionGraph | null>(null)
+    const selectedHistoryRevisionId = ref<string | null>(null)
     const historyErrorMessage = ref('')
     const branchSearch = ref('')
     const branchPickerTrigger = ref<HTMLButtonElement | null>(null)
@@ -86,6 +88,7 @@
         activeHistoryController = null
         historyLoading.value = false
         historyGraph.value = null
+        selectedHistoryRevisionId.value = null
         historyErrorMessage.value = ''
     }
 
@@ -238,6 +241,7 @@
 
         historyLoading.value = true
         historyGraph.value = null
+        selectedHistoryRevisionId.value = null
         historyErrorMessage.value = ''
 
         try {
@@ -284,6 +288,15 @@
                 activeHistoryController = null
                 historyLoading.value = false
             }
+        }
+    }
+
+    function selectHistoryRevision(revisionId: string): void {
+        if (
+            historyOpen.value &&
+            historyGraph.value?.nodes.some((node) => node.revision.id === revisionId)
+        ) {
+            selectedHistoryRevisionId.value = revisionId
         }
     }
 
@@ -622,8 +635,7 @@
                     <p class="project-overview__history-note">
                         {{ historyGraph.nodes.length }}
                         {{ historyGraph.nodes.length === 1 ? 'revision' : 'revisions' }}
-                        loaded from branch-head-reachable history. Graph display will be added in
-                        the next integration step.
+                        loaded from branch-head-reachable history.
                     </p>
 
                     <div v-if="historyGraph.coverage.status === 'partial'">
@@ -635,6 +647,12 @@
                             Try again
                         </AppButton>
                     </div>
+
+                    <RevisionGraphRenderer
+                        :graph="historyGraph"
+                        :selected-revision-id="selectedHistoryRevisionId"
+                        @select-revision="selectHistoryRevision"
+                    />
                 </div>
             </aside>
 

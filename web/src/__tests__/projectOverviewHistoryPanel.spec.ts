@@ -653,4 +653,167 @@ describe('Project Overview history panel shell', () => {
             wrapper.unmount()
         }
     })
+
+    it('renders connected all-branch revisions and selects without changing the workspace', async () => {
+        const mainHeadId = '88888888-8888-4888-8888-888888888888'
+        const rootRevisionId = '99999999-9999-4999-8999-999999999999'
+
+        const mainWithHead = {
+            ...mainBranch,
+            headRevisionId: mainHeadId,
+        }
+
+        vi.mocked(listProjectBranches).mockResolvedValueOnce([mainWithHead, designBranch])
+
+        vi.mocked(loadProjectHistoryGraph).mockResolvedValueOnce(
+            buildRevisionGraph({
+                projectId,
+                revisions: [
+                    {
+                        id: rootRevisionId,
+                        projectId,
+                        authorUserId: authorId,
+                        authorDisplayName: 'Engineer',
+                        message: 'Shared initial design',
+                        createdAt: '2026-10-09T12:00:00Z',
+                        parentRevisionId: null,
+                        mergeParentRevisionId: null,
+                    },
+                    {
+                        id: mainHeadId,
+                        projectId,
+                        authorUserId: authorId,
+                        authorDisplayName: 'Engineer',
+                        message: 'Main branch changes',
+                        createdAt: '2026-10-10T12:00:00Z',
+                        parentRevisionId: rootRevisionId,
+                        mergeParentRevisionId: null,
+                    },
+                    {
+                        id: designHeadId,
+                        projectId,
+                        authorUserId: authorId,
+                        authorDisplayName: 'Engineer',
+                        message: 'Alternative gripper design',
+                        createdAt: '2026-10-11T12:30:00Z',
+                        parentRevisionId: rootRevisionId,
+                        mergeParentRevisionId: null,
+                    },
+                ],
+                branches: [mainWithHead, designBranch],
+                coverage: {
+                    source: 'branch-head-reachable',
+                    status: 'complete',
+                    failedBranchIds: [],
+                },
+            }),
+        )
+
+        const { wrapper, router } = await mountOverview()
+
+        try {
+            expect(
+                wrapper.findAll('#project-overview-history-panel button[data-revision-id]'),
+            ).toHaveLength(0)
+
+            const toggle = wrapper.get('button[aria-controls="project-overview-history-panel"]')
+
+            await toggle.trigger('click')
+
+            await vi.waitFor(() => {
+                expect(
+                    wrapper.findAll('#project-overview-history-panel button[data-revision-id]'),
+                ).toHaveLength(3)
+            })
+
+            const panel = wrapper.get('#project-overview-history-panel')
+
+            expect(panel.findAll('path[data-kind="parent"]')).toHaveLength(2)
+            expect(panel.findAll('circle[data-revision-id]')).toHaveLength(3)
+            expect(panel.text()).toContain('Shared initial design')
+            expect(panel.text()).toContain('Main branch changes')
+            expect(panel.text()).toContain('Alternative gripper design')
+
+            const mainButton = panel.get(`button[data-revision-id="${mainHeadId}"]`)
+            const rootButton = panel.get(`button[data-revision-id="${rootRevisionId}"]`)
+
+            expect(mainButton.attributes('aria-pressed')).toBe('false')
+
+            await mainButton.trigger('click')
+
+            expect(mainButton.attributes('aria-pressed')).toBe('true')
+            expect(rootButton.classes()).toContain('revision-graph__revision--ancestor')
+
+            expect(router.currentRoute.value.query.branchId).toBe(designBranchId)
+
+            expect(
+                wrapper.get('[data-testid="overview-workspace"]').attributes('data-branch-id'),
+            ).toBe(designBranchId)
+
+            expect(
+                wrapper
+                    .get('[data-testid="overview-workspace"]')
+                    .attributes('data-head-revision-id'),
+            ).toBe(designHeadId)
+
+            await rootButton.trigger('click')
+
+            expect(rootButton.attributes('aria-pressed')).toBe('true')
+            expect(mainButton.attributes('aria-pressed')).toBe('false')
+            expect(router.currentRoute.value.query.branchId).toBe(designBranchId)
+
+            expect(loadProjectHistoryGraph).toHaveBeenCalledTimes(1)
+        } finally {
+            wrapper.unmount()
+        }
+    })
+
+    it('shows an honest empty history state when coverage is complete', async () => {
+        const emptyDesignBranch = {
+            ...designBranch,
+            headRevisionId: null,
+        }
+
+        vi.mocked(listProjectBranches).mockResolvedValueOnce([mainBranch, emptyDesignBranch])
+
+        vi.mocked(loadProjectHistoryGraph).mockResolvedValueOnce(
+            buildRevisionGraph({
+                projectId,
+                revisions: [],
+                branches: [mainBranch, emptyDesignBranch],
+                coverage: {
+                    source: 'branch-head-reachable',
+                    status: 'complete',
+                    failedBranchIds: [],
+                },
+            }),
+        )
+
+        const { wrapper, router } = await mountOverview()
+
+        try {
+            const toggle = wrapper.get('button[aria-controls="project-overview-history-panel"]')
+
+            await toggle.trigger('click')
+
+            await vi.waitFor(() => {
+                expect(loadProjectHistoryGraph).toHaveBeenCalledTimes(1)
+                expect(wrapper.get('#project-overview-history-panel').text()).toContain(
+                    'No revisions are available in the loaded history.',
+                )
+            })
+
+            const panel = wrapper.get('#project-overview-history-panel')
+
+            expect(panel.findAll('button[data-revision-id]')).toHaveLength(0)
+            expect(panel.find('[role="alert"]').exists()).toBe(false)
+            expect(panel.text()).not.toContain(
+                'Graph display will be added in the next integration step.',
+            )
+
+            expect(router.currentRoute.value.query.branchId).toBe(designBranchId)
+        } finally {
+            wrapper.unmount()
+        }
+    })
 })
